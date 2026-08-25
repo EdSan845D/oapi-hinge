@@ -1,0 +1,89 @@
+// Package contract 框架核心契约：统一 Handler 模板、路由注册描述与基础类型。
+// 业务层（app/handlers）通过别名引用本包类型，运行时（internal/server）与
+// 文档生成（internal/openapi）通过本包消费路由注册表。
+package contract
+
+import (
+	"context"
+	"errors"
+	"io"
+)
+
+// NoReq 无入参的 Handler 使用该类型占位
+type NoReq struct{}
+
+// Empty 无响应数据的操作使用该类型占位（序列化为 data: null）
+type Empty struct{}
+
+// ErrNotFound 资源不存在（运行时适配器映射为 HTTP 404）
+var ErrNotFound = errors.New("not found")
+
+// FileStream 二进制下载响应。运行时适配器识别该类型后直接输出流，
+// 数据源可以是文件、go:embed 内存数据或任何 io.Reader（见 app/handlers/file.go 示例）。
+type FileStream struct {
+	Name        string // 下载文件名（Content-Disposition）
+	Size        int64  // 内容长度
+	ContentType string // 如 application/octet-stream、text/plain
+	Reader      io.Reader
+}
+
+// AdaptHandler 统一 Handler 模板：
+//
+//	func(ctx context.Context, query Q, body B) (resp R, err error)
+type AdaptHandler[Q, B, R any] = func(context.Context, Q, B) (R, error)
+
+// RouteMeta 路由注册描述（强类型）
+type RouteMeta[Q, B, R any] struct {
+	Method      string
+	Path        string
+	Summary     string
+	Description string
+	Tags        []string
+	// Auth 标记该接口需要鉴权：文档生成器据此添加 BearerAuth security 标注。
+	// 运行时鉴权由 main.go 中的全局中间件负责（与本文档标记保持一致）。
+	Auth    bool
+	Handler AdaptHandler[Q, B, R]
+}
+
+// Route 路由表条目（非泛型；Handler 由适配器通过反射消费，Q/B/R 泛型信息由 New 在构造期保证）
+type Route struct {
+	Method      string
+	Path        string
+	Summary     string
+	Description string
+	Tags        []string
+	Auth        bool
+	Handler     any // func(context.Context, Q, B) (R, error)
+}
+
+// New 以强类型方式构造路由表条目
+func New[Q, B, R any](m RouteMeta[Q, B, R]) Route {
+	return Route{
+		Method:      m.Method,
+		Path:        m.Path,
+		Summary:     m.Summary,
+		Description: m.Description,
+		Tags:        m.Tags,
+		Auth:        m.Auth,
+		Handler:     m.Handler,
+	}
+}
+
+type userKey struct{}
+
+// WithUser 将当前用户注入上下文（由运行时适配器的 ContextDecorator 调用）
+func WithUser(ctx context.Context, user any) context.Context {
+	return context.WithValue(ctx, userKey{}, user)
+}
+
+// ErrNoUser 当前用户未注入
+var ErrNoUser = errors.New("current user not found")
+
+// CurrentUser 从上下文取出当前用户
+func CurrentUser(ctx context.Context) (any, error) {
+	user, ok := ctx.Value(userKey{}).(any)
+	if !ok || user == nil {
+		return nil, ErrNoUser
+	}
+	return user, nil
+}

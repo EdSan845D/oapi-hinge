@@ -1,0 +1,2 @@
+fuego-hinge 示例文件 —— 通过 FileStream + go:embed 提供二进制下载演示。
+你可以把这里的逻辑换成任意 io.Reader 数据源（本地文件、数据库、远程存储）。
