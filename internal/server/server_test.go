@@ -18,7 +18,8 @@ import (
 
 // 冒烟测试：统一注册表 -> Gin 适配器的 挂载/绑定/校验/响应壳/错误映射/二进制流 全链路。
 
-func newTestEngine() *gin.Engine {
+func newTestEngine(t *testing.T) *gin.Engine {
+	t.Setenv("FUEGO_HINGE_ENV", "dev")
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	New().Mount(r.Group(routes.BasePath), routes.All())
@@ -37,7 +38,7 @@ func call(t *testing.T, e *gin.Engine, method, path, body string) *httptest.Resp
 }
 
 func TestMountAndBinding(t *testing.T) {
-	e := newTestEngine()
+	e := newTestEngine(t)
 
 	// 健康检查：无参 + 统一响应壳
 	w := call(t, e, http.MethodGet, "/api/health", "")
@@ -104,6 +105,7 @@ func TestMountAndBinding(t *testing.T) {
 func TestCustomValidator(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
+	t.Setenv("FUEGO_HINGE_ENV", "dev")
 	s := New()
 	s.AddValidator(func(ctx context.Context, method string, q, b any) error {
 		if method == "POST" {
@@ -125,6 +127,7 @@ func TestCustomValidator(t *testing.T) {
 func TestErrorMapper(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
+	t.Setenv("FUEGO_HINGE_ENV", "dev")
 	s := New()
 	s.SetErrorMapper(func(err error) (int, int) {
 		if errors.Is(err, contract.ErrNotFound) {

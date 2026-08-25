@@ -36,3 +36,4 @@ bin/
 openapi.yaml
 openapi.json
 
+.vscode/

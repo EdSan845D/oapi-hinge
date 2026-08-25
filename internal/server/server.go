@@ -39,7 +39,8 @@ func New() *Server {
 	return s
 }
 
-// Use 扩展点：挂载全局中间件（鉴权/CORS/限流等），在业务路由之前执行
+// Use 扩展点：挂载全局中间件（鉴权/CORS/限流等），在业务路由之前执行。
+// 按分组挂载的中间件请直接写在 contract.Group.Middlewares（随树继承）。
 func (s *Server) Use(mw ...gin.HandlerFunc) *Server {
 	s.middlewares = append(s.middlewares, mw...)
 	return s
@@ -64,14 +65,33 @@ func (s *Server) SetContextDecorator(fn func(c *gin.Context, ctx context.Context
 	return s
 }
 
-// Mount 把路由注册表挂载到 gin.RouterGroup
-func (s *Server) Mount(g *gin.RouterGroup, rs []contract.Route) {
+// Mount 把路由分组树挂载到 gin.RouterGroup。
+// 组中间件就地断言为 gin.HandlerFunc 后 Use（gin 自动向子组继承）。
+func (s *Server) Mount(g *gin.RouterGroup, groups []*contract.Group) {
 	api := g.Group("")
 	if len(s.middlewares) > 0 {
 		api.Use(s.middlewares...)
 	}
-	for _, r := range rs {
-		s.mount(api, r)
+	for _, grp := range groups {
+		s.mountGroup(api, grp)
+	}
+}
+
+func (s *Server) mountGroup(parent *gin.RouterGroup, grp *contract.Group) {
+	sub := parent.Group(grp.Prefix)
+	for _, mw := range grp.Middlewares {
+		switch fn := mw.(type) {
+		case gin.HandlerFunc:
+			sub.Use(fn)
+		case func(*gin.Context):
+			sub.Use(gin.HandlerFunc(fn))
+		}
+	}
+	for _, r := range grp.Routes {
+		s.mount(sub, r)
+	}
+	for _, child := range grp.Children {
+		s.mountGroup(sub, child)
 	}
 }
 

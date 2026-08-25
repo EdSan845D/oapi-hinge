@@ -32,17 +32,16 @@ type FileStream struct {
 //	func(ctx context.Context, query Q, body B) (resp R, err error)
 type AdaptHandler[Q, B, R any] = func(context.Context, Q, B) (R, error)
 
-// RouteMeta 路由注册描述（强类型）
+// RouteMeta 路由注册描述（强类型）。
+// 鉴权等中间件效果不在本结构声明：中间件挂载在所属 Group（见 Group.Middlewares），
+// 文档标注由 internal/openapi 按中间件函数名匹配文档钩子（RegisterMiddlewareDoc）。
 type RouteMeta[Q, B, R any] struct {
 	Method      string
 	Path        string
 	Summary     string
 	Description string
 	Tags        []string
-	// Auth 标记该接口需要鉴权：文档生成器据此添加 BearerAuth security 标注。
-	// 运行时鉴权由 main.go 中的全局中间件负责（与本文档标记保持一致）。
-	Auth    bool
-	Handler AdaptHandler[Q, B, R]
+	Handler     AdaptHandler[Q, B, R]
 }
 
 // Route 路由表条目（非泛型；Handler 由适配器通过反射消费，Q/B/R 泛型信息由 New 在构造期保证）
@@ -52,7 +51,6 @@ type Route struct {
 	Summary     string
 	Description string
 	Tags        []string
-	Auth        bool
 	Handler     any // func(context.Context, Q, B) (R, error)
 }
 
@@ -64,7 +62,6 @@ func New[Q, B, R any](m RouteMeta[Q, B, R]) Route {
 		Summary:     m.Summary,
 		Description: m.Description,
 		Tags:        m.Tags,
-		Auth:        m.Auth,
 		Handler:     m.Handler,
 	}
 }

@@ -9,20 +9,44 @@ import (
 	"flag"
 	"fmt"
 
+	"fuego-hinge/app/middleware"
 	"fuego-hinge/app/routes"
 	"fuego-hinge/internal/openapi"
+
+	"github.com/getkin/kin-openapi/openapi3"
 )
+
+func init() {
+	// 中间件文档钩子（可选择性）：Auth 中间件所在组的所有 operation 标注 BearerAuth。
+	// 未在这里注册钩子的中间件照常运行，但不进文档。
+	openapi.RegisterMiddlewareDoc(middleware.Auth, func(op *openapi3.Operation) {
+		op.Security = &openapi3.SecurityRequirements{{"BearerAuth": []string{}}}
+	})
+}
 
 func main() {
 	out := flag.String("out", "openapi.yaml", "openapi 文档输出路径（.yaml/.yml -> YAML，.json -> JSON）")
 	flag.Parse()
 
-	info := openapi.DocInfo{
+	info := &openapi3.Info{
 		Title:       "fuego-hinge API",
 		Version:     "1.0.0",
 		Description: "fuego 仅作为开发期 OpenAPI 文档生成器；本规范由统一路由注册表自动生成（go run -tags openapi . -out openapi.yaml），请勿手改。",
 	}
-	if err := openapi.Generate(*out, routes.All(), info); err != nil {
+	servers := &openapi3.Servers{{URL: routes.BasePath}}
+	security := openapi3.SecuritySchemes{
+		"BearerAuth": &openapi3.SecuritySchemeRef{Value: openapi3.NewSecurityScheme().
+			WithType("http").
+			WithScheme("bearer").
+			WithDescription("token 传递方式：Header `Authorization: Bearer <token>`")},
+	}
+	if err := openapi.Generate(
+		*out,
+		routes.All(),
+		openapi.OptionWithDocInfo(info),
+		openapi.OptionWithServer(servers),
+		openapi.OptionWithSecurity(security),
+	); err != nil {
 		panic(err)
 	}
 	fmt.Println("openapi spec written to", *out)

@@ -27,15 +27,13 @@ import (
 
 var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
 
-// DocInfo 文档元信息
-type DocInfo struct {
-	Title       string
-	Version     string
-	Description string
-}
+// Option 文档生成选项：以函数式方式注入文档元信息
+// （Info / Servers / SecuritySchemes 等，见 OptionWithXxx）。
+type Option = func(*fuego.OpenAPI)
 
-// Generate 生成 OpenAPI 文档并写入 out（.yaml/.yml -> YAML，.json -> JSON）
-func Generate(out string, rs []contract.Route, info DocInfo) error {
+// Generate 生成 OpenAPI 文档并写入 out（.yaml/.yml -> YAML，.json -> JSON）。
+// groups 为路由分组树（routes.All()）；opts 注入文档元信息。
+func Generate(out string, groups []*contract.Group, opts ...Option) error {
 	engine := fuego.NewEngine(fuego.WithOpenAPIConfig(fuego.OpenAPIConfig{
 		DisableLocalSave: true,
 		DisableMessages:  true,
@@ -43,30 +41,20 @@ func Generate(out string, rs []contract.Route, info DocInfo) error {
 	}))
 
 	oa := engine.OpenAPI
-	desc := oa.Description()
-	desc.Info = &openapi3.Info{
-		Title:       info.Title,
-		Version:     info.Version,
-		Description: info.Description,
-	}
-	desc.Servers = openapi3.Servers{{URL: "/"}}
-	desc.Components.SecuritySchemes = openapi3.SecuritySchemes{
-		"BearerAuth": &openapi3.SecuritySchemeRef{Value: openapi3.NewSecurityScheme().
-			WithType("http").
-			WithScheme("bearer").
-			WithDescription("token 传递方式：Header `Authorization: Bearer <token>`")},
+
+	checkDuplicates(groups)
+	for _, g := range groups {
+		addGroup(oa, g, "", nil)
 	}
 
-	for _, r := range rs {
-		if err := addOperation(oa, r); err != nil {
-			return err
-		}
+	for _, opt := range opts {
+		opt(oa)
 	}
 
 	// 不调用 OutputOpenAPISpec()：其内部的 resolveSchemaRefs 对递归 schema
 	// 存在无限递归 bug（fuego v0.20.0），会栈溢出。SchemaTagFromType 返回的 ref
 	// 已带完整 Value，直接序列化描述树即可，输出同样包含干净的 $ref 与 components。
-	doc := engine.OpenAPI.Description()
+	doc := oa.Description()
 
 	var data []byte
 	var err error
@@ -84,20 +72,32 @@ func Generate(out string, rs []contract.Route, info DocInfo) error {
 	return nil
 }
 
+// addGroup 递归生成一个分组的所有 operation。
+// inherited 为父组继承下来的中间件；组 Tags 与路由 Tags 合并。
+func addGroup(oa *fuego.OpenAPI, g *contract.Group, prefix string, inherited []any) {
+	path := prefix + g.Prefix
+	mws := append(append([]any{}, inherited...), g.Middlewares...)
+	for _, r := range g.Routes {
+		addOperation(oa, r, path, g.Tags, mws)
+	}
+	for _, child := range g.Children {
+		addGroup(oa, child, path, mws)
+	}
+}
+
 // addOperation 为一个路由生成 OpenAPI 操作。
 // Handler 模板：func(context.Context, Q, B) (R, error)
 //   - Q：query 参数来自 `query` 标签，path 参数来自路径 {id}
 //   - B：interface{} 表示无 body，否则整包作为 application/json 请求体
 //   - R：Data 段 schema；*FileStream 输出二进制流，Empty 输出 null
-func addOperation(oa *fuego.OpenAPI, r contract.Route) error {
+//   - 中间件文档钩子按函数名匹配（见 RegisterMiddlewareDoc），可修改 operation
+func addOperation(oa *fuego.OpenAPI, r contract.Route, groupPath string, groupTags []string, mws []any) {
 	op := openapi3.NewOperation()
 	op.Summary = r.Summary
 	op.Description = r.Description
 	op.OperationID = operationID(r.Handler)
-	op.Tags = r.Tags
-	if r.Auth {
-		op.Security = &openapi3.SecurityRequirements{{"BearerAuth": []string{}}}
-	}
+	op.Tags = mergeTags(groupTags, r.Tags)
+	applyHooks(op, mws)
 
 	fn := reflect.TypeOf(r.Handler)
 	qT, bT, rT := fn.In(1), fn.In(2), fn.Out(0)
@@ -144,8 +144,40 @@ func addOperation(oa *fuego.OpenAPI, r contract.Route) error {
 		op.Responses.Set("200", okResponse(oa, &tag.SchemaRef))
 	}
 
-	oa.Description().AddOperation(r.Path, r.Method, op)
-	return nil
+	oa.Description().AddOperation(groupPath+r.Path, r.Method, op)
+}
+
+// checkDuplicates 校验路由树中 path+method 无重复（文档期早期报错，避免静默覆盖）
+func checkDuplicates(groups []*contract.Group) {
+	seen := map[string]string{} // "GET /users/{id}" -> handler 名
+	var walk func(gs []*contract.Group, prefix string)
+	walk = func(gs []*contract.Group, prefix string) {
+		for _, g := range gs {
+			p := prefix + g.Prefix
+			for _, r := range g.Routes {
+				key := r.Method + " " + p + r.Path
+				if prev, dup := seen[key]; dup {
+					panic(fmt.Sprintf("duplicate route %s: %s vs %s", key, prev, operationID(r.Handler)))
+				}
+				seen[key] = operationID(r.Handler)
+			}
+			walk(g.Children, p)
+		}
+	}
+	walk(groups, "")
+}
+
+// mergeTags 合并组 Tags 与路由 Tags（去重保序）
+func mergeTags(a, b []string) []string {
+	out := make([]string, 0, len(a)+len(b))
+	seen := map[string]bool{}
+	for _, t := range append(append([]string{}, a...), b...) {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // okResponse 统一响应壳 {code, data, msg}

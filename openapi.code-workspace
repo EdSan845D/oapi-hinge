@@ -1,0 +1,14 @@
+{
+  // 文档生成器工作区视图：用 VS Code「文件 -> 打开工作区」打开本文件。
+  // 该视图下 gopls 携带 -tags=openapi：
+  //   - adapter/openapi、main_doc.go 参与分析（能看到完整的报错/跳转/补全）
+  //   - main.go、adapter/gin 会被构建约束排除，不再参与分析
+  // 改回生产代码时，直接打开项目文件夹目录即可。
+  "folders": [{ "path": "." }],
+  "settings": {
+    "gopls": {
+      "build.buildFlags": ["-tags=openapi"]
+    },
+    "go.buildFlags": ["-tags=openapi"]
+  }
+}
