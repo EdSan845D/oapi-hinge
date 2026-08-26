@@ -46,7 +46,7 @@ type ResponseWrapper interface {
 	ResponseData() any
 }
 
-func (r Response[R]) ResponseStatus() int            { return r.Status }
+func (r Response[R]) ResponseStatus() int                { return r.Status }
 func (r Response[R]) ResponseHeaders() map[string]string { return r.Headers }
 func (r Response[R]) ResponseCookies() []*http.Cookie    { return r.Cookies }
 func (r Response[R]) ResponseData() any                  { return r.Data }
@@ -65,6 +65,7 @@ func Framework(ctx context.Context) any {
 	v, _ := ctx.Value(frameworkKey{}).(any)
 	return v
 }
+
 // AdaptHandler 统一 Handler 模板：
 //
 //	func(ctx context.Context, query Q, body B) (resp R, err error)

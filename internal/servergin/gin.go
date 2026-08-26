@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 
 	"fuego-hinge/internal/contract"
 	"fuego-hinge/internal/response"
@@ -98,20 +99,21 @@ func (s *Server) mountGroup(parent *gin.RouterGroup, grp *contract.Group) {
 }
 
 func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
+	// 挂载期预计算反射信息（请求期零反射获取）
+	h := reflect.ValueOf(r.Handler)
+	qType := h.Type().In(1)
+	bType := h.Type().In(2)
 	g.Handle(r.Method, ginPath(r.Path), func(c *gin.Context) {
-		h := reflect.ValueOf(r.Handler)
-		t := h.Type()
-
 		// Q：query/path 参数解析
-		q := newValue(t.In(1))
+		q := newValue(qType)
 		if err := bindQueryPath(c, q.Interface()); err != nil {
 			response.FailWithMessage(c, err.Error())
 			return
 		}
 
 		// B：JSON body 解析（非 body 方法或无 body 路由跳过）
-		b := newValue(t.In(2))
-		if isBodyMethod(r.Method) && t.In(2).Kind() != reflect.Interface {
+		b := newValue(bType)
+		if isBodyMethod(r.Method) && bType.Kind() != reflect.Interface {
 			if c.Request.Body != nil && c.Request.ContentLength > 0 {
 				if err := c.ShouldBindJSON(b.Interface()); err != nil {
 					response.FailWithMessage(c, err.Error())
@@ -208,19 +210,70 @@ func serveFile(c *gin.Context, f *contract.FileStream) {
 	c.DataFromReader(http.StatusOK, f.Size, contentType, f.Reader, extraHeaders)
 }
 
-// bindQueryPath 反射遍历 Q 结构体，绑定 query(优先)/form 与 path 标签字段（内嵌结构体递归展平）
+// fieldMeta 绑定字段元数据（挂载期解析一次，请求期零反射）
+type fieldMeta struct {
+	index    int
+	kind     reflect.Kind
+	path     string
+	query    string
+	form     string
+	header   string
+	required bool
+	children []fieldMeta
+}
+
+// bindCache Q 类型 -> 字段元数据缓存
+var bindCache sync.Map
+
+// parseFields 反射解析结构体字段元数据（内嵌结构体递归展平）
+func parseFields(t reflect.Type) []fieldMeta {
+	if v, ok := bindCache.Load(t); ok {
+		return v.([]fieldMeta)
+	}
+	var out []fieldMeta
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		if f.Anonymous {
+			ft := f.Type
+			if ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct {
+				out = append(out, fieldMeta{children: parseFields(ft)})
+			}
+			continue
+		}
+		var m fieldMeta
+		m.index = i
+		m.kind = f.Type.Kind()
+		m.required = strings.Contains(f.Tag.Get("binding"), "required")
+		m.path, _ = tagValue(f, "path")
+		m.query, _ = tagValue(f, "query")
+		m.form, _ = tagValue(f, "form")
+		m.header, _ = tagValue(f, "header")
+		out = append(out, m)
+	}
+	bindCache.Store(t, out)
+	return out
+}
+
+// bindQueryPath 按预解析的字段元数据绑定（query/form/path/header 标签）
 func bindQueryPath(c *gin.Context, req any) error {
 	rv := reflect.ValueOf(req)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
 		return errors.New("invalid params type")
 	}
-	e := rv.Elem()
-	for i := 0; i < e.NumField(); i++ {
-		f, ft := e.Field(i), e.Type().Field(i)
-		if !ft.IsExported() {
-			continue
-		}
-		if ft.Anonymous {
+	return bindFields(c, rv.Elem(), parseFields(rv.Elem().Type()))
+}
+
+// bindFields 按元数据逐字段绑定
+func bindFields(c *gin.Context, e reflect.Value, metas []fieldMeta) error {
+	for _, m := range metas {
+		f := e.Field(m.index)
+		if len(m.children) > 0 {
 			sub := f
 			if sub.Kind() == reflect.Pointer {
 				if sub.IsNil() {
@@ -228,43 +281,39 @@ func bindQueryPath(c *gin.Context, req any) error {
 				}
 				sub = sub.Elem()
 			}
-			if sub.Kind() == reflect.Struct {
-				if err := bindQueryPath(c, sub.Addr().Interface()); err != nil {
-					return err
-				}
+			if err := bindFields(c, sub, m.children); err != nil {
+				return err
 			}
 			continue
 		}
-		if name, ok := tagValue(ft, "path"); ok {
-			if err := setValue(c, f, name, true); err != nil {
+		if m.path != "" {
+			if err := setRaw(f, c.Param(m.path), m.path); err != nil {
 				return err
 			}
 			continue
 		}
 		// 逃生舱 1：header 标签优先（独立于 query/form）
-		if hname, hok := tagValue(ft, "header"); hok {
-			if err := setRaw(f, c.GetHeader(hname), hname); err != nil {
+		if m.header != "" {
+			if err := setRaw(f, c.GetHeader(m.header), m.header); err != nil {
 				return err
 			}
 			continue
 		}
-		name, ok := tagValue(ft, "query")
-		if !ok {
-			name, ok = tagValue(ft, "form")
-		}
-		if !ok {
-			continue
-		}
-		if err := setValue(c, f, name, false); err != nil {
-			return err
-		}
-		if strings.Contains(ft.Tag.Get("binding"), "required") && f.IsZero() {
-			return fmt.Errorf("%s is required", name)
+		if m.query != "" || m.form != "" {
+			name := m.query
+			if name == "" {
+				name = m.form
+			}
+			if err := setValue(c, f, name, false); err != nil {
+				return err
+			}
+			if m.required && f.IsZero() {
+				return fmt.Errorf("%s is required", name)
+			}
 		}
 	}
 	return nil
 }
-
 func tagValue(ft reflect.StructField, key string) (string, bool) {
 	v := ft.Tag.Get(key)
 	if v == "" {
