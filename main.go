@@ -15,7 +15,7 @@ import (
 	"os"
 
 	"fuego-hinge/app/routes"
-	"fuego-hinge/internal/server"
+	"fuego-hinge/internal/servergin"
 
 	scalargo "github.com/bdpiprava/scalar-go"
 	"github.com/gin-gonic/gin"
@@ -30,7 +30,7 @@ func main() {
 	}
 
 	r := gin.Default()
-	s := server.New()
+	s := servergin.New()
 
 	// 扩展点演示：把 gin 上下文里的用户信息注入 handler 的 context.Context
 	// （handler 通过 handlers.CurrentUser(ctx) 读取，业务层零 gin 依赖）

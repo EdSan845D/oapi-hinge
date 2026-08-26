@@ -1,4 +1,4 @@
-package server
+package servergin
 
 import (
 	"context"
@@ -141,5 +141,94 @@ func TestErrorMapper(t *testing.T) {
 	w := call(t, r, http.MethodGet, "/api/users/nope", "")
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("mapper 404 = %d", w.Code)
+	}
+}
+
+// ============ 逃生舱测试：header 标签 / Response 定制 / Framework 注入 ============
+
+type escapeHeaderReq struct {
+	Lang string `header:"Accept-Language"`
+	ID   string `path:"id"`
+}
+
+func escapeHeaderHandler(ctx context.Context, req escapeHeaderReq, _ any) (map[string]string, error) {
+	return map[string]string{"lang": req.Lang, "id": req.ID}, nil
+}
+
+func escapeCreatedHandler(ctx context.Context, _ contract.NoReq, _ any) (contract.Response[handlers.User], error) {
+	return contract.Response[handlers.User]{
+		Status:  http.StatusCreated,
+		Headers: map[string]string{"X-Trace": "trace-1"},
+		Cookies: []*http.Cookie{{Name: "sid", Value: "abc"}},
+		Data:    handlers.User{ID: "u9", Name: "New"},
+	}, nil
+}
+
+func escapeFrameworkHandler(ctx context.Context, _ contract.NoReq, _ any) (map[string]string, error) {
+	if g, ok := contract.Framework(ctx).(*gin.Context); ok {
+		return map[string]string{"route": g.FullPath()}, nil
+	}
+	return map[string]string{"route": "unknown"}, nil
+}
+
+func TestEscapeHatches(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	s := New()
+	groups := []*contract.Group{
+		{
+			Prefix: "/escape",
+			Routes: []contract.Route{
+				contract.New(contract.RouteMeta[escapeHeaderReq, any, map[string]string]{
+					Method:  "GET",
+					Path:    "/header/{id}",
+					Summary: "逃生舱1：header 标签",
+					Handler: escapeHeaderHandler,
+				}),
+				contract.New(contract.RouteMeta[contract.NoReq, any, contract.Response[handlers.User]]{
+					Method:  "POST",
+					Path:    "/created",
+					Summary: "逃生舱2：响应定制",
+					Handler: escapeCreatedHandler,
+				}),
+				contract.New(contract.RouteMeta[contract.NoReq, any, map[string]string]{
+					Method:  "GET",
+					Path:    "/framework",
+					Summary: "逃生舱3：框架注入",
+					Handler: escapeFrameworkHandler,
+				}),
+			},
+		},
+	}
+	s.Mount(r.Group("/api"), groups)
+
+	// ① header 标签绑定
+	req := httptest.NewRequest(http.MethodGet, "/api/escape/header/u1", nil)
+	req.Header.Set("Accept-Language", "zh-CN")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"lang":"zh-CN"`) {
+		t.Fatalf("header bind = %d %s", w.Code, w.Body.String())
+	}
+
+	// ② Response 定制：status 201 + header + cookie + envelope
+	w = call(t, r, http.MethodPost, "/api/escape/created", "")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("created status = %d, want 201", w.Code)
+	}
+	if w.Header().Get("X-Trace") != "trace-1" {
+		t.Fatalf("custom header missing: %v", w.Header())
+	}
+	if !strings.Contains(w.Header().Get("Set-Cookie"), "sid=abc") {
+		t.Fatalf("cookie missing: %v", w.Header().Get("Set-Cookie"))
+	}
+	if !strings.Contains(w.Body.String(), `"code":0`) || !strings.Contains(w.Body.String(), `"id":"u9"`) {
+		t.Fatalf("created body = %s", w.Body.String())
+	}
+
+	// ③ Framework 注入断言
+	w = call(t, r, http.MethodGet, "/api/escape/framework", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"route":"/api/escape/framework"`) {
+		t.Fatalf("framework = %d %s", w.Code, w.Body.String())
 	}
 }

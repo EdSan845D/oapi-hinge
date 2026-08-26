@@ -1,8 +1,8 @@
 //go:build openapi
 
 // Package openapi 开发期 OpenAPI 文档生成器：从统一路由注册表生成 OpenAPI 3.1 规范。
-// fuego 仅在本包作为文档生成工具使用（-tags openapi 构建），
-// release 构建完全不包含本包，运行时零开发期依赖。
+// 纯 kin-openapi 实现（不依赖 fuego）：类型反射生成 schema（schema.go）、
+// 路由树递归生成 operation。仅 -tags openapi 构建，release 构建零开发期依赖。
 //
 // 用法：go run -tags openapi . -out openapi.yaml
 package openapi
@@ -21,40 +21,40 @@ import (
 	"fuego-hinge/internal/contract"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/go-fuego/fuego"
 	"gopkg.in/yaml.v3"
 )
+
+// respWrapperIface 响应定制壳接口（逃生舱 2：contract.Response[R]）
+var respWrapperIface = reflect.TypeOf((*contract.ResponseWrapper)(nil)).Elem()
 
 var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
 
 // Option 文档生成选项：以函数式方式注入文档元信息
 // （Info / Servers / SecuritySchemes 等，见 OptionWithXxx）。
-type Option = func(*fuego.OpenAPI)
+type Option = func(*openapi3.T)
 
 // Generate 生成 OpenAPI 文档并写入 out（.yaml/.yml -> YAML，.json -> JSON）。
 // groups 为路由分组树（routes.All()）；opts 注入文档元信息。
 func Generate(out string, groups []*contract.Group, opts ...Option) error {
-	engine := fuego.NewEngine(fuego.WithOpenAPIConfig(fuego.OpenAPIConfig{
-		DisableLocalSave: true,
-		DisableMessages:  true,
-		PrettyFormatJSON: true,
-	}))
-
-	oa := engine.OpenAPI
+	doc := &openapi3.T{
+		OpenAPI: "3.1.0",
+		Info:    &openapi3.Info{Title: "API", Version: "0.0.0"},
+		Servers: openapi3.Servers{{URL: "/"}},
+		Paths:   openapi3.NewPaths(),
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{},
+		},
+	}
+	sb := newSchemaBuilder(doc)
 
 	checkDuplicates(groups)
 	for _, g := range groups {
-		addGroup(oa, g, "", nil)
+		addGroup(doc, sb, g, "", nil)
 	}
 
 	for _, opt := range opts {
-		opt(oa)
+		opt(doc)
 	}
-
-	// 不调用 OutputOpenAPISpec()：其内部的 resolveSchemaRefs 对递归 schema
-	// 存在无限递归 bug（fuego v0.20.0），会栈溢出。SchemaTagFromType 返回的 ref
-	// 已带完整 Value，直接序列化描述树即可，输出同样包含干净的 $ref 与 components。
-	doc := oa.Description()
 
 	var data []byte
 	var err error
@@ -74,14 +74,14 @@ func Generate(out string, groups []*contract.Group, opts ...Option) error {
 
 // addGroup 递归生成一个分组的所有 operation。
 // inherited 为父组继承下来的中间件；组 Tags 与路由 Tags 合并。
-func addGroup(oa *fuego.OpenAPI, g *contract.Group, prefix string, inherited []any) {
+func addGroup(doc *openapi3.T, sb *schemaBuilder, g *contract.Group, prefix string, inherited []any) {
 	path := prefix + g.Prefix
 	mws := append(append([]any{}, inherited...), g.Middlewares...)
 	for _, r := range g.Routes {
-		addOperation(oa, r, path, g.Tags, mws)
+		addOperation(doc, sb, r, path, g.Tags, mws)
 	}
 	for _, child := range g.Children {
-		addGroup(oa, child, path, mws)
+		addGroup(doc, sb, child, path, mws)
 	}
 }
 
@@ -91,7 +91,7 @@ func addGroup(oa *fuego.OpenAPI, g *contract.Group, prefix string, inherited []a
 //   - B：interface{} 表示无 body，否则整包作为 application/json 请求体
 //   - R：Data 段 schema；*FileStream 输出二进制流，Empty 输出 null
 //   - 中间件文档钩子按函数名匹配（见 RegisterMiddlewareDoc），可修改 operation
-func addOperation(oa *fuego.OpenAPI, r contract.Route, groupPath string, groupTags []string, mws []any) {
+func addOperation(doc *openapi3.T, sb *schemaBuilder, r contract.Route, groupPath string, groupTags []string, mws []any) {
 	op := openapi3.NewOperation()
 	op.Summary = r.Summary
 	op.Description = r.Description
@@ -112,11 +112,11 @@ func addOperation(oa *fuego.OpenAPI, r contract.Route, groupPath string, groupTa
 	}
 
 	if bT.Kind() != reflect.Interface {
-		tag := fuego.SchemaTagFromType(oa, reflect.New(bT).Interface())
+		ref := sb.ref(bT)
 		op.RequestBody = &openapi3.RequestBodyRef{Value: openapi3.NewRequestBody().
 			WithRequired(true).
 			WithDescription("Request body for " + bT.String()).
-			WithContent(openapi3.NewContentWithSchemaRef(&tag.SchemaRef, []string{"application/json"}))}
+			WithContent(openapi3.NewContentWithSchemaRef(ref, []string{"application/json"}))}
 	}
 
 	op.Responses = openapi3.NewResponses()
@@ -125,6 +125,12 @@ func addOperation(oa *fuego.OpenAPI, r contract.Route, groupPath string, groupTa
 
 	if rT.Kind() == reflect.Pointer {
 		rT = rT.Elem()
+	}
+	// 逃生舱 2：Response[R] 包装 → 取 Data 字段类型作为响应 schema
+	if rT.Implements(respWrapperIface) {
+		if f, ok := rT.FieldByName("Data"); ok {
+			rT = f.Type
+		}
 	}
 	switch {
 	case rT == reflect.TypeOf(contract.FileStream{}):
@@ -138,13 +144,19 @@ func addOperation(oa *fuego.OpenAPI, r contract.Route, groupPath string, groupTa
 	case rT == reflect.TypeOf(contract.Empty{}):
 		nilSchema := openapi3.NewObjectSchema().WithNullable()
 		nilSchema.Description = "无数据（null）"
-		op.Responses.Set("200", okResponse(oa, &openapi3.SchemaRef{Value: nilSchema}))
+		op.Responses.Set("200", okResponse(doc, &openapi3.SchemaRef{Value: nilSchema}))
 	default:
-		tag := fuego.SchemaTagFromType(oa, reflect.New(rT).Interface())
-		op.Responses.Set("200", okResponse(oa, &tag.SchemaRef))
+		ref := sb.ref(rT)
+		op.Responses.Set("200", okResponse(doc, ref))
 	}
 
-	oa.Description().AddOperation(groupPath+r.Path, r.Method, op)
+	// 合并到 Paths：同路径不同 method 共存
+	p := doc.Paths.Value(groupPath + r.Path)
+	if p == nil {
+		p = &openapi3.PathItem{}
+		doc.Paths.Set(groupPath+r.Path, p)
+	}
+	p.SetOperation(r.Method, op)
 }
 
 // checkDuplicates 校验路由树中 path+method 无重复（文档期早期报错，避免静默覆盖）
@@ -181,7 +193,7 @@ func mergeTags(a, b []string) []string {
 }
 
 // okResponse 统一响应壳 {code, data, msg}
-func okResponse(oa *fuego.OpenAPI, data *openapi3.SchemaRef) *openapi3.ResponseRef {
+func okResponse(doc *openapi3.T, data *openapi3.SchemaRef) *openapi3.ResponseRef {
 	env := openapi3.NewObjectSchema()
 	env.Properties = openapi3.Schemas{
 		"code": {Value: openapi3.NewIntegerSchema()},
@@ -211,6 +223,19 @@ func queryParams(t reflect.Type) []*openapi3.Parameter {
 			}
 			if f.Anonymous {
 				walk(f.Type)
+				continue
+			}
+			// 逃生舱 1：header 标签优先（独立于 query/form）
+			if hname, hok := tagValueOf(f, "header"); hok {
+				p := openapi3.NewHeaderParameter(hname)
+				if d, ok := f.Tag.Lookup("description"); ok && d != "" {
+					p.Description = d
+				}
+				p.Schema = &openapi3.SchemaRef{Value: schemaByKind(f.Type)}
+				if strings.Contains(f.Tag.Get("binding"), "required") {
+					p.Required = true
+				}
+				out = append(out, p)
 				continue
 			}
 			name, ok := tagValueOf(f, "query")

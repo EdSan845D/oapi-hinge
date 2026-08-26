@@ -29,9 +29,9 @@ func main() {
 	flag.Parse()
 
 	info := &openapi3.Info{
-		Title:       "fuego-hinge API",
+		Title:       "OAPI-hinge API",
 		Version:     "1.0.0",
-		Description: "fuego 仅作为开发期 OpenAPI 文档生成器；本规范由统一路由注册表自动生成（go run -tags openapi . -out openapi.yaml），请勿手改。",
+		Description: "hinge 仅作为开发期 OpenAPI 文档生成器；本规范由统一路由注册表自动生成（go run -tags openapi . -out openapi.yaml），请勿手改。",
 	}
 	servers := &openapi3.Servers{{URL: routes.BasePath}}
 	security := openapi3.SecuritySchemes{

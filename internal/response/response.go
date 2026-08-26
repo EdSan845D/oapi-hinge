@@ -30,6 +30,11 @@ func OkWithData(c *gin.Context, data any) {
 	c.PureJSON(http.StatusOK, Response[any]{CodeOK, data, "操作成功"})
 }
 
+// OkWithDataStatus 成功 + 数据 + 自定义状态码（contract.Response 定制状态用）
+func OkWithDataStatus(c *gin.Context, status int, data any) {
+	c.PureJSON(status, Response[any]{CodeOK, data, "操作成功"})
+}
+
 // Ok 成功（data 为 null）
 func Ok(c *gin.Context) {
 	OkWithData(c, nil)

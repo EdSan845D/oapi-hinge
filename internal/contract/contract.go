@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 )
 
 // NoReq 无入参的 Handler 使用该类型占位
@@ -27,6 +28,43 @@ type FileStream struct {
 	Reader      io.Reader
 }
 
+// Response 响应定制壳（逃生舱 2）：业务层返回 contract.Response[R] 时，
+// 适配器应用 Status/Headers/Cookies 后，Data 仍走统一 envelope {code, data, msg}。
+// 例：return contract.Response[handlers.User]{Status: 201, Headers: ..., Data: u}, nil
+type Response[R any] struct {
+	Status  int
+	Headers map[string]string
+	Cookies []*http.Cookie
+	Data    R
+}
+
+// ResponseWrapper 适配器识别接口：泛型实例通过该接口被统一处理
+type ResponseWrapper interface {
+	ResponseStatus() int
+	ResponseHeaders() map[string]string
+	ResponseCookies() []*http.Cookie
+	ResponseData() any
+}
+
+func (r Response[R]) ResponseStatus() int            { return r.Status }
+func (r Response[R]) ResponseHeaders() map[string]string { return r.Headers }
+func (r Response[R]) ResponseCookies() []*http.Cookie    { return r.Cookies }
+func (r Response[R]) ResponseData() any                  { return r.Data }
+
+type frameworkKey struct{}
+
+// WithFramework 注入框架上下文对象（逃生舱 3）：适配器在 decorate 阶段把
+// gin.Context / echo.Context 存入 context，业务层按需断言使用（最后手段，
+// 代价是业务层与框架耦合，仅限无法模板化的少数场景）。
+func WithFramework(ctx context.Context, fw any) context.Context {
+	return context.WithValue(ctx, frameworkKey{}, fw)
+}
+
+// Framework 取出框架上下文对象；未注入时返回 nil
+func Framework(ctx context.Context) any {
+	v, _ := ctx.Value(frameworkKey{}).(any)
+	return v
+}
 // AdaptHandler 统一 Handler 模板：
 //
 //	func(ctx context.Context, query Q, body B) (resp R, err error)
