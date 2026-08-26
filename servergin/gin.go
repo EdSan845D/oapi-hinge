@@ -14,9 +14,8 @@ import (
 	"strings"
 	"sync"
 
-	"fuego-hinge/internal/contract"
-	"fuego-hinge/internal/response"
-	"fuego-hinge/internal/validator"
+	"github.com/EdSan845D/oapi-hinge/contract"
+	"github.com/EdSan845D/oapi-hinge/contract/validator"
 
 	"github.com/gin-gonic/gin"
 )
@@ -107,7 +106,7 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 		// Q：query/path 参数解析
 		q := newValue(qType)
 		if err := bindQueryPath(c, q.Interface()); err != nil {
-			response.FailWithMessage(c, err.Error())
+			FailWithMessage(c, err.Error())
 			return
 		}
 
@@ -116,7 +115,7 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 		if isBodyMethod(r.Method) && bType.Kind() != reflect.Interface {
 			if c.Request.Body != nil && c.Request.ContentLength > 0 {
 				if err := c.ShouldBindJSON(b.Interface()); err != nil {
-					response.FailWithMessage(c, err.Error())
+					FailWithMessage(c, err.Error())
 					return
 				}
 			}
@@ -124,7 +123,7 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 
 		// 校验：内置（标签 required + Validate() 接口）+ 自定义校验器
 		if err := validator.Run(c.Request.Context(), r.Method, q.Interface(), b.Interface(), s.validators...); err != nil {
-			response.FailWithMessage(c, err.Error())
+			FailWithMessage(c, err.Error())
 			return
 		}
 
@@ -139,7 +138,7 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 				c.AbortWithStatusJSON(status, gin.H{"error": err.Error()})
 				return
 			}
-			response.FailWithCode(c, code, err.Error())
+			FailWithCode(c, code, err.Error())
 			return
 		}
 
@@ -161,14 +160,14 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 		switch v := resp.(type) {
 		case *contract.FileStream:
 			if v == nil {
-				response.FailWithMessage(c, "file not found")
+				FailWithMessage(c, "file not found")
 				return
 			}
 			serveFile(c, v)
 		case contract.Empty:
-			response.OkWithDataStatus(c, status, nil)
+			OkWithDataStatus(c, status, nil)
 		default:
-			response.OkWithDataStatus(c, status, resp)
+			OkWithDataStatus(c, status, resp)
 		}
 	})
 }
@@ -179,7 +178,7 @@ func defaultErrorMapper(err error) (int, int) {
 	if errors.Is(err, contract.ErrNotFound) {
 		return http.StatusNotFound, http.StatusNotFound
 	}
-	return http.StatusOK, response.CodeError
+	return http.StatusOK, CodeError
 }
 
 func newValue(t reflect.Type) reflect.Value {

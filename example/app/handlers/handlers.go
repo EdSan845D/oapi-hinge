@@ -18,7 +18,7 @@ package handlers
 import (
 	"context"
 
-	"fuego-hinge/internal/contract"
+	"github.com/EdSan845D/oapi-hinge/contract"
 )
 
 // 框架核心类型别名：业务层直接使用短名，类型本身来自 internal/contract

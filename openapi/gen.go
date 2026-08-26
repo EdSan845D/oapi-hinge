@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"fuego-hinge/internal/contract"
+	"github.com/EdSan845D/oapi-hinge/contract"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"gopkg.in/yaml.v3"

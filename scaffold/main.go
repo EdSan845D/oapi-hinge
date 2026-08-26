@@ -1,11 +1,11 @@
-// fuego-hinge —— 生成 Go API 项目骨架的命令行工具（类似 pnpm create vite）。
+// oapi-hinge —— 生成 Go API 项目骨架的命令行工具（类似 pnpm create vite）。
 //
 // 用法：
 //
-//	fuego-hinge create myapp                    # 生成 ./myapp，module 名 = myapp
-//	fuego-hinge create myapp -m github.com/me/myapp
-//	fuego-hinge create myapp --no-tidy          # 跳过 go mod tidy
-//	fuego-hinge create myapp --force            # 覆盖已存在的目录
+//	oapi-hinge create myapp                    # 生成 ./myapp，module 名 = myapp
+//	oapi-hinge create myapp -m github.com/me/myapp
+//	oapi-hinge create myapp --no-tidy          # 跳过 go mod tidy
+//	oapi-hinge create myapp --force            # 覆盖已存在的目录
 //
 // 生成产物：统一 Handler 模板 + 单一路由注册表 + 原生 Gin 运行时 + Fuego 文档生成（构建期隔离）。
 // 内置示例业务（用户 CRUD + 文件下载 + 健康检查），删掉 app/handlers 下的示例即可开始写自己的业务。
@@ -28,21 +28,21 @@ var templateFS embed.FS
 const templateRoot = "template"
 
 func main() {
-	fs := flag.NewFlagSet("fuego-hinge", flag.ExitOnError)
+	fs := flag.NewFlagSet("oapi-hinge", flag.ExitOnError)
 	module := fs.String("m", "", "Go module path（默认取项目名）")
 	noTidy := fs.Bool("no-tidy", false, "跳过 go mod tidy")
 	force := fs.Bool("force", false, "覆盖已存在的目录")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "fuego-hinge —— 生成 Go API 项目骨架（统一 Handler + 原生 Gin 运行时 + fuego 开发期文档生成，release 零开发依赖）")
+		fmt.Fprintln(os.Stderr, "oapi-hinge —— 生成 Go API 项目骨架（统一 Handler + 原生 Gin 运行时 + kin-openapi 开发期文档生成，release 零开发依赖）")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "用法:")
-		fmt.Fprintln(os.Stderr, "  fuego-hinge create <project> [flags]")
+		fmt.Fprintln(os.Stderr, "  oapi-hinge create <project> [flags]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "flags:")
 		fs.PrintDefaults()
 	}
 
-	// 兼容两种调用形式：fuego-hinge create <project> 与 fuego-hinge <project>
+	// 兼容两种调用形式：oapi-hinge create <project> 与 oapi-hinge <project>
 	// 并支持 flags 位于位置参数之后（Go flag 在首个非 flag 参数处停止解析，需先重排）
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "create" {

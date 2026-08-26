@@ -1,135 +1,134 @@
-# fuego-hinge
+# oapi-hinge
 
-**统一 Handler 模板 + 原生 Gin 运行时 + fuego 仅作开发期 OpenAPI 文档生成器**
+一个 Go API 框架：**统一 Handler 模板 + 原生框架运行时 + OpenAPI 文档自动生成**。
 
-fuego-hinge 是一个 Go API 应用脚手架/框架，定位：
+本项目受 [go-fuego](https://github.com/go-fuego/fuego) 启发，文档生成基于 [kin-openapi](https://github.com/getkin/kin-openapi) 实现。
 
-- **运行时纯净**：业务 API 跑在原生 Gin 上，Handler 零框架依赖，release 应用不包含任何开发期多余依赖
-- **fuego 仅作开发期工具**：只在 `-tags openapi` 构建中充当 OpenAPI 文档生成器，release 二进制零 fuego
-- **一处注册，双端消费**：`routes.All()` 同时驱动 Gin 挂载与 OpenAPI 文档生成，杜绝文档与代码不同步
+## 设计动机
 
-## 依赖边界
+业务 API 开发中，三个诉求经常打架：
 
-| 类别 | 依赖 | 说明 |
-|---|---|---|
-| 运行时 | `gin` | release 二进制实际链接的唯一 Web 框架 |
-| 开发期工具 | `fuego` / `kin-openapi` / `yaml.v3` | 仅 `-tags openapi` 构建使用；不出现在 release 二进制（build.sh -r 自动校验） |
-| 业务层 | 无 | handlers 只依赖 `context` + 结构体 |
+1. **Handler 想写成纯函数**——不依赖具体 Web 框架，单测不起服务器；
+2. **框架能力想全保留**——gin 的中间件生态、echo 的上下文特性，不想被抽象阉割；
+3. **文档想自动生成**——类型即契约，OpenAPI 规范不该手写。
 
-## 目录结构
+oapi-hinge 用「契约层描述 + 框架适配器执行 + 纯 kin-openapi 生成文档」三层结构同时满足三者。
 
-```
-framework/
-├── main.go                  # 运行时入口（//go:build !openapi，原生 gin）
-├── main_doc.go              # 开发期文档生成入口（//go:build openapi）
-├── build.sh                 # release/dev/spec/test 一键构建
-├── app/                     # ★ 业务层（日常开发改这里）
-│   ├── handlers/            # 统一 Handler + 请求/响应结构体（含示例用户/文件业务）
-│   └── routes/routes.go     # 路由注册表（唯一注册入口）
-└── internal/                # 框架层（一般不用改）
-    ├── contract/            # 核心契约：RouteMeta[Q,B,R]、NoReq/Empty/FileStream/ErrNotFound
-    ├── response/            # 统一响应壳 {code, data, msg}
-    ├── server/              # Gin 适配器：绑定/校验/响应/错误映射/中间件（扩展点）
-    ├── validator/           # 校验器：标签必填 + Validate() 接口 + 自定义校验器
-    └── openapi/             # 开发期文档生成（fuego 引擎，仅 openapi 标签参与构建）
-```
+## 核心概念
 
-## 统一 Handler 模板
+### 统一 Handler 模板
+
+所有业务接口遵循同一签名：
 
 ```go
-func(ctx context.Context, query Q, body B) (resp R, err error)
+func(ctx context.Context, query Q, body B) (resp R, error error)
 ```
 
-- **Q**：query 参数用 `query:"name"` 标签，路径参数用 `path:"name"` 标签；无入参用 `NoReq`
-- **B**：POST/PUT/PATCH 传 body 结构体（整包 JSON 绑定）；无 body 传 `any`
-- **R**：`*FileStream` 输出二进制流（io.Reader 数据源）；`Empty` 输出 `data: null`；其余走统一壳
-- 错误：`ErrNotFound` → HTTP 404；其他业务错误 → HTTP 200 + `code:7`（可用 `SetErrorMapper` 自定义）
+- `Q`：query / path / header 参数，用结构体标签声明（`query:"page"`、`path:"id"`、`header:"X-Token"`）
+- `B`：JSON 请求体（`any` 表示无 body）
+- `R`：响应数据，自动包装为统一壳 `{code, data, msg}`
+- 业务层零框架依赖，`context.Context` 用于取消/超时传播与用户注入
 
-## 新增一个接口（3 步）
+### 路由分组树
+
+路由以树形分组声明，中间件随树继承：
 
 ```go
-// 1. app/handlers/xxx.go：写统一 Handler
-type GetUserReq struct {
-    ID string `path:"id" description:"用户ID"`
+func All() []*contract.Group {
+    return []*contract.Group{
+        {
+            Prefix: "/users", Tags: []string{"用户"},
+            Middlewares: []any{middleware.Auth},
+            Routes: []contract.Route{
+                contract.New(contract.RouteMeta[handlers.ListUsersReq, any, response.Paged[handlers.User]]{
+                    Method: "GET", Path: "", Summary: "用户列表",
+                    Handler: handlers.ListUsers,
+                }),
+            },
+        },
+    }
 }
-
-func GetUser(ctx context.Context, req GetUserReq, _ any) (User, error) {
-    // ... 业务逻辑
-    return User{}, ErrNotFound // 资源不存在
-}
-
-// 2. app/routes/routes.go：注册一行
-contract.New(contract.RouteMeta[GetUserReq, any, User]{
-    Method: "GET", Path: "/users/{id}", Summary: "用户详情",
-    Tags: []string{"用户"}, Auth: true, Handler: GetUser,
-}),
 ```
 
-3. 完成 —— 运行时路由与 OpenAPI 文档同时生效。
+运行时与文档生成器消费同一棵树，行为天然一致。
 
-## 参数校验（扩展点）
+### 框架适配器（子模块）
 
-| 层级 | 方式 | 说明 |
+| 子模块 | 说明 | 依赖 |
 |---|---|---|
-| 1 标签 | `binding:"required"` | 绑定阶段自动校验缺失 |
-| 2 接口 | 结构体实现 `Validate() error` | 绑定后自动调用（见 `CreateUserReq` 示例） |
-| 3 自定义 | `server.AddValidator(func(ctx, method, q, b) error)` | 全局追加校验器 |
-| 4 中间件 | `server.Use(gin.HandlerFunc...)` | 校验之前的全局中间件（鉴权/CORS/限流） |
+| `contract` | 核心契约：RouteMeta / Group / 响应壳 / 逃生舱 | 无（纯标准库） |
+| `servergin` | gin 运行时适配器 | contract + gin |
+| `serverecho` | echo 运行时适配器 | contract + echo |
+| `openapi` | OpenAPI 3.1 文档生成器（开发期工具） | contract + kin-openapi |
 
-## 构建与运行
+按需引用子模块：用 gin 的项目不会拉到 echo，用 echo 的项目不会拉到 gin。
 
-> 环境要求：Go ≥ 1.26.5（fuego v0.20.0 的 go.mod 要求；本地 Go 较旧时 `go` 会自动下载匹配工具链）
-
-```bash
-# 运行（dev 模式跳过示例鉴权）
-FUEGO_HINGE_ENV=dev go run .
-# 或
-./build.sh -d && FUEGO_HINGE_ENV=dev ./bin/app-dev
-
-# release：默认标签构建 + 自动检查依赖链无 fuego
-./build.sh -r
-
-# 生成 OpenAPI 文档（开发期工具）
-./build.sh -s          # 等价于 go run -tags openapi . -out openapi.yaml
-
-# 测试
-./build.sh -t
-```
-
-验证 release 隔离：
+## 快速开始
 
 ```bash
-./build.sh -r
-# 输出应为：
-# --- release 依赖链检查（应无 fuego）---
-# OK: release 构建不包含 fuego
+# 使用脚手架生成项目（推荐）
+go run github.com/EdSan845D/oapi-hinge/scaffold create myapp -m github.com/you/myapp
+
+# 或在已有项目手动接入
+go get github.com/EdSan845D/oapi-hinge/contract
+go get github.com/EdSan845D/oapi-hinge/servergin
 ```
 
-生成后的 `openapi.yaml` 可直接导入 Swagger UI / Apifox / Postman。
+```go
+package main
 
-## 示例接口（开箱即用）
+import (
+    "context"
+    "net/http"
 
-| 方法 | 路径 | 说明 | 演示点 |
-|---|---|---|---|
-| GET | /api/health | 健康检查 | 无参 + 无鉴权 |
-| GET | /api/users | 用户列表 | query 分页 + 默认值 |
-| GET | /api/users/{id} | 用户详情 | path 参数 + 404 |
-| POST | /api/users | 创建用户 | JSON body + 标签必填 + Validate() |
-| DELETE | /api/users/{id} | 删除用户 | Empty 响应 |
-| GET | /api/files/{name} | 下载文件 | FileStream 二进制流（go:embed） |
+    "github.com/EdSan845D/oapi-hinge/contract"
+    "github.com/EdSan845D/oapi-hinge/servergin"
+    "github.com/gin-gonic/gin"
+)
 
-## 修改指南
+type HealthReq struct{}
 
-- **换模块名**：全局替换 `fuego-hinge`（go.mod module 名 + import 路径）；用 `scaffold` CLI 生成新项目会自动完成
-- **写业务**：改 `app/handlers/` + `app/routes/routes.go`，删掉示例 user/file 即可
-- **换鉴权**：改 `main.go` 里的示例 token 中间件（JWT/OAuth 在此接入）；`Auth: true` 控制文档标注
-- **改响应语义**：`internal/response`（壳结构）；`server.SetErrorMapper`（错误码/HTTP 状态）
-- **改文档信息**：`main_doc.go` 的 `DocInfo`（标题/版本/描述）
-- **加依赖**：直接 `go get`；注意 release 构建不得 import `internal/openapi`（构建标签隔离，build.sh -r 会自动检查）
+func Health(ctx context.Context, _ HealthReq, _ any) (map[string]string, error) {
+    return map[string]string{"status": "ok"}, nil
+}
 
-## 设计要点
+func main() {
+    r := gin.Default()
+    s := servergin.New()
+    s.Mount(r.Group("/api"), []*contract.Group{{
+        Routes: []contract.Route{
+            contract.New(contract.RouteMeta[HealthReq, any, map[string]string]{
+                Method: "GET", Path: "/health", Summary: "健康检查",
+                Handler: Health,
+            }),
+        },
+    }})
+    r.Run(":8080")
+}
+```
 
-- **构建隔离**：`main.go`/`internal/server` 等运行时文件带 `//go:build !openapi`，`main_doc.go`/`internal/openapi` 带 `//go:build openapi`，两套互斥；release 构建默认标签，fuego 不进依赖链
-- **业务零框架**：Handler 只依赖 context + 结构体；gin 只在 `main.go` 与 `internal/server` 出现
-- **一处注册，双端消费**：`routes.All()` 同时驱动 gin 挂载与 OpenAPI 生成，杜绝"文档与代码不同步"
-- **已知限制**：递归 schema（自引用结构体）会触发 fuego v0.20.0 的 ref 解析栈溢出，生成器已绕过 `OutputOpenAPISpec()` 直接序列化；文档版本为 OpenAPI 3.1
+生成 OpenAPI 文档：
+
+```go
+// main_doc.go（构建标签 openapi）
+openapi.Generate("openapi.yaml", routes.All(),
+    openapi.OptionWithDocInfo(&openapi3.Info{Title: "myapp API", Version: "1.0.0"}),
+    openapi.OptionWithServer(&openapi3.Servers{{URL: "/api"}}),
+)
+// 运行：go run -tags openapi . -out openapi.yaml
+```
+
+## 框架特色
+
+- **类型即契约**：Handler 的 Q/B/R 泛型参数直接驱动参数绑定与 OpenAPI schema 生成，业务层写一次，运行时和文档同时就绪；
+- **框架可移植**：同一份路由注册表挂到 gin 或 echo 只差一行装配代码，业务代码零改动；
+- **运行时零开发期依赖**：文档生成器带 `//go:build openapi` 标签，release 构建完全不包含 kin-openapi / yaml 等开发期依赖；
+- **schema 自研反射生成**：组件化 `$ref` 去重、递归类型防栈溢出、`time.Time`/`[]byte`/泛型等开箱即用；
+- **逃生舱体系**：遇到模板覆盖不了的场景，按优先级开逃生舱——`header` 标签绑定 → `contract.Response[R]` 响应定制（状态码/响应头/Cookie）→ `contract.WithFramework` 注入框架上下文；
+- **中间件文档钩子**：中间件按函数名（反射派生）可选注册文档钩子（如鉴权中间件自动标注 BearerAuth），未注册钩子的中间件照常运行但不污染文档；
+- **性能可控**：统一模板相对原生 gin Handler 的单请求开销约 0.8~1.9µs（反射调用），挂载期预计算 + 字段元数据缓存已将额外分配降到每次请求 4~6 个。
+
+
+## License
+
+MIT

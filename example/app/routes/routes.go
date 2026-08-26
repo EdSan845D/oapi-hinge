@@ -9,10 +9,10 @@
 package routes
 
 import (
-	"fuego-hinge/app/handlers"
-	"fuego-hinge/app/middleware"
-	"fuego-hinge/internal/contract"
-	"fuego-hinge/internal/response"
+	"github.com/EdSan845D/oapi-hinge/example/app/handlers"
+	"github.com/EdSan845D/oapi-hinge/example/app/middleware"
+	"github.com/EdSan845D/oapi-hinge/contract"
+	"github.com/EdSan845D/oapi-hinge/contract/response"
 )
 
 // BasePath API 统一前缀

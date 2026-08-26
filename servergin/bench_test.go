@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"fuego-hinge/internal/contract"
-	"fuego-hinge/internal/response"
+	"github.com/EdSan845D/oapi-hinge/contract"
+	"github.com/EdSan845D/oapi-hinge/contract/response"
 
 	"github.com/gin-gonic/gin"
 )

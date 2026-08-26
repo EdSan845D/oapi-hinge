@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"fuego-hinge/internal/contract"
-	"fuego-hinge/internal/validator"
+	"github.com/EdSan845D/oapi-hinge/contract"
+	"github.com/EdSan845D/oapi-hinge/contract/validator"
 
 	"github.com/labstack/echo/v4"
 )
@@ -26,6 +26,9 @@ type envelope struct {
 	Data any    `json:"data"`
 	Msg  string `json:"msg"`
 }
+
+// codeError 业务错误码（与 contract/response.CodeError 一致，适配器内部使用）
+const codeError = 7
 
 // Server echo 运行时服务器装配器
 type Server struct {
@@ -173,7 +176,7 @@ func defaultErrorMapper(err error) (int, int) {
 	if errors.Is(err, contract.ErrNotFound) {
 		return http.StatusNotFound, http.StatusNotFound
 	}
-	return http.StatusOK, 7 // 与 response.CodeError 一致
+	return http.StatusOK, codeError
 }
 
 func okWithData(c echo.Context, data any) error {
@@ -185,7 +188,7 @@ func okWithDataStatus(c echo.Context, status int, data any) error {
 }
 
 func failWithMessage(c echo.Context, msg string) error {
-	return c.JSON(http.StatusOK, envelope{7, nil, msg})
+	return c.JSON(http.StatusOK, envelope{codeError, nil, msg})
 }
 
 func failWithCode(c echo.Context, code int, msg string) error {

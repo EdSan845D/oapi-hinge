@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"fuego-hinge/internal/response"
+	"github.com/EdSan845D/oapi-hinge/contract/response"
 )
 
 // ============ 示例业务：用户管理（内存存储，开箱即跑） ============

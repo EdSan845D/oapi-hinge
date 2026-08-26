@@ -9,9 +9,9 @@ import (
 	"flag"
 	"fmt"
 
-	"fuego-hinge/app/middleware"
-	"fuego-hinge/app/routes"
-	"fuego-hinge/internal/openapi"
+	"github.com/EdSan845D/oapi-hinge/example/app/middleware"
+	"github.com/EdSan845D/oapi-hinge/example/app/routes"
+	"github.com/EdSan845D/oapi-hinge/openapi"
 
 	"github.com/getkin/kin-openapi/openapi3"
 )

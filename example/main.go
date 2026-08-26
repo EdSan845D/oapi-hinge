@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"os"
 
-	"fuego-hinge/app/routes"
-	"fuego-hinge/internal/servergin"
+	"github.com/EdSan845D/oapi-hinge/example/app/routes"
+	"github.com/EdSan845D/oapi-hinge/servergin"
 
 	scalargo "github.com/bdpiprava/scalar-go"
 	"github.com/gin-gonic/gin"
