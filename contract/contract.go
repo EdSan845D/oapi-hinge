@@ -8,6 +8,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+
+	"github.com/EdSan845D/oapi-hinge/contract/response"
 )
 
 // NoReq 无入参的 Handler 使用该类型占位
@@ -16,7 +18,8 @@ type NoReq struct{}
 // Empty 无响应数据的操作使用该类型占位（序列化为 data: null）
 type Empty struct{}
 
-// ErrNotFound 资源不存在（运行时适配器映射为 HTTP 404）
+// ErrNotFound 资源不存在（运行时适配器映射为 HTTP 404）。
+// 需要携带对外信息时优先使用 contract.NotFound(msg)（StatusError）。
 var ErrNotFound = errors.New("not found")
 
 // FileStream 二进制下载响应。运行时适配器识别该类型后直接输出流，
@@ -62,8 +65,7 @@ func WithFramework(ctx context.Context, fw any) context.Context {
 
 // Framework 取出框架上下文对象；未注入时返回 nil
 func Framework(ctx context.Context) any {
-	v, _ := ctx.Value(frameworkKey{}).(any)
-	return v
+	return ctx.Value(frameworkKey{})
 }
 
 // AdaptHandler 统一 Handler 模板：
@@ -80,28 +82,39 @@ type RouteMeta[Q, B, R any] struct {
 	Summary     string
 	Description string
 	Tags        []string
-	Handler     AdaptHandler[Q, B, R]
+	// DefaultStatusCode 成功响应默认 HTTP 状态码；0 → 200。
+	// 动态覆盖优先级：contract.Response[R].Status（逃生舱 2）> DefaultStatusCode > 200。
+	// OpenAPI 文档生成器读取该值作为成功响应码（替代硬编码 200）。
+	DefaultStatusCode int
+	// Envelope 路由级响应壳；nil → 服务级默认壳（server.SetEnvelope）。
+	// 文档侧壳 schema 用 openapi.OptionWithEnvelopeSchema 配对配置。
+	Envelope response.Envelope
+	Handler  AdaptHandler[Q, B, R]
 }
 
 // Route 路由表条目（非泛型；Handler 由适配器通过反射消费，Q/B/R 泛型信息由 New 在构造期保证）
 type Route struct {
-	Method      string
-	Path        string
-	Summary     string
-	Description string
-	Tags        []string
-	Handler     any // func(context.Context, Q, B) (R, error)
+	Method            string
+	Path              string
+	Summary           string
+	Description       string
+	Tags              []string
+	DefaultStatusCode int
+	Envelope          response.Envelope
+	Handler           any // func(context.Context, Q, B) (R, error)
 }
 
 // New 以强类型方式构造路由表条目
 func New[Q, B, R any](m RouteMeta[Q, B, R]) Route {
 	return Route{
-		Method:      m.Method,
-		Path:        m.Path,
-		Summary:     m.Summary,
-		Description: m.Description,
-		Tags:        m.Tags,
-		Handler:     m.Handler,
+		Method:            m.Method,
+		Path:              m.Path,
+		Summary:           m.Summary,
+		Description:       m.Description,
+		Tags:              m.Tags,
+		DefaultStatusCode: m.DefaultStatusCode,
+		Envelope:          m.Envelope,
+		Handler:           m.Handler,
 	}
 }
 
@@ -117,8 +130,8 @@ var ErrNoUser = errors.New("current user not found")
 
 // CurrentUser 从上下文取出当前用户
 func CurrentUser(ctx context.Context) (any, error) {
-	user, ok := ctx.Value(userKey{}).(any)
-	if !ok || user == nil {
+	user := ctx.Value(userKey{})
+	if user == nil {
 		return nil, ErrNoUser
 	}
 	return user, nil

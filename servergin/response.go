@@ -7,20 +7,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// gin 适配器的统一响应写出函数：{code, data, msg} 壳。
-// 数据壳类型（Response[T] / Paged）在 contract/response。
-
 // CodeError 业务错误码（与 contract/response.CodeError 一致，适配器内部使用）
 const CodeError = 7
 
-// OkWithData 成功 + 数据
+// defaultEnv 包级默认壳：保持公开响应函数的存量行为（{code, data, msg}）。
+// 自定义壳请通过 Server.SetEnvelope / RouteMeta.Envelope 配置；
+// 这些函数是独立工具函数，不感知 Server 配置。
+var defaultEnv = response.DefaultEnvelope{}
+
+// OkWithData 成功 + 数据（默认壳 {code, data, msg}）
 func OkWithData(c *gin.Context, data any) {
-	c.PureJSON(http.StatusOK, response.Response[any]{response.CodeOK, data, "操作成功"})
+	OkWithDataStatus(c, http.StatusOK, data)
 }
 
-// OkWithDataStatus 成功 + 数据 + 自定义状态码（逃生舱 2：contract.Response 定制状态用）
+// OkWithDataStatus 成功 + 数据 + 自定义状态码（默认壳）
 func OkWithDataStatus(c *gin.Context, status int, data any) {
-	c.PureJSON(status, response.Response[any]{response.CodeOK, data, "操作成功"})
+	c.PureJSON(status, defaultEnv.Success(status, data))
 }
 
 // Ok 成功（data 为 null）
@@ -28,12 +30,12 @@ func Ok(c *gin.Context) {
 	OkWithData(c, nil)
 }
 
-// FailWithMessage 业务错误：HTTP 200 + code=7 + msg
+// FailWithMessage 业务错误：HTTP 200 + code=7 + msg（默认壳）
 func FailWithMessage(c *gin.Context, msg string) {
-	c.PureJSON(http.StatusOK, response.Response[any]{response.CodeError, nil, msg})
+	c.PureJSON(http.StatusOK, defaultEnv.Failure(http.StatusOK, CodeError, msg))
 }
 
-// FailWithCode 业务错误：自定义 code
+// FailWithCode 业务错误：自定义 code（默认壳）
 func FailWithCode(c *gin.Context, code int, msg string) {
-	c.PureJSON(http.StatusOK, response.Response[any]{code, nil, msg})
+	c.PureJSON(http.StatusOK, defaultEnv.Failure(http.StatusOK, code, msg))
 }

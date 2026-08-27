@@ -1,7 +1,7 @@
 //go:build openapi
 
 // Package openapi 开发期 OpenAPI 文档生成器：从统一路由注册表生成 OpenAPI 3.1 规范。
-// 纯 kin-openapi 实现（不依赖 fuego）：类型反射生成 schema（schema.go）、
+// 纯 kin-openapi 实现：类型反射生成 schema（schema.go）、
 // 路由树递归生成 operation。仅 -tags openapi 构建，release 构建零开发期依赖。
 //
 // 用法：go run -tags openapi . -out openapi.yaml
@@ -36,6 +36,7 @@ type Option = func(*openapi3.T)
 // Generate 生成 OpenAPI 文档并写入 out（.yaml/.yml -> YAML，.json -> JSON）。
 // groups 为路由分组树（routes.All()）；opts 注入文档元信息。
 func Generate(out string, groups []*contract.Group, opts ...Option) error {
+	envelopeSchema = defaultEnvelopeSchema // 重置：OptionWithEnvelopeSchema 可覆盖
 	doc := &openapi3.T{
 		OpenAPI: "3.1.0",
 		Info:    &openapi3.Info{Title: "API", Version: "0.0.0"},
@@ -47,13 +48,15 @@ func Generate(out string, groups []*contract.Group, opts ...Option) error {
 	}
 	sb := newSchemaBuilder(doc)
 
+	// 先应用 Option（含 envelopeSchema 替换），再生成路由，
+	// 保证 OptionWithEnvelopeSchema 等配置对本次生成立即生效
+	for _, opt := range opts {
+		opt(doc)
+	}
+
 	checkDuplicates(groups)
 	for _, g := range groups {
 		addGroup(doc, sb, g, "", nil)
-	}
-
-	for _, opt := range opts {
-		opt(doc)
 	}
 
 	var data []byte
@@ -120,6 +123,11 @@ func addOperation(doc *openapi3.T, sb *schemaBuilder, r contract.Route, groupPat
 	}
 
 	op.Responses = openapi3.NewResponses()
+	// 成功响应码：路由级默认状态码 > 200（配合 contract.RouteMeta.DefaultStatusCode）
+	successCode := strconv.Itoa(r.DefaultStatusCode)
+	if r.DefaultStatusCode == 0 {
+		successCode = "200"
+	}
 	op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
 		WithDescription("Unauthorized：token 缺失或无效")})
 
@@ -136,7 +144,7 @@ func addOperation(doc *openapi3.T, sb *schemaBuilder, r contract.Route, groupPat
 	case rT == reflect.TypeOf(contract.FileStream{}):
 		bin := openapi3.NewStringSchema()
 		bin.Format = "binary"
-		op.Responses.Set("200", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+		op.Responses.Set(successCode, &openapi3.ResponseRef{Value: openapi3.NewResponse().
 			WithDescription("文件二进制流").
 			WithContent(openapi3.NewContentWithSchemaRef(&openapi3.SchemaRef{Value: bin}, []string{"application/octet-stream"}))})
 		op.Responses.Set("404", &openapi3.ResponseRef{Value: openapi3.NewResponse().
@@ -144,10 +152,10 @@ func addOperation(doc *openapi3.T, sb *schemaBuilder, r contract.Route, groupPat
 	case rT == reflect.TypeOf(contract.Empty{}):
 		nilSchema := openapi3.NewObjectSchema().WithNullable()
 		nilSchema.Description = "无数据（null）"
-		op.Responses.Set("200", okResponse(doc, &openapi3.SchemaRef{Value: nilSchema}))
+		op.Responses.Set(successCode, okResponse(doc, &openapi3.SchemaRef{Value: nilSchema}))
 	default:
 		ref := sb.ref(rT)
-		op.Responses.Set("200", okResponse(doc, ref))
+		op.Responses.Set(successCode, okResponse(doc, ref))
 	}
 
 	// 合并到 Paths：同路径不同 method 共存
@@ -192,7 +200,13 @@ func mergeTags(a, b []string) []string {
 	return out
 }
 
-// okResponse 统一响应壳 {code, data, msg}
+// envelopeSchema 响应壳 schema 包装（默认 {code, data, msg}）。
+// 运行时换壳（server.SetEnvelope / RouteMeta.Envelope）后，
+// 用 openapi.OptionWithEnvelopeSchema 配对配置文档侧。
+// 包级变量 + Generate 重置：开发期工具单线程生成，不支持并发。
+var envelopeSchema EnvelopeSchema = defaultEnvelopeSchema
+
+// okResponse 响应壳 schema（默认 {code, data, msg}，可 OptionWithEnvelopeSchema 替换）
 func okResponse(doc *openapi3.T, data *openapi3.SchemaRef) *openapi3.ResponseRef {
 	env := openapi3.NewObjectSchema()
 	env.Properties = openapi3.Schemas{
@@ -202,7 +216,7 @@ func okResponse(doc *openapi3.T, data *openapi3.SchemaRef) *openapi3.ResponseRef
 	}
 	return &openapi3.ResponseRef{Value: openapi3.NewResponse().
 		WithDescription("OK").
-		WithContent(openapi3.NewContentWithSchemaRef(&openapi3.SchemaRef{Value: env}, []string{"application/json"}))}
+		WithContent(openapi3.NewContentWithSchemaRef(envelopeSchema(data), []string{"application/json"}))}
 }
 
 // queryParams 从 Q 结构体提取 query 参数（query/form 标签，内嵌结构体递归展平）
@@ -232,7 +246,7 @@ func queryParams(t reflect.Type) []*openapi3.Parameter {
 					p.Description = d
 				}
 				p.Schema = &openapi3.SchemaRef{Value: schemaByKind(f.Type)}
-				if strings.Contains(f.Tag.Get("binding"), "required") {
+				if isRequiredOpenAPI(f) {
 					p.Required = true
 				}
 				out = append(out, p)
@@ -253,7 +267,7 @@ func queryParams(t reflect.Type) []*openapi3.Parameter {
 			if dv, ok := f.Tag.Lookup("default"); ok && dv != "" {
 				p.Schema.Value.Default = parseDefault(dv, f.Type.Kind())
 			}
-			if strings.Contains(f.Tag.Get("binding"), "required") {
+			if isRequiredOpenAPI(f) {
 				p.Required = true
 			}
 			out = append(out, p)

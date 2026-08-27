@@ -120,7 +120,7 @@ func (b *schemaBuilder) buildStruct(t reflect.Type) *openapi3.Schema {
 		}
 		s.Properties[name] = ref
 		// required 规则：json 未标 omitempty，或 binding 显式 required
-		if !omit || strings.Contains(f.Tag.Get("binding"), "required") {
+		if !omit || isRequiredOpenAPI(f) {
 			required = append(required, name)
 		}
 	}
@@ -169,4 +169,11 @@ func withDescription(ref *openapi3.SchemaRef, d string) *openapi3.SchemaRef {
 		return ref
 	}
 	return &openapi3.SchemaRef{Value: &openapi3.Schema{Description: d, AllOf: []*openapi3.SchemaRef{ref}}}
+}
+
+// isRequiredOpenAPI 字段是否声明必填（binding / validate 双标签兼容。
+// 与 contract/validator 的必填标签规则保持一致）。
+func isRequiredOpenAPI(f reflect.StructField) bool {
+	return strings.Contains(f.Tag.Get("binding"), "required") ||
+		strings.Contains(f.Tag.Get("validate"), "required")
 }

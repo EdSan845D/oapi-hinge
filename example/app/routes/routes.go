@@ -9,10 +9,10 @@
 package routes
 
 import (
-	"github.com/EdSan845D/oapi-hinge/example/app/handlers"
-	"github.com/EdSan845D/oapi-hinge/example/app/middleware"
 	"github.com/EdSan845D/oapi-hinge/contract"
 	"github.com/EdSan845D/oapi-hinge/contract/response"
+	"github.com/EdSan845D/oapi-hinge/example/app/handlers"
+	"github.com/EdSan845D/oapi-hinge/example/app/middleware"
 )
 
 // BasePath API 统一前缀
@@ -55,16 +55,23 @@ func All() []*contract.Group {
 					Handler: handlers.GetUser,
 				}),
 				contract.New(contract.RouteMeta[handlers.NoReq, handlers.CreateUserReq, handlers.User]{
-					Method:  "POST",
-					Path:    "",
-					Summary: "创建用户",
-					Handler: handlers.CreateUser,
+					Method:            "POST",
+					Path:              "",
+					Summary:           "创建用户",
+					DefaultStatusCode: 201, // 成功状态码声明：文档与运行时同步生效
+					Handler:           handlers.CreateUser,
 				}),
 				contract.New(contract.RouteMeta[handlers.DeleteUserReq, any, handlers.Empty]{
 					Method:  "DELETE",
 					Path:    "/{id}",
 					Summary: "删除用户",
 					Handler: handlers.DeleteUser,
+				}),
+				contract.New(contract.RouteMeta[handlers.ChangePasswordReq, any, handlers.MaskedUser]{
+					Method:  "PATCH",
+					Path:    "/{id}/password",
+					Summary: "修改密码（出参脱敏演示）",
+					Handler: handlers.ChangePassword,
 				}),
 			},
 		},

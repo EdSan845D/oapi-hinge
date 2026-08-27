@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EdSan845D/oapi-hinge/contract"
 	"github.com/EdSan845D/oapi-hinge/contract/response"
 )
 
@@ -84,7 +85,15 @@ type CreateUserReq struct {
 	Email string `json:"email" binding:"required" description:"邮箱"`
 }
 
-// Validate 自定义校验：运行时适配器在绑定后自动调用
+// InTransform 入参规范化（升级能力）：适配器在绑定后、校验前自动调用；
+// trim 后 " Cara " 也能通过 required 必填检查
+func (r *CreateUserReq) InTransform(ctx context.Context) error {
+	r.Name = strings.TrimSpace(r.Name)
+	r.Email = strings.ToLower(r.Email)
+	return nil
+}
+
+// Validate 自定义校验：运行时适配器在校验阶段自动调用
 func (r CreateUserReq) Validate() error {
 	if !strings.Contains(r.Email, "@") {
 		return errors.New("invalid email: must contain @")
@@ -121,7 +130,7 @@ func DeleteUser(ctx context.Context, req DeleteUserReq, _ any) (Empty, error) {
 			return Empty{}, nil
 		}
 	}
-	return Empty{}, ErrNotFound
+	return Empty{}, contract.NotFound("用户不存在")
 }
 
 // Health 健康检查（无鉴权示例）
@@ -130,4 +139,46 @@ func Health(ctx context.Context, _ NoReq, _ any) (map[string]string, error) {
 		"status": "ok",
 		"time":   time.Now().Format(time.RFC3339),
 	}, nil
+}
+
+// ============ 升级能力演示：修改密码 ============
+// 演示组合：InTransform 规范化入参 + validate 标签（配合 Playground 校验器）
+// + OutTransform 出参脱敏 + StatusError 404
+
+// ChangePasswordReq 修改密码
+type ChangePasswordReq struct {
+	ID       string `path:"id" description:"用户ID"`
+	Password string `json:"password" validate:"required,min=8" description:"新密码"`
+}
+
+// InTransform 绑定后自动执行：去除首尾空白
+func (r *ChangePasswordReq) InTransform(ctx context.Context) error {
+	r.Password = strings.TrimSpace(r.Password)
+	return nil
+}
+
+// MaskedUser 脱敏后的用户信息
+type MaskedUser struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+// OutTransform 序列化前自动执行：邮箱脱敏 alice@example.com -> a***@example.com
+func (u *MaskedUser) OutTransform(ctx context.Context) error {
+	if at := strings.Index(u.Email, "@"); at > 1 {
+		u.Email = u.Email[:1] + "***" + u.Email[at:]
+	}
+	return nil
+}
+
+// ChangePassword 修改密码（业务层零框架依赖：真实场景在此更新存储中的凭证哈希）
+func ChangePassword(ctx context.Context, req ChangePasswordReq, _ any) (MaskedUser, error) {
+	usersMu.RLock()
+	defer usersMu.RUnlock()
+	for _, u := range users {
+		if u.ID == req.ID {
+			return MaskedUser{Name: u.Name, Email: u.Email}, nil
+		}
+	}
+	return MaskedUser{}, contract.NotFound("用户不存在")
 }

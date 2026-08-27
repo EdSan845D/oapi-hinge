@@ -1,6 +1,7 @@
 // Package server 运行时适配器：把统一路由注册表(routes.All())挂载到原生 Gin。
-// 职责：参数绑定 -> 校验 -> 上下文注入 -> Handler 调用 -> 统一响应序列化。
-// 设计目标：业务层零框架依赖；解析/校验/错误映射/中间件均可扩展。
+// 职责：参数绑定 -> 入参转换 -> 校验 -> 上下文注入 -> Handler 调用 ->
+// 出参转换 -> 状态码决策 -> 响应壳包装 -> 写出。
+// 设计目标：业务层零框架依赖；解析/校验/错误映射/响应壳均可扩展。
 package servergin
 
 import (
@@ -15,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/EdSan845D/oapi-hinge/contract"
+	"github.com/EdSan845D/oapi-hinge/contract/response"
 	"github.com/EdSan845D/oapi-hinge/contract/validator"
 
 	"github.com/gin-gonic/gin"
@@ -25,10 +27,13 @@ type Server struct {
 	middlewares []gin.HandlerFunc
 	// 校验器：绑定后按注册顺序执行（内置标签必填校验 + Validate() 方法在绑定阶段完成）
 	validators []validator.Func
-	// 错误映射：默认 ErrNotFound -> 404，其余业务错误 -> 200 + code:7
+	// 错误映射：默认 ErrNotFound -> 404，其余业务错误 -> 200 + code:7。
+	// 优先级低于错误自带状态码（contract.StatusError / contract.StatusCoder）。
 	mapError func(err error) (httpStatus, bizCode int)
 	// 上下文装饰：把 gin 上下文中的用户/claims 注入 handler 的 context.Context
 	decorate func(c *gin.Context, ctx context.Context) context.Context
+	// 响应壳：成功/失败统一经过其包装（默认 {code, data, msg}）
+	envelope response.Envelope
 }
 
 // New 创建 Server
@@ -38,6 +43,7 @@ func New() *Server {
 	s.decorate = func(c *gin.Context, ctx context.Context) context.Context {
 		return contract.WithFramework(ctx, c)
 	}
+	s.envelope = response.DefaultEnvelope{}
 	return s
 }
 
@@ -49,13 +55,14 @@ func (s *Server) Use(mw ...gin.HandlerFunc) *Server {
 }
 
 // AddValidator 扩展点：注册自定义校验器（绑定后执行），
-// 见 validator 包：内置标签必填 + Validate() 接口调用
+// 见 validator 包：内置标签必填 + Validate() 接口调用；validator.Playground() 接入完整校验规则
 func (s *Server) AddValidator(v validator.Func) *Server {
 	s.validators = append(s.validators, v)
 	return s
 }
 
-// SetErrorMapper 扩展点：自定义 错误 -> (HTTP状态码, 业务code) 映射
+// SetErrorMapper 扩展点：自定义 错误 -> (HTTP状态码, 业务code) 映射。
+// 仅对不携带状态码的普通错误生效（StatusError / StatusCoder 优先）。
 func (s *Server) SetErrorMapper(fn func(err error) (httpStatus, bizCode int)) *Server {
 	s.mapError = fn
 	return s
@@ -64,6 +71,16 @@ func (s *Server) SetErrorMapper(fn func(err error) (httpStatus, bizCode int)) *S
 // SetContextDecorator 扩展点：把 gin 上下文信息注入 handler 的 context.Context
 func (s *Server) SetContextDecorator(fn func(c *gin.Context, ctx context.Context) context.Context) *Server {
 	s.decorate = fn
+	return s
+}
+
+// SetEnvelope 扩展点：自定义响应壳。
+// 传入 nil 恢复默认壳 {code, data, msg}；路由级覆盖见 contract.RouteMeta.Envelope。
+// 文档侧请用 openapi.OptionWithEnvelopeSchema 配对配置（两者独立）。
+func (s *Server) SetEnvelope(env response.Envelope) *Server {
+	if env != nil {
+		s.envelope = env
+	}
 	return s
 }
 
@@ -102,11 +119,24 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 	h := reflect.ValueOf(r.Handler)
 	qType := h.Type().In(1)
 	bType := h.Type().In(2)
+	// 响应壳：路由级覆盖 > 服务级
+	env := s.envelope
+	if r.Envelope != nil {
+		env = r.Envelope
+	}
+	// 成功默认状态码：路由级 > 200
+	successStatus := r.DefaultStatusCode
+	if successStatus == 0 {
+		successStatus = http.StatusOK
+	}
+	fail := func(c *gin.Context, status, code int, msg string) {
+		c.PureJSON(status, env.Failure(status, code, msg))
+	}
 	g.Handle(r.Method, ginPath(r.Path), func(c *gin.Context) {
 		// Q：query/path 参数解析
 		q := newValue(qType)
 		if err := bindQueryPath(c, q.Interface()); err != nil {
-			FailWithMessage(c, err.Error())
+			fail(c, http.StatusOK, CodeError, err.Error())
 			return
 		}
 
@@ -115,7 +145,12 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 		if isBodyMethod(r.Method) && bType.Kind() != reflect.Interface {
 			if c.Request.Body != nil && c.Request.ContentLength > 0 {
 				if err := c.ShouldBindJSON(b.Interface()); err != nil {
-					FailWithMessage(c, err.Error())
+					fail(c, http.StatusOK, CodeError, err.Error())
+					return
+				}
+				// 入参转换：绑定后、校验前
+				if err := contract.TransformIn(c.Request.Context(), b.Interface()); err != nil {
+					fail(c, http.StatusOK, CodeError, err.Error())
 					return
 				}
 			}
@@ -123,7 +158,7 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 
 		// 校验：内置（标签 required + Validate() 接口）+ 自定义校验器
 		if err := validator.Run(c.Request.Context(), r.Method, q.Interface(), b.Interface(), s.validators...); err != nil {
-			FailWithMessage(c, err.Error())
+			fail(c, http.StatusOK, CodeError, err.Error())
 			return
 		}
 
@@ -133,19 +168,15 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 		out := h.Call([]reflect.Value{reflect.ValueOf(ctx), q.Elem(), b.Elem()})
 		if ei := out[1].Interface(); ei != nil {
 			err := ei.(error)
-			status, code := s.mapError(err)
-			if status != http.StatusOK {
-				c.AbortWithStatusJSON(status, gin.H{"error": err.Error()})
-				return
-			}
-			FailWithCode(c, code, err.Error())
+			status, code, msg := resolveError(s, err)
+			fail(c, status, code, msg)
 			return
 		}
 
-		resp := out[0].Interface()
-		// 逃生舱 2：响应定制壳（Status/Headers/Cookies）
-		status := http.StatusOK
-		if w, ok := resp.(contract.ResponseWrapper); ok {
+		// 出参转换 + 逃生舱 2 解包（响应定制壳 Status/Headers/Cookies）
+		status := successStatus
+		respVal := out[0]
+		if w, ok := respVal.Interface().(contract.ResponseWrapper); ok {
 			if w.ResponseStatus() != 0 {
 				status = w.ResponseStatus()
 			}
@@ -155,25 +186,67 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 			for _, cookie := range w.ResponseCookies() {
 				http.SetCookie(c.Writer, cookie)
 			}
-			resp = w.ResponseData()
+			respVal = reflect.ValueOf(w.ResponseData())
 		}
-		switch v := resp.(type) {
+		// 出参转换：序列化之前（脱敏/裁剪/补充字段）
+		tv, err := contract.TransformOut(c.Request.Context(), respVal)
+		if err != nil {
+			status, code, msg := resolveError(s, err)
+			fail(c, status, code, msg)
+			return
+		}
+		respAny := tv.Interface()
+
+		switch v := respAny.(type) {
 		case *contract.FileStream:
 			if v == nil {
-				FailWithMessage(c, "file not found")
+				fail(c, http.StatusNotFound, http.StatusNotFound, "file not found")
 				return
 			}
 			serveFile(c, v)
 		case contract.Empty:
-			OkWithDataStatus(c, status, nil)
+			c.PureJSON(status, env.Success(status, nil))
 		default:
-			OkWithDataStatus(c, status, resp)
+			c.PureJSON(status, env.Success(status, respAny))
 		}
 	})
 }
 
+// resolveError 错误 → (HTTP状态码, 业务code, 对外信息)。
+// 优先级：contract.StatusError（自带状态码/业务码/信息）→ contract.StatusCoder（仅状态码）
+// → SetErrorMapper 全局映射（存量行为）。
+func resolveError(s *Server, err error) (int, int, string) {
+	var se *contract.StatusError
+	if errors.As(err, &se) {
+		status := se.StatusCode()
+		code := se.Code
+		if code == 0 {
+			if status == http.StatusOK {
+				code = CodeError
+			} else {
+				code = status
+			}
+		}
+		msg := se.Msg
+		if msg == "" {
+			msg = err.Error()
+		}
+		return status, code, msg
+	}
+	var sc contract.StatusCoder
+	if errors.As(err, &sc) {
+		status := sc.StatusCode()
+		if status == 0 {
+			status = http.StatusInternalServerError
+		}
+		return status, CodeError, err.Error()
+	}
+	status, code := s.mapError(err)
+	return status, code, err.Error()
+}
+
 // 默认错误映射：ErrNotFound -> 404；其余业务错误 -> HTTP 200 + code:7
-// （如需 RESTful 语义（如 400/422），用 SetErrorMapper 覆盖）
+// （如需 RESTful 语义（如 400/422），用 SetErrorMapper 覆盖或返回 StatusError）
 func defaultErrorMapper(err error) (int, int) {
 	if errors.Is(err, contract.ErrNotFound) {
 		return http.StatusNotFound, http.StatusNotFound
@@ -248,7 +321,6 @@ func parseFields(t reflect.Type) []fieldMeta {
 		var m fieldMeta
 		m.index = i
 		m.kind = f.Type.Kind()
-		m.required = strings.Contains(f.Tag.Get("binding"), "required")
 		m.path, _ = tagValue(f, "path")
 		m.query, _ = tagValue(f, "query")
 		m.form, _ = tagValue(f, "form")
@@ -259,7 +331,8 @@ func parseFields(t reflect.Type) []fieldMeta {
 	return out
 }
 
-// bindQueryPath 按预解析的字段元数据绑定（query/form/path/header 标签）
+// bindQueryPath 按预解析的字段元数据绑定（query/form/path/header 标签）。
+// 必填校验统一在 validator.Run 执行（binding/validate 双标签），此处不再重复。
 func bindQueryPath(c *gin.Context, req any) error {
 	rv := reflect.ValueOf(req)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
@@ -306,13 +379,11 @@ func bindFields(c *gin.Context, e reflect.Value, metas []fieldMeta) error {
 			if err := setValue(c, f, name, false); err != nil {
 				return err
 			}
-			if m.required && f.IsZero() {
-				return fmt.Errorf("%s is required", name)
-			}
 		}
 	}
 	return nil
 }
+
 func tagValue(ft reflect.StructField, key string) (string, bool) {
 	v := ft.Tag.Get(key)
 	if v == "" {

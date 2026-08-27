@@ -118,6 +118,71 @@ openapi.Generate("openapi.yaml", routes.All(),
 // 运行：go run -tags openapi . -out openapi.yaml
 ```
 
+## 可插拔能力
+
+### 响应壳自由定制
+
+默认统一壳 `{code, data, msg}`；不想用壳时一行切换：
+
+```go
+s.SetEnvelope(response.RawEnvelope{}) // 成功裸输出 data，失败 {"error": msg}
+```
+
+或实现 `response.Envelope` 接口输出任意风格（RFC 9457、自定义协议等）；个别接口需不同壳时用 `RouteMeta.Envelope` 路由级覆盖。文档侧用 `openapi.OptionWithEnvelopeSchema(...)` 同步配置壳 schema。
+
+### 错误携带状态码
+
+```go
+func GetUser(ctx context.Context, req GetUserReq, _ any) (User, error) {
+    ...
+    return User{}, contract.NotFound("用户不存在") // HTTP 404 + {"code":404,"msg":"用户不存在"}
+}
+```
+
+便捷构造器：`BadRequest`/`Unauthorized`/`Forbidden`/`NotFound`/`Conflict`/`Internal`；自定义 error 类型只需实现 `StatusCoder` 接口即可携带状态码。非 200 错误与成功响应走同一套壳，格式始终一致。全局兜底仍可用 `SetErrorMapper`。
+
+### 成功状态码可声明
+
+```go
+contract.New(contract.RouteMeta[NoReq, CreateUserReq, User]{
+    Method:            "POST",
+    DefaultStatusCode: 201, // 文档与运行时同步生效
+    Handler:           handlers.CreateUser,
+})
+```
+
+动态覆盖优先级：`contract.Response[R]{Status}`（单次调用）> `DefaultStatusCode`（路由级）> 200。
+
+### 入参转换 / 出参加工
+
+```go
+// 绑定后、校验前自动调用：trim 后能通过 required 必填检查
+func (r *CreateUserReq) InTransform(ctx context.Context) error {
+    r.Name = strings.TrimSpace(r.Name)
+    return nil
+}
+
+// 序列化前自动调用：邮箱脱敏 alice@example.com -> a***@example.com
+func (u *MaskedUser) OutTransform(ctx context.Context) error {
+    if at := strings.Index(u.Email, "@"); at > 1 {
+        u.Email = u.Email[:1] + "***" + u.Email[at:]
+    }
+    return nil
+}
+```
+
+业务层只写纯函数，适配器自动触发，无需在 handler 里手动调用。
+
+### 校验器扩展
+
+内置必填标签双兼容（`binding:"required"` / `validate:"required"`）+ 结构体 `Validate()` 方法；需要完整规则时一行接入：
+
+```go
+s.AddValidator(validator.Playground()) // 支持 validate:"required,email,min=8" 等
+```
+
+不调用则完全不引入 go-playground 依赖。
+
 ## 框架特色
 
 - **类型即契约**：Handler 的 Q/B/R 泛型参数直接驱动参数绑定与 OpenAPI schema 生成，业务层写一次，运行时和文档同时就绪；

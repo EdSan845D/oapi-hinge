@@ -1,0 +1,29 @@
+package validator
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/go-playground/validator/v10"
+)
+
+// playground 包级单例（validator.New 开销大，复用实例）
+var playground = validator.New()
+
+// Playground 返回 go-playground/validator 封装校验器：支持 validate:"..." 完整规则
+// （required、email、min、max、oneof、自定义 tag 等。
+//
+// 使用：server.AddValidator(validator.Playground())
+//
+// 注意：调用本函数会引入 go-playground/validator 依赖（仅被 import 时才编译进二进制）；
+// 只使用内置 required + Validate() 的项目无需调用。
+func Playground() Func {
+	return func(ctx context.Context, method string, q, b any) error {
+		for _, v := range []any{q, b} {
+			if err := playground.Struct(v); err != nil {
+				return fmt.Errorf("validate failed: %w", err)
+			}
+		}
+		return nil
+	}
+}

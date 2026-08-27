@@ -1,7 +1,7 @@
 //go:build openapi
 
 // 开发期文档生成入口：go run -tags openapi . -out openapi.yaml
-// fuego 仅在本构建中作为 OpenAPI 文档生成器使用；
+// 仅在本构建中作为 OpenAPI 文档生成器使用；
 // 本文件与 internal/openapi 不参与 release 构建，运行时零开发期依赖。
 package main
 
