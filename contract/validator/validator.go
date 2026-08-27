@@ -28,6 +28,10 @@ type Func func(ctx context.Context, method string, q, b any) error
 // q/b 传指针（与绑定阶段一致）。
 func Run(ctx context.Context, method string, q, b any, custom ...Func) error {
 	for _, v := range []any{q, b} {
+		// nil（含底层为 nil 的指针/接口等）直接跳过：避免误判必填、nil 接收者 panic。
+		if isNil(v) {
+			continue
+		}
 		if err := checkRequired(v); err != nil {
 			return err
 		}
@@ -43,6 +47,20 @@ func Run(ctx context.Context, method string, q, b any, custom ...Func) error {
 		}
 	}
 	return nil
+}
+
+// isNil 判断 any 是否为 nil：包含接口为 nil，以及底层为 nil 的指针/切片/映射/chan/func/接口。
+// 适配器对 Q/B 类型为 interface{}（如 any/占位）时生成 (*interface{})(nil)，v == nil 判断不到，
+func isNil(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	}
+	return false
 }
 
 // checkRequired 检查结构体必填标签（binding:"required" 或 validate:"required"）。

@@ -13,10 +13,10 @@ import (
 )
 
 // NoReq 无入参的 Handler 使用该类型占位
-type NoReq struct{}
+type NoReq any
 
 // Empty 无响应数据的操作使用该类型占位（序列化为 data: null）
-type Empty struct{}
+type Empty any
 
 // ErrNotFound 资源不存在（运行时适配器映射为 HTTP 404）。
 // 需要携带对外信息时优先使用 contract.NotFound(msg)（StatusError）。
@@ -31,7 +31,7 @@ type FileStream struct {
 	Reader      io.Reader
 }
 
-// Response 响应定制壳（逃生舱 2）：业务层返回 contract.Response[R] 时，
+// Response 响应定制壳：业务层返回 contract.Response[R] 时，
 // 适配器应用 Status/Headers/Cookies 后，Data 仍走统一 envelope {code, data, msg}。
 // 例：return contract.Response[handlers.User]{Status: 201, Headers: ..., Data: u}, nil
 type Response[R any] struct {
@@ -56,9 +56,9 @@ func (r Response[R]) ResponseData() any                  { return r.Data }
 
 type frameworkKey struct{}
 
-// WithFramework 注入框架上下文对象（逃生舱 3）：适配器在 decorate 阶段把
-// gin.Context / echo.Context 存入 context，业务层按需断言使用（最后手段，
-// 代价是业务层与框架耦合，仅限无法模板化的少数场景）。
+// WithFramework 注入框架上下文对象：适配器在 decorate 阶段把
+// gin.Context / echo.Context 存入 context，业务层按需断言使用
+// 代价是业务层与框架耦合，仅限无法模板化的少数场景。
 func WithFramework(ctx context.Context, fw any) context.Context {
 	return context.WithValue(ctx, frameworkKey{}, fw)
 }

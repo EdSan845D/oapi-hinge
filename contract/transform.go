@@ -43,7 +43,8 @@ func TransformIn(ctx context.Context, v any) error {
 // （reflect.Call 的返回值，值类型可能不可寻址）。
 // 返回转换后的值；指针接收者实现且为值类型时，写回拷贝。
 func TransformOut(ctx context.Context, v reflect.Value) (reflect.Value, error) {
-	if !v.IsValid() {
+	// 无效值 / nil 接口（handler 返回 nil，如 Empty=any 的 return nil）：原样透传
+	if !v.IsValid() || (v.Kind() == reflect.Interface && v.IsNil()) {
 		return v, nil
 	}
 	if v.Kind() == reflect.Pointer {

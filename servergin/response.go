@@ -8,7 +8,7 @@ import (
 )
 
 // CodeError 业务错误码（与 contract/response.CodeError 一致，适配器内部使用）
-const CodeError = 7
+var CodeError int = 7
 
 // defaultEnv 包级默认壳：保持公开响应函数的存量行为（{code, data, msg}）。
 // 自定义壳请通过 Server.SetEnvelope / RouteMeta.Envelope 配置；

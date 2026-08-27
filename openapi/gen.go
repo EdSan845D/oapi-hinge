@@ -92,7 +92,7 @@ func addGroup(doc *openapi3.T, sb *schemaBuilder, g *contract.Group, prefix stri
 // Handler 模板：func(context.Context, Q, B) (R, error)
 //   - Q：query 参数来自 `query` 标签，path 参数来自路径 {id}
 //   - B：interface{} 表示无 body，否则整包作为 application/json 请求体
-//   - R：Data 段 schema；*FileStream 输出二进制流，Empty 输出 null
+//   - R：Data 段 schema；*FileStream 输出二进制流，接口类型（Empty/any）输出任意 JSON 值 schema
 //   - 中间件文档钩子按函数名匹配（见 RegisterMiddlewareDoc），可修改 operation
 func addOperation(doc *openapi3.T, sb *schemaBuilder, r contract.Route, groupPath string, groupTags []string, mws []any) {
 	op := openapi3.NewOperation()
@@ -149,10 +149,10 @@ func addOperation(doc *openapi3.T, sb *schemaBuilder, r contract.Route, groupPat
 			WithContent(openapi3.NewContentWithSchemaRef(&openapi3.SchemaRef{Value: bin}, []string{"application/octet-stream"}))})
 		op.Responses.Set("404", &openapi3.ResponseRef{Value: openapi3.NewResponse().
 			WithDescription("文件不存在")})
-	case rT == reflect.TypeOf(contract.Empty{}):
-		nilSchema := openapi3.NewObjectSchema().WithNullable()
-		nilSchema.Description = "无数据（null）"
-		op.Responses.Set(successCode, okResponse(doc, &openapi3.SchemaRef{Value: nilSchema}))
+	case rT.Kind() == reflect.Interface:
+		// 接口类型响应（Empty=any / 裸 any）：空 schema 表示任意 JSON 值，
+		// 实际返回 null 时序列化为 data: null
+		op.Responses.Set(successCode, okResponse(doc, &openapi3.SchemaRef{Value: openapi3.NewSchema()}))
 	default:
 		ref := sb.ref(rT)
 		op.Responses.Set(successCode, okResponse(doc, ref))

@@ -119,3 +119,33 @@ func TestEchoUpgrade(t *testing.T) {
 		t.Fatalf("default envelope: %s", rec.Body.String())
 	}
 }
+
+// ============ 占位类型接口化（NoReq/Empty 为 defined type any）============
+// 其余升级能力测试见 server_test.go。
+
+func echoAnyHandler(ctx context.Context, _ contract.NoReq, _ any) (contract.Empty, error) {
+	return nil, nil
+}
+
+func TestEchoAnyPlaceholders(t *testing.T) {
+	e := echo.New()
+	groups := []*contract.Group{
+		{
+			Prefix: "/api",
+			Routes: []contract.Route{
+				contract.New(contract.RouteMeta[contract.NoReq, any, contract.Empty]{
+					Method: "GET", Path: "/empty", Summary: "全占位",
+					Handler: echoAnyHandler,
+				}),
+			},
+		},
+	}
+	New().Mount(e.Group(""), groups)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/empty", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"data":null`) {
+		t.Fatalf("any placeholders = %d %s", rec.Code, rec.Body.String())
+	}
+}

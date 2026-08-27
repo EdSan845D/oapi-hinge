@@ -133,39 +133,48 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 		c.PureJSON(status, env.Failure(status, code, msg))
 	}
 	g.Handle(r.Method, ginPath(r.Path), func(c *gin.Context) {
-		// Q：query/path 参数解析
-		q := newValue(qType)
-		if err := bindQueryPath(c, q.Interface()); err != nil {
-			fail(c, http.StatusOK, CodeError, err.Error())
-			return
+		// Q：query/path 参数解析。
+		// Q 为接口类型（contract.NoReq / any 等占位）时视为无入参：跳过绑定与校验，
+		// handler 收到 nil；具体结构体按标签绑定后进入校验流程。
+		qArg := reflect.New(qType).Elem()
+		if qType.Kind() != reflect.Interface {
+			q := newValue(qType)
+			if err := bindQueryPath(c, q.Interface()); err != nil {
+				fail(c, http.StatusOK, CodeError, err.Error())
+				return
+			}
+			qArg = q.Elem()
 		}
 
-		// B：JSON body 解析（非 body 方法或无 body 路由跳过）
-		b := newValue(bType)
+		// B：JSON body 解析（非 body 方法、无 body 或接口占位 any 时跳过）
+		bArg := reflect.New(bType).Elem()
 		if isBodyMethod(r.Method) && bType.Kind() != reflect.Interface {
+			b := newValue(bType)
 			if c.Request.Body != nil && c.Request.ContentLength > 0 {
 				if err := c.ShouldBindJSON(b.Interface()); err != nil {
 					fail(c, http.StatusOK, CodeError, err.Error())
 					return
 				}
-				// 入参转换：绑定后、校验前
+				// 入参转换：绑定后、校验前。第一参数使用请求级 context.Context，
+				// 避免 gin.Context 渗入 contract 层（echo 适配器无法等价对齐该写法）
 				if err := contract.TransformIn(c.Request.Context(), b.Interface()); err != nil {
 					fail(c, http.StatusOK, CodeError, err.Error())
 					return
 				}
+				bArg = b.Elem()
 			}
 		}
 
 		// 校验：内置（标签 required + Validate() 接口）+ 自定义校验器
-		if err := validator.Run(c.Request.Context(), r.Method, q.Interface(), b.Interface(), s.validators...); err != nil {
+		if err := validator.Run(c.Request.Context(), r.Method, checkTarget(qType, qArg), checkTarget(bType, bArg), s.validators...); err != nil {
 			fail(c, http.StatusOK, CodeError, err.Error())
 			return
 		}
 
-		// 上下文注入
+		// 上下文注入 (是否有必要传gin.Context以获取更多功能)
 		ctx := s.decorate(c, c.Request.Context())
 
-		out := h.Call([]reflect.Value{reflect.ValueOf(ctx), q.Elem(), b.Elem()})
+		out := h.Call([]reflect.Value{reflect.ValueOf(ctx), qArg, bArg})
 		if ei := out[1].Interface(); ei != nil {
 			err := ei.(error)
 			status, code, msg := resolveError(s, err)
@@ -197,18 +206,18 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 		}
 		respAny := tv.Interface()
 
-		switch v := respAny.(type) {
-		case *contract.FileStream:
-			if v == nil {
+		// 写出：FileStream 直接输出流；其余（含 Empty/any 占位、nil 数据）统一壳写出。
+		// 注意：Empty 已为接口类型（defined type any），不能作为 type switch 分支——
+		// 接口 case 会匹配一切实现（吞掉全部非流响应），必须显式判断。
+		if f, ok := respAny.(*contract.FileStream); ok {
+			if f == nil {
 				fail(c, http.StatusNotFound, http.StatusNotFound, "file not found")
 				return
 			}
-			serveFile(c, v)
-		case contract.Empty:
-			c.PureJSON(status, env.Success(status, nil))
-		default:
-			c.PureJSON(status, env.Success(status, respAny))
+			serveFile(c, f)
+			return
 		}
+		c.PureJSON(status, env.Success(status, respAny))
 	})
 }
 
@@ -216,8 +225,7 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 // 优先级：contract.StatusError（自带状态码/业务码/信息）→ contract.StatusCoder（仅状态码）
 // → SetErrorMapper 全局映射（存量行为）。
 func resolveError(s *Server, err error) (int, int, string) {
-	var se *contract.StatusError
-	if errors.As(err, &se) {
+	if se, ok := errors.AsType[*contract.StatusError](err); ok {
 		status := se.StatusCode()
 		code := se.Code
 		if code == 0 {
@@ -233,8 +241,7 @@ func resolveError(s *Server, err error) (int, int, string) {
 		}
 		return status, code, msg
 	}
-	var sc contract.StatusCoder
-	if errors.As(err, &sc) {
+	if sc, ok := errors.AsType[contract.StatusCoder](err); ok {
 		status := sc.StatusCode()
 		if status == 0 {
 			status = http.StatusInternalServerError
@@ -252,6 +259,15 @@ func defaultErrorMapper(err error) (int, int) {
 		return http.StatusNotFound, http.StatusNotFound
 	}
 	return http.StatusOK, CodeError
+}
+
+// checkTarget 校验入参目标：接口类型占位（NoReq/any 等）返回 nil（validator.isNil 跳过）；
+// 具体结构体返回其指针（与绑定阶段一致）
+func checkTarget(t reflect.Type, v reflect.Value) any {
+	if t.Kind() == reflect.Interface {
+		return nil
+	}
+	return v.Addr().Interface()
 }
 
 func newValue(t reflect.Type) reflect.Value {
@@ -345,8 +361,8 @@ func bindQueryPath(c *gin.Context, req any) error {
 func bindFields(c *gin.Context, e reflect.Value, metas []fieldMeta) error {
 	for _, m := range metas {
 		f := e.Field(m.index)
+		sub := f
 		if len(m.children) > 0 {
-			sub := f
 			if sub.Kind() == reflect.Pointer {
 				if sub.IsNil() {
 					sub.Set(reflect.New(sub.Type().Elem()))

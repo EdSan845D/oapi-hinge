@@ -125,15 +125,22 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 			return c.JSON(status, env.Failure(status, code, msg))
 		}
 
-		// Q：query/path 参数解析
-		q := newValue(t.In(1))
-		if err := bindQueryPath(c, q.Interface()); err != nil {
-			return fail(http.StatusOK, codeError, err.Error())
+		// Q：query/path 参数解析。
+		// Q 为接口类型（contract.NoReq / any 等占位）时视为无入参：跳过绑定与校验，
+		// handler 收到 nil；具体结构体按标签绑定后进入校验流程。
+		qArg := reflect.New(t.In(1)).Elem()
+		if t.In(1).Kind() != reflect.Interface {
+			q := newValue(t.In(1))
+			if err := bindQueryPath(c, q.Interface()); err != nil {
+				return fail(http.StatusOK, codeError, err.Error())
+			}
+			qArg = q.Elem()
 		}
 
-		// B：JSON body 解析（非 body 方法或无 body 路由跳过）
-		b := newValue(t.In(2))
+		// B：JSON body 解析（非 body 方法、无 body 或接口占位 any 时跳过）
+		bArg := reflect.New(t.In(2)).Elem()
 		if isBodyMethod(r.Method) && t.In(2).Kind() != reflect.Interface {
+			b := newValue(t.In(2))
 			if c.Request().Body != nil && c.Request().ContentLength > 0 {
 				if err := c.Bind(b.Interface()); err != nil {
 					return fail(http.StatusOK, codeError, err.Error())
@@ -142,18 +149,19 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 				if err := contract.TransformIn(c.Request().Context(), b.Interface()); err != nil {
 					return fail(http.StatusOK, codeError, err.Error())
 				}
+				bArg = b.Elem()
 			}
 		}
 
 		// 校验：内置（标签 required + Validate() 接口）+ 自定义校验器
-		if err := validator.Run(c.Request().Context(), r.Method, q.Interface(), b.Interface(), s.validators...); err != nil {
+		if err := validator.Run(c.Request().Context(), r.Method, checkTarget(t.In(1), qArg), checkTarget(t.In(2), bArg), s.validators...); err != nil {
 			return fail(http.StatusOK, codeError, err.Error())
 		}
 
 		// 上下文注入
 		ctx := s.decorate(c, c.Request().Context())
 
-		out := h.Call([]reflect.Value{reflect.ValueOf(ctx), q.Elem(), b.Elem()})
+		out := h.Call([]reflect.Value{reflect.ValueOf(ctx), qArg, bArg})
 		if ei := out[1].Interface(); ei != nil {
 			err := ei.(error)
 			status, code, msg := resolveError(s, err)
@@ -183,17 +191,16 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 		}
 		respAny := tv.Interface()
 
-		switch v := respAny.(type) {
-		case *contract.FileStream:
-			if v == nil {
+		// 写出：FileStream 直接输出流；其余（含 Empty/any 占位、nil 数据）统一壳写出。
+		// 注意：Empty 已为接口类型（defined type any），不能作为 type switch 分支——
+		// 接口 case 会匹配一切实现（吞掉全部非流响应），必须显式判断。
+		if f, ok := respAny.(*contract.FileStream); ok {
+			if f == nil {
 				return fail(http.StatusNotFound, http.StatusNotFound, "file not found")
 			}
-			return serveFile(c, v)
-		case contract.Empty:
-			return c.JSON(status, env.Success(status, nil))
-		default:
-			return c.JSON(status, env.Success(status, respAny))
+			return serveFile(c, f)
 		}
+		return c.JSON(status, env.Success(status, respAny))
 	})
 }
 
@@ -236,6 +243,15 @@ func defaultErrorMapper(err error) (int, int) {
 		return http.StatusNotFound, http.StatusNotFound
 	}
 	return http.StatusOK, codeError
+}
+
+// checkTarget 校验入参目标：接口类型占位（NoReq/any 等）返回 nil（validator.isNil 跳过）；
+// 具体结构体返回其指针（与绑定阶段一致）
+func checkTarget(t reflect.Type, v reflect.Value) any {
+	if t.Kind() == reflect.Interface {
+		return nil
+	}
+	return v.Addr().Interface()
 }
 
 func newValue(t reflect.Type) reflect.Value {

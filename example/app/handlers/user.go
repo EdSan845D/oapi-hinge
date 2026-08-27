@@ -127,10 +127,10 @@ func DeleteUser(ctx context.Context, req DeleteUserReq, _ any) (Empty, error) {
 	for i, u := range users {
 		if u.ID == req.ID {
 			users = append(users[:i], users[i+1:]...)
-			return Empty{}, nil
+			return nil, nil
 		}
 	}
-	return Empty{}, contract.NotFound("用户不存在")
+	return nil, contract.NotFound("用户不存在")
 }
 
 // Health 健康检查（无鉴权示例）

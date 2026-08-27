@@ -569,3 +569,47 @@ func TestStatusErrorZeroValue(t *testing.T) {
 		t.Fatalf("zero status = %d, want 500", zero.StatusCode())
 	}
 }
+
+// ============ 占位类型接口化（NoReq/Empty 为 defined type any）：Q/B/R 全接口路径 ============
+// 其余升级能力测试见 server_test.go。
+
+func anyGetHandler(ctx context.Context, _ contract.NoReq, _ any) (contract.Empty, error) {
+	return nil, nil
+}
+
+func anyPostHandler(ctx context.Context, req testUserReq, _ any) (map[string]string, error) {
+	return map[string]string{"id": req.ID}, nil
+}
+
+func TestAnyPlaceholderTypes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	groups := []*contract.Group{
+		{
+			Prefix: "/any",
+			Routes: []contract.Route{
+				contract.New(contract.RouteMeta[contract.NoReq, any, contract.Empty]{
+					Method: "GET", Path: "/ping", Summary: "三占位全接口",
+					Handler: anyGetHandler,
+				}),
+				contract.New(contract.RouteMeta[testUserReq, any, map[string]string]{
+					Method: "POST", Path: "/echo/{id}", Summary: "B 接口占位",
+					Handler: anyPostHandler,
+				}),
+			},
+		},
+	}
+	New().Mount(r.Group(""), groups)
+
+	// Q=NoReq(any)/R=Empty(any)：不再报 invalid params type，data 为 null
+	w := call(t, r, http.MethodGet, "/any/ping", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"code":0`) || !strings.Contains(w.Body.String(), `"data":null`) {
+		t.Fatalf("any placeholders = %d %s", w.Code, w.Body.String())
+	}
+
+	// B=any：跳过 body 绑定与校验，path 参数正常
+	w = call(t, r, http.MethodPost, "/any/echo/u9", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"u9"`) {
+		t.Fatalf("any post = %d %s", w.Code, w.Body.String())
+	}
+}

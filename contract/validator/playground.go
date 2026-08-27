@@ -20,6 +20,9 @@ var playground = validator.New()
 func Playground() Func {
 	return func(ctx context.Context, method string, q, b any) error {
 		for _, v := range []any{q, b} {
+			if isNil(v) {
+				continue
+			}
 			if err := playground.Struct(v); err != nil {
 				return fmt.Errorf("validate failed: %w", err)
 			}
