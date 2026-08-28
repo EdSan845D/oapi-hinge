@@ -79,10 +79,9 @@ func checkRequired(req any) error {
 		t := v.Type()
 		for i := 0; i < v.NumField(); i++ {
 			f, ft := v.Field(i), t.Field(i)
-			if !ft.IsExported() {
-				continue
-			}
 			if ft.Anonymous {
+				// 内嵌结构体递归（含未导出类型的内嵌，如 type Req struct { base; ... }：
+				// 反射允许对未导出内嵌结构体的导出字段写入）
 				sub := f
 				if sub.Kind() == reflect.Pointer {
 					if sub.IsNil() {
@@ -95,6 +94,9 @@ func checkRequired(req any) error {
 						return err
 					}
 				}
+				continue
+			}
+			if !ft.IsExported() {
 				continue
 			}
 			if IsRequired(ft) && f.IsZero() {

@@ -147,3 +147,54 @@ func TestGenerateCustomEnvelopeSchema(t *testing.T) {
 		t.Fatalf("custom envelope missing:\n%s", s)
 	}
 }
+
+// ============ path 参数类型取自 Q + 401 不再全局硬编码 ============
+
+type docPathReq struct {
+	ID  int    `path:"id" description:"用户ID"`
+	Sub string `path:"sub"`
+}
+
+func docPathHandler(ctx context.Context, req docPathReq, _ any) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
+func TestGeneratePathParamsFromQueryStruct(t *testing.T) {
+	groups := []*contract.Group{
+		{
+			Prefix: "/doc",
+			Routes: []contract.Route{
+				contract.New(contract.RouteMeta[docPathReq, any, map[string]string]{
+					Method: "GET", Path: "/users/{id}/{sub}", Summary: "路径参数",
+					Handler: docPathHandler,
+				}),
+				contract.New(contract.RouteMeta[contract.NoReq, any, map[string]string]{
+					Method: "GET", Path: "/health", Summary: "公开接口",
+					Handler: anyBodyHandler,
+				}),
+			},
+		},
+	}
+	out := t.TempDir() + "/spec.yaml"
+	if err := Generate(out, groups); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+
+	// ① path 参数类型取自 Q 字段（int → integer）
+	if !strings.Contains(s, "integer") {
+		t.Fatalf("path param type not taken from Q struct:\n%s", s)
+	}
+	// ② path 参数描述来自 description 标签
+	if !strings.Contains(s, "用户ID") {
+		t.Fatalf("path param description missing:\n%s", s)
+	}
+	// ③ 公开接口不再硬编码 401（鉴权 401 由中间件文档钩子按需声明）
+	if strings.Contains(s, "401") {
+		t.Fatalf("global 401 should be gone:\n%s", s)
+	}
+}

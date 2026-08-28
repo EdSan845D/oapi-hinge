@@ -14,7 +14,7 @@ import (
 )
 
 // 性能基准：统一 Handler（反射适配）vs 原生 gin Handler。
-// 运行：go test -bench . -benchmem -run '^$' ./internal/servergin/
+// 运行：go test -bench . -benchmem -run '^$' ./servergin/
 
 // ============ 共享业务类型（两套引擎复用，保证业务逻辑一致） ============
 

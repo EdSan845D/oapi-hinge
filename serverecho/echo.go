@@ -1,11 +1,12 @@
 // Package serverecho echo 运行时适配器：把统一路由分组树(routes.All())挂载到原生 Echo。
-// 与 servergin（gin 适配器）能力等价：参数绑定 -> 入参转换 -> 校验 -> 上下文注入 ->
+// 与 servergin（gin 适配器）能力等价：上下文装饰 -> 参数绑定 -> 入参转换 -> 校验 ->
 // Handler 调用 -> 出参转换 -> 状态码决策 -> 响应壳包装 -> 写出。
 // 中间件按函数类型断言：echo 项目在 Group.Middlewares 中放 echo.MiddlewareFunc。
 package serverecho
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/EdSan845D/oapi-hinge/contract"
 	"github.com/EdSan845D/oapi-hinge/contract/response"
@@ -31,6 +33,8 @@ type Server struct {
 	mapError    func(err error) (httpStatus, bizCode int)
 	decorate    func(c echo.Context, ctx context.Context) context.Context
 	envelope    response.Envelope
+	// 绑定/校验失败的 HTTP 状态码（默认 200，存量行为）；SetBindErrorStatus 可改
+	bindStatus int
 }
 
 // New 创建 Server
@@ -41,6 +45,7 @@ func New() *Server {
 		return contract.WithFramework(ctx, c)
 	}
 	s.envelope = response.DefaultEnvelope{}
+	s.bindStatus = http.StatusOK
 	return s
 }
 
@@ -64,7 +69,10 @@ func (s *Server) SetErrorMapper(fn func(err error) (httpStatus, bizCode int)) *S
 	return s
 }
 
-// SetContextDecorator 扩展点：把 echo 上下文信息注入 handler 的 context.Context
+// SetContextDecorator 扩展点：把 echo 上下文信息注入 context.Context。
+// 在每次请求最前执行（Q/B 绑定之前），TransformIn / 校验器 / TransformOut / handler
+// 共享同一个已装饰 ctx。约定：fn 必须是纯派生（只读 c、轻量 WithValue 级操作），
+// 重操作（鉴权、查库）请放中间件——每个请求（含校验失败的请求）都会执行。
 func (s *Server) SetContextDecorator(fn func(c echo.Context, ctx context.Context) context.Context) *Server {
 	s.decorate = fn
 	return s
@@ -76,6 +84,17 @@ func (s *Server) SetContextDecorator(fn func(c echo.Context, ctx context.Context
 func (s *Server) SetEnvelope(env response.Envelope) *Server {
 	if env != nil {
 		s.envelope = env
+	}
+	return s
+}
+
+// SetBindErrorStatus 扩展点：设置参数绑定/校验失败（含 InTransform 错误）的 HTTP 状态码。
+// 默认 200（存量行为：HTTP 200 + code=codeError）；设为 400 可获得 RESTful 语义，
+// 非 200 时业务 code 跟随状态码（与 StatusError 约定一致）。
+// 仅影响绑定/校验阶段；Handler 返回的业务错误走 StatusError / SetErrorMapper，不受影响。
+func (s *Server) SetBindErrorStatus(status int) *Server {
+	if status > 0 {
+		s.bindStatus = status
 	}
 	return s
 }
@@ -96,7 +115,10 @@ func (s *Server) mountGroup(parent *echo.Group, grp *contract.Group) {
 	for _, mw := range grp.Middlewares {
 		if fn, ok := mw.(echo.MiddlewareFunc); ok {
 			sub.Use(fn)
+			continue
 		}
+		// 静默忽略会让人误以为中间件已生效；挂载期直接报错并指明位置
+		panic(fmt.Sprintf("serverecho: group %q middleware type %T is not echo.MiddlewareFunc", grp.Prefix, mw))
 	}
 	for _, r := range grp.Routes {
 		s.mount(sub, r)
@@ -107,6 +129,10 @@ func (s *Server) mountGroup(parent *echo.Group, grp *contract.Group) {
 }
 
 func (s *Server) mount(g *echo.Group, r contract.Route) {
+	if err := contract.CheckHandler(r.Handler); err != nil {
+		// 挂载期签名校验：反射调用期的 panic 信息晦涩，这里给出路由定位
+		panic(fmt.Sprintf("serverecho: mount %s %s: invalid handler: %v", r.Method, r.Path, err))
+	}
 	g.Add(r.Method, echoPath(r.Path), func(c echo.Context) error {
 		h := reflect.ValueOf(r.Handler)
 		t := h.Type()
@@ -124,6 +150,14 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 		fail := func(status, code int, msg string) error {
 			return c.JSON(status, env.Failure(status, code, msg))
 		}
+		// 绑定/校验失败统一走 bindStatus（默认 200；SetBindErrorStatus 可调）
+		bindStatus, bindCode := bindFail(s.bindStatus)
+
+		// 上下文装饰：最先执行（Q/B 绑定之前），让 TransformIn / 校验器 /
+		// TransformOut / handler 全程共享同一个已装饰 ctx。
+		// 约定：decorate 必须是纯派生（只读 c、轻量 WithValue 级操作），
+		// 重操作（鉴权、查库）放中间件——每个请求（含校验失败的请求）都会执行。
+		ctx := s.decorate(c, c.Request().Context())
 
 		// Q：query/path 参数解析。
 		// Q 为接口类型（contract.NoReq / any 等占位）时视为无入参：跳过绑定与校验，
@@ -132,7 +166,11 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 		if t.In(1).Kind() != reflect.Interface {
 			q := newValue(t.In(1))
 			if err := bindQueryPath(c, q.Interface()); err != nil {
-				return fail(http.StatusOK, codeError, err.Error())
+				return fail(bindStatus, bindCode, err.Error())
+			}
+			// 入参转换（Q）：与 B 一致，绑定后、校验前自动调用；ctx 为已装饰上下文
+			if err := contract.TransformIn(ctx, q.Interface()); err != nil {
+				return fail(bindStatus, bindCode, err.Error())
 			}
 			qArg = q.Elem()
 		}
@@ -142,24 +180,23 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 		if isBodyMethod(r.Method) && t.In(2).Kind() != reflect.Interface {
 			b := newValue(t.In(2))
 			if c.Request().Body != nil && c.Request().ContentLength > 0 {
-				if err := c.Bind(b.Interface()); err != nil {
-					return fail(http.StatusOK, codeError, err.Error())
+				// 与 gin 适配器对齐：固定 JSON 解码（echo 的 c.Bind 按 Content-Type 分发，
+				// 非 JSON Content-Type 会走 form 绑定，同一份路由表两端行为不一致）
+				if err := json.NewDecoder(c.Request().Body).Decode(b.Interface()); err != nil {
+					return fail(bindStatus, bindCode, err.Error())
 				}
 				// 入参转换：绑定后、校验前
-				if err := contract.TransformIn(c.Request().Context(), b.Interface()); err != nil {
-					return fail(http.StatusOK, codeError, err.Error())
+				if err := contract.TransformIn(ctx, b.Interface()); err != nil {
+					return fail(bindStatus, bindCode, err.Error())
 				}
 				bArg = b.Elem()
 			}
 		}
 
 		// 校验：内置（标签 required + Validate() 接口）+ 自定义校验器
-		if err := validator.Run(c.Request().Context(), r.Method, checkTarget(t.In(1), qArg), checkTarget(t.In(2), bArg), s.validators...); err != nil {
-			return fail(http.StatusOK, codeError, err.Error())
+		if err := validator.Run(ctx, r.Method, checkTarget(t.In(1), qArg), checkTarget(t.In(2), bArg), s.validators...); err != nil {
+			return fail(bindStatus, bindCode, err.Error())
 		}
-
-		// 上下文注入
-		ctx := s.decorate(c, c.Request().Context())
 
 		out := h.Call([]reflect.Value{reflect.ValueOf(ctx), qArg, bArg})
 		if ei := out[1].Interface(); ei != nil {
@@ -184,7 +221,7 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 			respVal = reflect.ValueOf(w.ResponseData())
 		}
 		// 出参转换：序列化之前（脱敏/裁剪/补充字段）
-		tv, err := contract.TransformOut(c.Request().Context(), respVal)
+		tv, err := contract.TransformOut(ctx, respVal)
 		if err != nil {
 			status, code, msg := resolveError(s, err)
 			return fail(status, code, msg)
@@ -194,11 +231,15 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 		// 写出：FileStream 直接输出流；其余（含 Empty/any 占位、nil 数据）统一壳写出。
 		// 注意：Empty 已为接口类型（defined type any），不能作为 type switch 分支——
 		// 接口 case 会匹配一切实现（吞掉全部非流响应），必须显式判断。
-		if f, ok := respAny.(*contract.FileStream); ok {
-			if f == nil {
+		switch fv := respAny.(type) {
+		case *contract.FileStream:
+			if fv == nil {
 				return fail(http.StatusNotFound, http.StatusNotFound, "file not found")
 			}
-			return serveFile(c, f)
+			return serveFile(c, fv)
+		case contract.FileStream:
+			// 值类型同样按流输出（否则会被当作 JSON 对象序列化）
+			return serveFile(c, &fv)
 		}
 		return c.JSON(status, env.Success(status, respAny))
 	})
@@ -245,6 +286,15 @@ func defaultErrorMapper(err error) (int, int) {
 	return http.StatusOK, codeError
 }
 
+// bindFail 绑定/校验失败响应的 (status, code)：默认 200 + codeError（存量行为）；
+// 自定义非 200 状态码时 code 跟随状态码（与 StatusError 约定一致）
+func bindFail(status int) (int, int) {
+	if status <= 0 || status == http.StatusOK {
+		return http.StatusOK, codeError
+	}
+	return status, status
+}
+
 // checkTarget 校验入参目标：接口类型占位（NoReq/any 等）返回 nil（validator.isNil 跳过）；
 // 具体结构体返回其指针（与绑定阶段一致）
 func checkTarget(t reflect.Type, v reflect.Value) any {
@@ -277,8 +327,16 @@ func serveFile(c echo.Context, f *contract.FileStream) error {
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	c.Response().Header().Set("Content-Disposition",
-		fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(f.Name)))
+	// 文件名缺省时不输出 Content-Disposition（避免空文件名的非法头）
+	if f.Name != "" {
+		c.Response().Header().Set("Content-Disposition",
+			fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(f.Name)))
+	}
+	// Size 已知时显式声明 Content-Length；未知（<=0）走 echo Stream 的分块传输，
+	// 避免错误 Content-Length 截断响应
+	if f.Size > 0 {
+		c.Response().Header().Set(echo.HeaderContentLength, strconv.FormatInt(f.Size, 10))
+	}
 	return c.Stream(http.StatusOK, contentType, f.Reader)
 }
 
@@ -292,13 +350,14 @@ func bindQueryPath(c echo.Context, req any) error {
 	e := rv.Elem()
 	for i := 0; i < e.NumField(); i++ {
 		f, ft := e.Field(i), e.Type().Field(i)
-		if !ft.IsExported() {
-			continue
-		}
 		if ft.Anonymous {
 			sub := f
 			if sub.Kind() == reflect.Pointer {
 				if sub.IsNil() {
+					if !sub.CanSet() {
+						// 未导出内嵌的指针字段不可写（反射 RO），跳过而非 panic
+						continue
+					}
 					sub.Set(reflect.New(sub.Type().Elem()))
 				}
 				sub = sub.Elem()
@@ -308,6 +367,9 @@ func bindQueryPath(c echo.Context, req any) error {
 					return err
 				}
 			}
+			continue
+		}
+		if !ft.IsExported() {
 			continue
 		}
 		if name, ok := tagValue(ft, "path"); ok {
@@ -333,6 +395,14 @@ func bindQueryPath(c echo.Context, req any) error {
 		if err := setValue(c, f, name, false); err != nil {
 			return err
 		}
+		// default 标签：字段未绑定到值时填充运行时默认值（与文档 default 同步）
+		if f.IsZero() {
+			if def := ft.Tag.Get("default"); def != "" {
+				if err := setRaw(f, def, name); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -353,21 +423,40 @@ func setValue(c echo.Context, f reflect.Value, name string, path bool) error {
 	} else {
 		raw = c.QueryParam(name)
 	}
-	// 多值 query（?tag=a&tag=b）→ []string
-	if f.Kind() == reflect.Slice && !path && f.Type().Elem().Kind() == reflect.String {
+	// 多值 query（?tag=a&tag=b）→ 切片；非字符串元素逐个解析（?ids=1&ids=2）
+	if f.Kind() == reflect.Slice && !path {
 		if vals := c.QueryParams()[name]; len(vals) > 0 {
-			f.Set(reflect.ValueOf(vals))
-			return nil
+			return setSliceValue(f, vals, name)
 		}
 	}
 	return setRaw(f, raw, name)
 }
 
-// setRaw 把原始字符串解析写入字段（query/path/header 共用）
+// timeType time.Time 类型（query/path/header 支持 RFC3339 绑定）
+var timeType = reflect.TypeOf(time.Time{})
+
+// setRaw 把原始字符串解析写入字段（query/path/header 共用）。
+// 支持基本类型、指针（自动分配）、time.Time（RFC3339）与切片（逗号分隔或重复参数）；
+// 声明了绑定标签但类型不支持时返回错误（避免静默丢值难以排查）。
 func setRaw(f reflect.Value, raw, name string) error {
 	if raw == "" {
 		return nil
 	}
+	// 指针：自动分配后绑定元素（*int / *string / *time.Time 等）
+	for f.Kind() == reflect.Pointer {
+		if f.IsNil() {
+			f.Set(reflect.New(f.Type().Elem()))
+		}
+		f = f.Elem()
+	}
+	if f.Kind() == reflect.Slice {
+		return setSliceValue(f, []string{raw}, name)
+	}
+	return setRawBasic(f, raw, name)
+}
+
+// setRawBasic 标量绑定（不含指针/切片解包）
+func setRawBasic(f reflect.Value, raw, name string) error {
 	switch f.Kind() {
 	case reflect.String:
 		f.SetString(raw)
@@ -395,10 +484,44 @@ func setRaw(f reflect.Value, raw, name string) error {
 			return fmt.Errorf("invalid %s: %s", name, raw)
 		}
 		f.SetFloat(v)
-	case reflect.Slice:
-		if f.Type().Elem().Kind() == reflect.String {
-			f.Set(reflect.ValueOf([]string{raw}))
+	case reflect.Struct:
+		if f.Type() == timeType {
+			v, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return fmt.Errorf("invalid %s: %s (want RFC3339)", name, raw)
+			}
+			f.Set(reflect.ValueOf(v))
+			return nil
 		}
+		return fmt.Errorf("invalid %s: unsupported field type %s", name, f.Type())
+	case reflect.Slice:
+		return setSliceValue(f, []string{raw}, name)
+	default:
+		return fmt.Errorf("invalid %s: unsupported field type %s", name, f.Type())
 	}
+	return nil
+}
+
+// setSliceValue 绑定切片字段：vals 为收集到的原始值（重复参数或逗号分隔展开后）。
+// []string 保持原样；其他元素类型逐个解析，失败即报错。
+func setSliceValue(f reflect.Value, vals []string, name string) error {
+	if f.Type().Elem().Kind() == reflect.String {
+		f.Set(reflect.ValueOf(vals))
+		return nil
+	}
+	// 逗号分隔展开：?ids=1,2,3 与 ?ids=1&ids=2 等价
+	var expanded []string
+	for _, v := range vals {
+		expanded = append(expanded, strings.Split(v, ",")...)
+	}
+	slice := reflect.MakeSlice(f.Type(), 0, len(expanded))
+	for _, v := range expanded {
+		ev := reflect.New(f.Type().Elem()).Elem()
+		if err := setRawBasic(ev, v, name); err != nil {
+			return err
+		}
+		slice = reflect.Append(slice, ev)
+	}
+	f.Set(slice)
 	return nil
 }

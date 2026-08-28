@@ -102,12 +102,25 @@ func addOperation(doc *openapi3.T, sb *schemaBuilder, r contract.Route, groupPat
 	op.Tags = mergeTags(groupTags, r.Tags)
 	applyHooks(op, mws)
 
+	if err := contract.CheckHandler(r.Handler); err != nil {
+		// 生成期签名校验：给出路由定位，避免 In(1) 等下标访问 panic 信息晦涩
+		panic(fmt.Sprintf("openapi: %s %s: invalid handler: %v", r.Method, r.Path, err))
+	}
 	fn := reflect.TypeOf(r.Handler)
 	qT, bT, rT := fn.In(1), fn.In(2), fn.Out(0)
 
+	// path 参数：优先取 Q 中 path 标签字段的类型与描述（缺省回退 string）
+	pathFields := pathFieldsOf(qT)
 	for _, name := range pathParams(r.Path) {
 		p := openapi3.NewPathParameter(name)
-		p.Schema = openapi3.NewStringSchema().NewRef()
+		if f, ok := pathFields[name]; ok {
+			p.Schema = &openapi3.SchemaRef{Value: schemaByKind(f.Type)}
+			if d, ok := f.Tag.Lookup("description"); ok && d != "" {
+				p.Description = d
+			}
+		} else {
+			p.Schema = openapi3.NewStringSchema().NewRef()
+		}
 		op.AddParameter(p)
 	}
 	for _, p := range queryParams(qT) {
@@ -128,8 +141,8 @@ func addOperation(doc *openapi3.T, sb *schemaBuilder, r contract.Route, groupPat
 	if r.DefaultStatusCode == 0 {
 		successCode = "200"
 	}
-	op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
-		WithDescription("Unauthorized：token 缺失或无效")})
+	// 401 等鉴权响应由中间件文档钩子按需声明（RegisterMiddlewareDoc），
+	// 不对全部接口硬编码 401（公开接口如 /health 不应出现 401）
 
 	if rT.Kind() == reflect.Pointer {
 		rT = rT.Elem()
@@ -232,11 +245,17 @@ func queryParams(t reflect.Type) []*openapi3.Parameter {
 	walk = func(tt reflect.Type) {
 		for i := 0; i < tt.NumField(); i++ {
 			f := tt.Field(i)
-			if !f.IsExported() {
+			if f.Anonymous {
+				ft := f.Type
+				if ft.Kind() == reflect.Pointer {
+					ft = ft.Elem()
+				}
+				if ft.Kind() == reflect.Struct {
+					walk(ft)
+				}
 				continue
 			}
-			if f.Anonymous {
-				walk(f.Type)
+			if !f.IsExported() {
 				continue
 			}
 			// 逃生舱 1：header 标签优先（独立于 query/form）
@@ -286,6 +305,44 @@ func tagValueOf(f reflect.StructField, key string) (string, bool) {
 		return "", false
 	}
 	return strings.Split(v, ",")[0], true
+}
+
+// pathFieldsOf 提取 Q 中 path 标签字段（内嵌结构体递归），键为路径参数名
+func pathFieldsOf(t reflect.Type) map[string]reflect.StructField {
+	out := map[string]reflect.StructField{}
+	if t == nil {
+		return out
+	}
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return out
+	}
+	var walk func(reflect.Type)
+	walk = func(tt reflect.Type) {
+		for i := 0; i < tt.NumField(); i++ {
+			f := tt.Field(i)
+			if f.Anonymous {
+				ft := f.Type
+				if ft.Kind() == reflect.Pointer {
+					ft = ft.Elem()
+				}
+				if ft.Kind() == reflect.Struct {
+					walk(ft)
+				}
+				continue
+			}
+			if !f.IsExported() {
+				continue
+			}
+			if name, ok := tagValueOf(f, "path"); ok && name != "" {
+				out[name] = f
+			}
+		}
+	}
+	walk(t)
+	return out
 }
 
 func schemaByKind(t reflect.Type) *openapi3.Schema {

@@ -1,4 +1,4 @@
-# fuego-hinge CLI
+# oapi-hinge CLI
 
 生成 Go API 项目骨架的命令行工具，用法对标 `pnpm create vite`。
 生成的项目：**统一 Handler 模板 + 原生 Gin 运行时 + fuego 仅作开发期 OpenAPI 文档生成器，release 构建纯净、排除开发期多余依赖**。
@@ -7,7 +7,7 @@
 
 ```bash
 cd scaffold
-go build -o fuego-hinge.exe .          # 生成二进制
+go build -o oapi-hinge.exe .          # 生成二进制
 # 或安装到 GOBIN（全局可用）
 go install .
 ```
@@ -43,8 +43,7 @@ myapp/
 ```
 
 生成时会自动：
-- 把所有 `fuego-hinge` 替换为你的 module 名（import 路径、README、go.mod）
-- 把 `FUEGO_HINGE_ENV` 替换为 module 名推导的环境变量前缀（如 `MYAPP_ENV`）
+- 把所有 `oapi-hinge` 替换为你的 module 名（import 路径、README、go.mod）
 - 执行 `go mod tidy` 拉取依赖
 
 ## 修改指南
@@ -70,4 +69,4 @@ foreach ($f in $files) { Copy-Item "..\$f" "template\$f" -Force }
 - 单二进制分发：模板通过 `//go:embed template` 内置，无外部文件依赖
 - 生成物可控：模板不包含 `go.sum`/`bin/`/`openapi.yaml`（生成后由 `go mod tidy` 与构建产生）
 - 模板内 `go.mod` 以 `go.mod.tmpl` 存储，生成时改名为 `go.mod`（避免模板目录被 Go 视为嵌套模块）
-- 占位替换基于框架统一 module 名 `fuego-hinge`（见 `template/go.mod.tmpl`），小写精确匹配，避免误伤
+- 占位替换基于框架统一 module 名 `oapi-hinge`（见 `template/go.mod.tmpl`），小写精确匹配，避免误伤

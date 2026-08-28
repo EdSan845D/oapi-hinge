@@ -17,6 +17,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 
 	"github.com/EdSan845D/oapi-hinge/contract"
 )
@@ -29,10 +30,20 @@ type (
 )
 
 var (
-	ErrNotFound = contract.ErrNotFound
-	ErrNoUser   = contract.ErrNoUser
+	ErrNotFound = errors.New("not found")
+	ErrNoUser   = errors.New("current user not found")
 )
 
-// WithUser / CurrentUser：上下文用户注入与读取（配合 server.SetContextDecorator 使用）
-func WithUser(ctx context.Context, user any) context.Context { return contract.WithUser(ctx, user) }
-func CurrentUser(ctx context.Context) (any, error)           { return contract.CurrentUser(ctx) }
+type userKey struct{}
+
+func WithUser(ctx context.Context, user any) context.Context {
+	return context.WithValue(ctx, userKey{}, user)
+}
+
+func CurrentUser(ctx context.Context) (any, error) {
+	user := ctx.Value(userKey{})
+	if user == nil {
+		return nil, ErrNoUser
+	}
+	return user, nil
+}

@@ -24,7 +24,7 @@ oapi-hinge 用「契约层描述 + 框架适配器执行 + 纯 kin-openapi 生�
 func(ctx context.Context, query Q, body B) (resp R, error error)
 ```
 
-- `Q`：query / path / header 参数，用结构体标签声明（`query:"page"`、`path:"id"`、`header:"X-Token"`）
+- `Q`：query / path / header 参数，用结构体标签声明（`query:"page"`、`path:"id"`、`header:"X-Token"`）；`default:"2"` 声明缺省值（文档与运行时同步生效，支持基本类型、`time.Time`（RFC3339）、指针与切片）
 - `B`：JSON 请求体（`any` 表示无 body）
 - `R`：响应数据，自动包装为统一壳 `{code, data, msg}`
 - 业务层零框架依赖，`context.Context` 用于取消/超时传播与用户注入
@@ -140,6 +140,16 @@ func GetUser(ctx context.Context, req GetUserReq, _ any) (User, error) {
 ```
 
 便捷构造器：`BadRequest`/`Unauthorized`/`Forbidden`/`NotFound`/`Conflict`/`Internal`；自定义 error 类型只需实现 `StatusCoder` 接口即可携带状态码。非 200 错误与成功响应走同一套壳，格式始终一致。全局兜底仍可用 `SetErrorMapper`。
+
+### 绑定/校验错误的 HTTP 状态码
+
+参数绑定、校验失败默认返回 HTTP 200 + code=7（与业务错误同格式）；需要 RESTful 语义时一行切换：
+
+```go
+s.SetBindErrorStatus(http.StatusBadRequest) // 绑定/校验失败 → HTTP 400，业务 code 跟随状态码
+```
+
+Handler 返回的业务错误不受影响，仍按 StatusError / SetErrorMapper 解析。
 
 ### 成功状态码可声明
 

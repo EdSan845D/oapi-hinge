@@ -6,8 +6,10 @@ package contract
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 
 	"github.com/EdSan845D/oapi-hinge/contract/response"
 )
@@ -73,6 +75,37 @@ func Framework(ctx context.Context) any {
 //	func(ctx context.Context, query Q, body B) (resp R, err error)
 type AdaptHandler[Q, B, R any] = func(context.Context, Q, B) (R, error)
 
+var (
+	contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
+	errorType   = reflect.TypeOf((*error)(nil)).Elem()
+)
+
+// CheckHandler 校验 Handler 是否符合统一模板 func(context.Context, Q, B) (R, error)。
+// 适配器与文档生成器在挂载/生成期调用：签名错误尽早暴露并给出可读信息，
+// 避免拖到反射调用期才 panic 且信息晦涩。
+func CheckHandler(fn any) error {
+	if fn == nil {
+		return errors.New("handler is nil")
+	}
+	t := reflect.TypeOf(fn)
+	if t.Kind() != reflect.Func {
+		return fmt.Errorf("handler is %s, want func", t)
+	}
+	if t.NumIn() != 3 {
+		return fmt.Errorf("handler has %d inputs, want 3 (context.Context, Q, B)", t.NumIn())
+	}
+	if t.In(0) != contextType {
+		return fmt.Errorf("handler first input is %s, want context.Context", t.In(0))
+	}
+	if t.NumOut() != 2 {
+		return fmt.Errorf("handler has %d outputs, want 2 (R, error)", t.NumOut())
+	}
+	if !t.Out(1).Implements(errorType) {
+		return fmt.Errorf("handler second output is %s, want error", t.Out(1))
+	}
+	return nil
+}
+
 // RouteMeta 路由注册描述（强类型）。
 // 鉴权等中间件效果不在本结构声明：中间件挂载在所属 Group（见 Group.Middlewares），
 // 文档标注由 internal/openapi 按中间件函数名匹配文档钩子（RegisterMiddlewareDoc）。
@@ -116,23 +149,4 @@ func New[Q, B, R any](m RouteMeta[Q, B, R]) Route {
 		Envelope:          m.Envelope,
 		Handler:           m.Handler,
 	}
-}
-
-type userKey struct{}
-
-// WithUser 将当前用户注入上下文（由运行时适配器的 ContextDecorator 调用）
-func WithUser(ctx context.Context, user any) context.Context {
-	return context.WithValue(ctx, userKey{}, user)
-}
-
-// ErrNoUser 当前用户未注入
-var ErrNoUser = errors.New("current user not found")
-
-// CurrentUser 从上下文取出当前用户
-func CurrentUser(ctx context.Context) (any, error) {
-	user := ctx.Value(userKey{})
-	if user == nil {
-		return nil, ErrNoUser
-	}
-	return user, nil
 }

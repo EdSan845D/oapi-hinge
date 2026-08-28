@@ -18,9 +18,12 @@ import (
 
 func init() {
 	// 中间件文档钩子（可选择性）：Auth 中间件所在组的所有 operation 标注 BearerAuth。
+	// 401 响应由钩子按需声明（文档生成器不再全局硬编码 401，公开接口不出现 401）。
 	// 未在这里注册钩子的中间件照常运行，但不进文档。
 	openapi.RegisterMiddlewareDoc(middleware.Auth, func(op *openapi3.Operation) {
 		op.Security = &openapi3.SecurityRequirements{{"BearerAuth": []string{}}}
+		op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+			WithDescription("Unauthorized：token 缺失或无效")})
 	})
 }
 
