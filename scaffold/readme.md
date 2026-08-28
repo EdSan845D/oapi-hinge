@@ -1,7 +1,7 @@
 # oapi-hinge CLI
 
 生成 Go API 项目骨架的命令行工具，用法对标 `pnpm create vite`。
-生成的项目：**统一 Handler 模板 + 原生 Gin 运行时 + fuego 仅作开发期 OpenAPI 文档生成器，release 构建纯净、排除开发期多余依赖**。
+生成的项目：**统一 Handler 模板 + 原生 Gin 运行时 + openapi 仅作开发期 OpenAPI 文档生成器，release 构建纯净、排除开发期多余依赖**。
 
 ## 安装
 
@@ -15,11 +15,11 @@ go install .
 ## 用法
 
 ```bash
-fuego-hinge create myapp                        # 生成 ./myapp，module 名 = myapp
-fuego-hinge create myapp -m github.com/me/myapp # 自定义 module 路径
-fuego-hinge create myapp --no-tidy              # 跳过依赖拉取
-fuego-hinge create myapp --force                # 覆盖已存在目录
-fuego-hinge create myapp -h                     # 帮助
+oapi-hinge create myapp                        # 生成 ./myapp，module 名 = myapp
+oapi-hinge create myapp -m github.com/me/myapp # 自定义 module 路径
+oapi-hinge create myapp --no-tidy              # 跳过依赖拉取
+oapi-hinge create myapp --force                # 覆盖已存在目录
+oapi-hinge create myapp -h                     # 帮助
 ```
 
 flags 可放在项目名之前或之后（`-m` 支持空格分隔与 `=` 两种写法）。
@@ -30,7 +30,7 @@ flags 可放在项目名之前或之后（`-m` 支持空格分隔与 `=` 两种�
 myapp/
 ├── main.go                  # 运行时入口（原生 gin，//go:build !openapi）
 ├── main_doc.go              # 开发期文档生成入口（//go:build openapi）
-├── build.sh                 # release(含 fuego 检查)/dev/spec/test
+├── build.sh                 # release /dev/spec/test
 ├── app/                     # ★ 业务层
 │   ├── handlers/            # 统一 Handler: func(ctx, Q, B) (R, error) + 示例业务
 │   └── routes/routes.go     # 路由注册表（唯一注册入口）
@@ -39,7 +39,7 @@ myapp/
     ├── response/            # 统一响应壳 {code, data, msg}
     ├── server/              # Gin 适配器（绑定/校验/错误映射/中间件扩展点）
     ├── validator/           # 校验器
-    └── openapi/             # 开发期文档生成（fuego 引擎，构建期隔离）
+    └── openapi/             # 开发期文档生成（构建期隔离）
 ```
 
 生成时会自动：

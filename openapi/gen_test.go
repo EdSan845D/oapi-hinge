@@ -198,3 +198,51 @@ func TestGeneratePathParamsFromQueryStruct(t *testing.T) {
 		t.Fatalf("global 401 should be gone:\n%s", s)
 	}
 }
+
+// ---- ParamBinder 文档联动：注册绑定器的类型，参数 schema 标注为 string ----
+
+type docIDs []string
+
+func init() {
+	contract.RegisterParamBinder(func(src []string) (docIDs, error) {
+		return docIDs(strings.Split(src[0], ",")), nil
+	})
+}
+
+type docBinderReq struct {
+	Tags docIDs `query:"tags" description:"标签，逗号分隔"`
+}
+
+func docBinderHandler(ctx context.Context, req docBinderReq, _ any) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
+func TestGenerateParamBinder(t *testing.T) {
+	groups := []*contract.Group{
+		{
+			Prefix: "/doc",
+			Routes: []contract.Route{
+				contract.New(contract.RouteMeta[docBinderReq, any, map[string]string]{
+					Method: "GET", Path: "/tags", Summary: "binder",
+					Handler: docBinderHandler,
+				}),
+			},
+		},
+	}
+	out := t.TempDir() + "/spec.yaml"
+	if err := Generate(out, groups); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	// binder 类型参数：schema 为 string（而非 docIDs 的 array 形态）
+	if !strings.Contains(s, "type: string") {
+		t.Fatalf("binder param schema not string:\n%s", s)
+	}
+	if strings.Contains(s, "type: array") {
+		t.Fatalf("binder param leaked array schema:\n%s", s)
+	}
+}

@@ -114,7 +114,13 @@ func addOperation(doc *openapi3.T, sb *schemaBuilder, r contract.Route, groupPat
 	for _, name := range pathParams(r.Path) {
 		p := openapi3.NewPathParameter(name)
 		if f, ok := pathFields[name]; ok {
-			p.Schema = &openapi3.SchemaRef{Value: schemaByKind(f.Type)}
+			schemaRef := &openapi3.SchemaRef{Value: schemaByKind(f.Type)}
+			if contract.HasParamBinder(f.Type) {
+				// 注册过自定义绑定器的类型：HTTP 层形态是字符串（逗号串/ID 等），
+				// schema 标注为 string 而非 Go 类型的 JSON 形态
+				schemaRef = &openapi3.SchemaRef{Value: openapi3.NewStringSchema()}
+			}
+			p.Schema = schemaRef
 			if d, ok := f.Tag.Lookup("description"); ok && d != "" {
 				p.Description = d
 			}
@@ -264,7 +270,13 @@ func queryParams(t reflect.Type) []*openapi3.Parameter {
 				if d, ok := f.Tag.Lookup("description"); ok && d != "" {
 					p.Description = d
 				}
-				p.Schema = &openapi3.SchemaRef{Value: schemaByKind(f.Type)}
+				schemaRef := &openapi3.SchemaRef{Value: schemaByKind(f.Type)}
+				if contract.HasParamBinder(f.Type) {
+					// 注册过自定义绑定器的类型：HTTP 层形态是字符串（逗号串/ID 等），
+					// schema 标注为 string 而非 Go 类型的 JSON 形态
+					schemaRef = &openapi3.SchemaRef{Value: openapi3.NewStringSchema()}
+				}
+				p.Schema = schemaRef
 				if isRequiredOpenAPI(f) {
 					p.Required = true
 				}
@@ -282,7 +294,13 @@ func queryParams(t reflect.Type) []*openapi3.Parameter {
 			if d, ok := f.Tag.Lookup("description"); ok && d != "" {
 				p.Description = d
 			}
-			p.Schema = &openapi3.SchemaRef{Value: schemaByKind(f.Type)}
+			schemaRef := &openapi3.SchemaRef{Value: schemaByKind(f.Type)}
+			if contract.HasParamBinder(f.Type) {
+				// 注册过自定义绑定器的类型：HTTP 层形态是字符串（逗号串/ID 等），
+				// schema 标注为 string 而非 Go 类型的 JSON 形态
+				schemaRef = &openapi3.SchemaRef{Value: openapi3.NewStringSchema()}
+			}
+			p.Schema = schemaRef
 			if dv, ok := f.Tag.Lookup("default"); ok && dv != "" {
 				p.Schema.Value.Default = parseDefault(dv, f.Type.Kind())
 			}

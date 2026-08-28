@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -134,4 +135,58 @@ func SetSliceValue(f reflect.Value, vals []string, name string) error {
 	}
 	f.Set(slice)
 	return nil
+}
+
+// FieldMeta 绑定字段元数据（挂载期解析一次，请求期零反射）。
+// 与框架无关：path/query/form/header/default 标签由各框架适配器按同一语义消费，
+// 框架侧只保留"从请求取原始值"的取值函数（如 gin 的 c.Query / echo 的 c.QueryParam）。
+type FieldMeta struct {
+	Index    int
+	Kind     reflect.Kind
+	Path     string
+	Query    string
+	Form     string
+	Header   string
+	Def      string      // default 标签：绑定缺失时的运行时默认值（与文档 default 同步生效）
+	Children []FieldMeta // 内嵌结构体递归展平
+}
+
+// fieldCache Q 类型 -> 字段元数据缓存。
+// 跨适配器共享：解析结果只依赖 Go 类型与标签约定，与框架无关。
+var fieldCache sync.Map
+
+// ParseFields 反射解析结构体字段元数据（内嵌结构体递归展平）。
+// 挂载期调用一次即缓存；各框架适配器共享同一份解析结果。
+func ParseFields(t reflect.Type) []FieldMeta {
+	if v, ok := fieldCache.Load(t); ok {
+		return v.([]FieldMeta)
+	}
+	var out []FieldMeta
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.Anonymous {
+			ft := f.Type
+			if ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct {
+				out = append(out, FieldMeta{Children: ParseFields(ft)})
+			}
+			continue
+		}
+		if !f.IsExported() {
+			continue
+		}
+		var m FieldMeta
+		m.Index = i
+		m.Kind = f.Type.Kind()
+		m.Path, _ = TagValue(f, "path")
+		m.Query, _ = TagValue(f, "query")
+		m.Form, _ = TagValue(f, "form")
+		m.Header, _ = TagValue(f, "header")
+		m.Def = f.Tag.Get("default")
+		out = append(out, m)
+	}
+	fieldCache.Store(t, out)
+	return out
 }

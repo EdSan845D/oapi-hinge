@@ -1,4 +1,4 @@
-package servergin
+package serverecho
 
 import (
 	"errors"
@@ -6,13 +6,13 @@ import (
 
 	"github.com/EdSan845D/oapi-hinge/contract"
 
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v4"
 )
 
 // bindQueryPath 按预解析的字段元数据绑定（query/form/path/header 标签）。
 // 元数据由 contract.ParseFields 挂载期解析并缓存（与框架无关），此处只做框架取值。
 // 必填校验统一在 validator.Run 执行（binding/validate 双标签），此处不再重复。
-func bindQueryPath(c *gin.Context, req any) error {
+func bindQueryPath(c echo.Context, req any) error {
 	rv := reflect.ValueOf(req)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
 		return errors.New("invalid params type")
@@ -21,7 +21,7 @@ func bindQueryPath(c *gin.Context, req any) error {
 }
 
 // bindFields 按元数据逐字段绑定（框架侧只负责从请求取原始值）
-func bindFields(c *gin.Context, e reflect.Value, metas []contract.FieldMeta) error {
+func bindFields(c echo.Context, e reflect.Value, metas []contract.FieldMeta) error {
 	for _, m := range metas {
 		f := e.Field(m.Index)
 		sub := f
@@ -41,8 +41,23 @@ func bindFields(c *gin.Context, e reflect.Value, metas []contract.FieldMeta) err
 			}
 			continue
 		}
-		// 自定义绑定器：注册过的字段类型接管绑定
-		// 原始字符串 → 字段值，可改变类型形态：逗号串→命名切片、ID→缓存实体
+		// 自定义绑定器：注册过的字段类型接管绑定（原始字符串 → 字段值，
+		// 可改变类型形态：逗号串→命名切片、ID→缓存实体）。
+		// 参数缺失时字段保持零值（required 由 validator.Run 兜底）。
+		if binder, ok := contract.BinderFor(f.Type()); ok {
+			src := collectRawValues(c, m)
+			if len(src) == 0 {
+				continue
+			}
+			v, err := binder(src)
+			if err != nil {
+				return err
+			}
+			f.Set(reflect.ValueOf(v))
+			continue
+		}
+		// 自定义绑定器：注册过的字段类型接管绑定（原始字符串 → 字段值，
+		// 可改变类型形态：逗号串→命名切片、ID→缓存实体）。
 		// 参数缺失时字段保持零值（required 由 validator.Run 兜底）。
 		if binder, ok := contract.BinderFor(f.Type()); ok {
 			src := collectRawValues(c, m)
@@ -64,7 +79,7 @@ func bindFields(c *gin.Context, e reflect.Value, metas []contract.FieldMeta) err
 		}
 		// 逃生舱 1：header 标签优先（独立于 query/form）
 		if m.Header != "" {
-			if err := contract.SetRaw(f, c.GetHeader(m.Header), m.Header); err != nil {
+			if err := contract.SetRaw(f, c.Request().Header.Get(m.Header), m.Header); err != nil {
 				return err
 			}
 			continue
@@ -88,15 +103,17 @@ func bindFields(c *gin.Context, e reflect.Value, metas []contract.FieldMeta) err
 	return nil
 }
 
-// setValue 从 query/path 取值并写入字段（gin 取值 API）
-func setValue(c *gin.Context, f reflect.Value, name string, path bool) error {
-	raw := c.Query(name)
+// setValue 从 query/path 取值并写入字段（echo 取值 API）
+func setValue(c echo.Context, f reflect.Value, name string, path bool) error {
+	var raw string
 	if path {
 		raw = c.Param(name)
+	} else {
+		raw = c.QueryParam(name)
 	}
 	// 多值 query（?tag=a&tag=b）→ 切片；非字符串元素逐个解析（?ids=1&ids=2）
 	if f.Kind() == reflect.Slice && !path {
-		if vals := c.QueryArray(name); len(vals) > 0 {
+		if vals := c.QueryParams()[name]; len(vals) > 0 {
 			return contract.SetSliceValue(f, vals, name)
 		}
 	}
@@ -105,22 +122,22 @@ func setValue(c *gin.Context, f reflect.Value, name string, path bool) error {
 
 // collectRawValues 收集字段的原始参数值列表（供自定义绑定器消费）。
 // 单值参数返回长度 1；重复参数 ?ids=1&ids=2 返回多值；缺失返回 nil。
-func collectRawValues(c *gin.Context, m contract.FieldMeta) []string {
+func collectRawValues(c echo.Context, m contract.FieldMeta) []string {
 	switch {
 	case m.Path != "":
 		if v := c.Param(m.Path); v != "" {
 			return []string{v}
 		}
 	case m.Header != "":
-		if v := c.GetHeader(m.Header); v != "" {
-			return []string{v}
+		if vs := c.Request().Header.Values(m.Header); len(vs) > 0 {
+			return vs
 		}
 	case m.Query != "" || m.Form != "":
 		name := m.Query
 		if name == "" {
 			name = m.Form
 		}
-		return c.QueryArray(name)
+		return c.QueryParams()[name]
 	}
 	return nil
 }
