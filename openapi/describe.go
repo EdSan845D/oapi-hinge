@@ -73,6 +73,10 @@ var (
 	// binderSchemas 自定义绑定类型的文档 schema（缺省 string）
 	binderSchemas = map[reflect.Type]*openapi3.Schema{}
 
+	// typeSchemas 类型级文档 schema 覆盖（组件替换）
+	typeSchemas     = map[reflect.Type]*openapi3.Schema{}
+	typeSchemaFuncs = map[reflect.Type]func() *openapi3.Schema{}
+
 	// manualPaths 非模板路由补录（保序）
 	manualPaths []manualPath
 )
@@ -138,6 +142,49 @@ func binderSchemaFor(t reflect.Type) *openapi3.Schema {
 	regMu.Lock()
 	defer regMu.Unlock()
 	return binderSchemas[t]
+}
+
+// RegisterTypeSchema 注册类型级文档 schema 覆盖（组件替换）。
+// 被覆盖的类型在 body/组件位置使用注册 schema（$ref 结构不变）；
+// query/path 参数位置仍由 ParamBinder 语义优先（HTTP 形态是原始串）。
+// 同类型重复注册覆盖；请勿在生成期修改注册的 schema（需要动态构建用 RegisterTypeSchemaFunc）。
+func RegisterTypeSchema[T any](s *openapi3.Schema) {
+	var zero T
+	t := reflect.TypeOf(zero)
+	if t == nil {
+		panic("openapi.RegisterTypeSchema: T 不能是接口类型")
+	}
+	if s == nil {
+		panic("openapi.RegisterTypeSchema: schema 不能为空")
+	}
+	regMu.Lock()
+	defer regMu.Unlock()
+	typeSchemas[t] = s
+}
+
+// RegisterTypeSchemaFunc 函数式类型覆盖：每次生成调用 fn 取新实例（避免共享可变状态）。
+func RegisterTypeSchemaFunc[T any](fn func() *openapi3.Schema) {
+	var zero T
+	t := reflect.TypeOf(zero)
+	if t == nil {
+		panic("openapi.RegisterTypeSchemaFunc: T 不能是接口类型")
+	}
+	if fn == nil {
+		panic("openapi.RegisterTypeSchemaFunc: 函数不能为空")
+	}
+	regMu.Lock()
+	defer regMu.Unlock()
+	typeSchemaFuncs[t] = fn
+}
+
+// typeSchemaFor 返回类型的覆盖 schema（Func 形式每次构建新实例）；未注册返回 nil。
+func typeSchemaFor(t reflect.Type) *openapi3.Schema {
+	regMu.Lock()
+	defer regMu.Unlock()
+	if fn, ok := typeSchemaFuncs[t]; ok {
+		return fn()
+	}
+	return typeSchemas[t]
 }
 
 // RegisterManualPath 补录非模板路由（混合项目里绕过统一模板的老接口）。
@@ -223,6 +270,8 @@ func resetRegistries() {
 	routeDocs = map[string]RouteDoc{}
 	routeDocsUsed = map[string]bool{}
 	binderSchemas = map[reflect.Type]*openapi3.Schema{}
+	typeSchemas = map[reflect.Type]*openapi3.Schema{}
+	typeSchemaFuncs = map[reflect.Type]func() *openapi3.Schema{}
 	manualPaths = nil
 	hookUsed = map[string]bool{}
 	hooks = map[string]DocHook{}

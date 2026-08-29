@@ -1,4 +1,4 @@
-# oapi-hinge 使用手册
+﻿# oapi-hinge 使用手册
 
 > 适用版本：V0.1.0 <br/>
 > 设计动机与架构总览见 [README](../README.md)。
@@ -173,7 +173,7 @@ type ListUsersReq struct {
 	Page    int       `query:"page" default:"1" description:"页码"`
 	Size    int       `query:"size" default:"10"`
 	ID      int       `path:"id"`                          // 路由写 /users/{id}
-	Token   string    `header:"X-Token"`                   // 请求头
+	Token   string    `header:"X-Token"`                   // 逃生舱 1：请求头
 	Keyword string    `query:"keyword" binding:"required"` // 必填
 	Created time.Time `query:"created"`                    // RFC3339，如 2026-08-28T00:00:00Z
 }
@@ -187,6 +187,8 @@ type ListUsersReq struct {
 | `form:"f"` | 与 query 等价 | ✅ |
 | `default:"1"` | **运行时**缺省值（未传时填充） | ✅ 同步生成 default |
 | `description:"..."` | 字段描述 | ✅ |
+| `example:"u123"` | 示例值（按字段类型转型，数字/bool 自动转换） | ✅ 生成 example |
+| `validate:"oneof=..."` / `min` / `max` / `gte` / `lte` / `email` / `url` | **约束即文档**：校验标签同步为 schema 约束（enum / minLength / minimum / format…），`binding` 标签同等参与 | ✅ |
 | `binding:"required"` / `validate:"required"` | 必填（零值即缺失） | ✅ 生成 required |
 
 **支持的类型**：string、各宽度整数/无符号、浮点、bool、`time.Time`（RFC3339）、指针（`*int` 缺省为 nil，可区分"未传"）、切片。
@@ -563,6 +565,8 @@ openapi.DescribeRoute(handlers.GetUser, openapi.RouteDoc{
 - R：普通类型 → 壳内 data schema；`*FileStream` → binary；接口类型（Empty/any）→ 任意 JSON
 - `DefaultStatusCode` → 成功响应码
 - 注册过 `ParamBinder` 的参数类型 → schema 标注 string（HTTP 形态是原始串），配套 `RegisterParamBinderSchema` 可声明精确 schema
+- `validate`/`binding` 约束标签 → schema 约束；`example` 标签 → 示例值；指针字段 → nullable
+- 类型级 schema 覆盖：`RegisterTypeSchema[T]` / `RegisterTypeSchemaFunc[T]`（组件替换，$ref 结构不变；decimal、自定义 Marshaler 类型不再退化成 string）
 - 跨包同名类型 → 组件名自动升级为「末段包名_类型名」（生成警告，引用同步）
 - 重复路由（同 path+method）在生成期直接 panic，提前暴露注册错误
 

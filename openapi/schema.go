@@ -1,3 +1,5 @@
+//go:build openapi
+
 package openapi
 
 import (
@@ -46,6 +48,25 @@ func (b *schemaBuilder) ref(t reflect.Type) *openapi3.SchemaRef {
 	// 注意：两阶段命名下 names 可能已预分配，但不能据此返回——组件体可能尚未构建；
 	// 以 done/building 区分「已构建/构建中」，否则正式轮组件表为空
 	if t.Kind() == reflect.Struct && t.Name() != "" {
+		// 类型级 schema 覆盖（组件替换）：$ref 结构不变，组件内容 = 注册 schema。
+		// 返回纯 $ref（Value 为 nil），下游 description/约束/注释按组件引用语义叠加。
+		if s := typeSchemaFor(t); s != nil {
+			name := b.names[t]
+			if name == "" {
+				name = schemaName(t)
+				b.names[t] = name
+				b.seen = append(b.seen, t)
+			}
+			b.done[t] = true
+			if b.doc.Components == nil {
+				b.doc.Components = &openapi3.Components{}
+			}
+			if b.doc.Components.Schemas == nil {
+				b.doc.Components.Schemas = openapi3.Schemas{}
+			}
+			b.doc.Components.Schemas[name] = &openapi3.SchemaRef{Value: s}
+			return &openapi3.SchemaRef{Ref: "#/components/schemas/" + name}
+		}
 		if b.done[t] || b.building[t] {
 			return &openapi3.SchemaRef{Ref: "#/components/schemas/" + b.names[t]}
 		}
@@ -137,10 +158,21 @@ func (b *schemaBuilder) buildStruct(t reflect.Type) *openapi3.Schema {
 			continue
 		}
 		ref := b.ref(f.Type)
+		// ① 约束 + example 标签（validate/binding → 约束；组件替换/ParamBinder 类型自动跳过）
+		ref = applyFieldTags(ref, f)
+		// ② 指针字段 → nullable（区分「未传」；$ref 字段不标）
+		if f.Type.Kind() == reflect.Pointer && ref.Value != nil {
+			ref.Value.Nullable = true
+		}
+		// ③ body 字段 default 标签 → schema 默认值
+		if d, ok := f.Tag.Lookup("default"); ok && d != "" && ref.Value != nil {
+			ref.Value.Default = parseDefault(d, derefKind(f.Type))
+		}
+		// ④ description 标签
 		if d, ok := f.Tag.Lookup("description"); ok && d != "" {
 			ref = withDescription(ref, d)
 		}
-		// 字段注释 → description（description 标签优先，内置解析器尊重已有描述）
+		// ⑤ 字段注释（description 标签优先，内置解析器尊重已有描述）
 		ref = applyFieldComment(ref, t, f.Name)
 		s.Properties[name] = ref
 		// required 规则：json 未标 omitempty，或 binding 显式 required

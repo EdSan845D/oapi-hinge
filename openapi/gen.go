@@ -59,15 +59,16 @@ func GenerateStrict(out string, groups []*contract.Group, opts ...Option) error 
 	return err
 }
 
-// generate 两轮生成：探测轮收集全部组件类型 → 统一命名 → 正式轮产出规范。
-func generate(out string, groups []*contract.Group, strict bool, opts ...Option) ([]string, error) {
+// buildDoc 生成文档对象（两轮：探测收集类型 → 统一命名 → 正式构建）。
+// 警告返回给调用方（Generate 打 stderr；GenerateStrict 转 error）。
+func buildDoc(groups []*contract.Group, opts ...Option) (*openapi3.T, []string, error) {
 	resetEnvelopeState()
 	resetUsage()
 
 	// pass 1（探测）：只收集组件类型集合（含壳推导类型），产物丢弃
 	probeDoc := newDoc()
 	applyOpts(probeDoc, opts)
-	probe := &specGen{doc: probeDoc, sb: newSchemaBuilder(probeDoc, nil), probe: true, opIDs: map[string]string{}}
+	probe := &specGen{doc: probeDoc, sb: newSchemaBuilder(probeDoc, nil), probe: true, opIDs: map[string]string{}, tagDescs: map[string]string{}}
 	buildSpec(probe, groups)
 
 	// 两阶段命名：裸名优先，跨包同名冲突整体升级
@@ -84,14 +85,35 @@ func generate(out string, groups []*contract.Group, strict bool, opts ...Option)
 	// pass 2：正式生成
 	doc := newDoc()
 	applyOpts(doc, opts)
-	g := &specGen{doc: doc, sb: newSchemaBuilder(doc, names), opIDs: map[string]string{}}
+	g := &specGen{doc: doc, sb: newSchemaBuilder(doc, names), opIDs: map[string]string{}, tagDescs: map[string]string{}}
 	buildSpec(g, groups)
 
 	// 补录路由合并 + 未匹配注册检查
 	mergeManualPaths(doc)
 	warnings = append(warnings, g.warns...)
 	warnings = append(warnings, unmatchedRegistrations()...)
+	return doc, warnings, nil
+}
 
+// Build 生成文档对象（不落盘）：自建 /docs、推送网关等自定义消费场景。
+// 警告输出 stderr；需要警告即失败用 GenerateStrict。
+func Build(groups []*contract.Group, opts ...Option) (*openapi3.T, error) {
+	doc, warnings, err := buildDoc(groups, opts...)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, "openapi warning:", w)
+	}
+	return doc, nil
+}
+
+// generate 两轮生成：探测轮收集全部组件类型 → 统一命名 → 正式轮产出规范。
+func generate(out string, groups []*contract.Group, strict bool, opts ...Option) ([]string, error) {
+	doc, warnings, err := buildDoc(groups, opts...)
+	if err != nil {
+		return warnings, err
+	}
 	if strict && len(warnings) > 0 {
 		return warnings, fmt.Errorf("openapi: %d 个警告:\n  - %s", len(warnings), strings.Join(warnings, "\n  - "))
 	}
@@ -100,7 +122,6 @@ func generate(out string, groups []*contract.Group, strict bool, opts ...Option)
 	}
 
 	var data []byte
-	var err error
 	if strings.HasSuffix(strings.ToLower(out), ".json") {
 		data, err = json.MarshalIndent(doc, "", "  ")
 	} else {
@@ -139,17 +160,42 @@ func resetEnvelopeState() {
 
 // specGen 一次生成（探测/正式）的上下文。
 type specGen struct {
-	doc   *openapi3.T
-	sb    *schemaBuilder
-	probe bool              // 探测轮：只收集类型，不产出警告
-	opIDs map[string]string // operationID -> "METHOD path"（查重，正式轮）
-	warns []string
+	doc      *openapi3.T
+	sb       *schemaBuilder
+	probe    bool              // 探测轮：只收集类型，不产出警告
+	opIDs    map[string]string // operationID -> "METHOD path"（查重，正式轮）
+	tagNames []string          // 顶层 tags 声明（首次出现顺序）
+	tagDescs map[string]string
+	warns    []string
+}
+
+// noteTag 记录顶层 tag（组 Description 作为 tag 描述，首个非空生效）。
+func (g *specGen) noteTag(name, desc string) {
+	if name == "" {
+		return
+	}
+	if _, ok := g.tagDescs[name]; !ok {
+		g.tagNames = append(g.tagNames, name)
+		g.tagDescs[name] = desc
+		return
+	}
+	if desc != "" && g.tagDescs[name] == "" {
+		g.tagDescs[name] = desc
+	}
 }
 
 func buildSpec(g *specGen, groups []*contract.Group) {
 	checkDuplicates(groups)
 	for _, gr := range groups {
 		addGroup(g, gr, "", nil)
+	}
+	// 顶层 tags 声明（规范推荐；Swagger UI 按此分组/排序）
+	if len(g.tagNames) > 0 {
+		tags := openapi3.Tags{}
+		for _, name := range g.tagNames {
+			tags = append(tags, &openapi3.Tag{Name: name, Description: g.tagDescs[name]})
+		}
+		g.doc.Tags = tags
 	}
 }
 
@@ -158,6 +204,9 @@ func buildSpec(g *specGen, groups []*contract.Group) {
 func addGroup(g *specGen, gr *contract.Group, prefix string, inherited []any) {
 	path := prefix + gr.Prefix
 	mws := append(append([]any{}, inherited...), gr.Middlewares...)
+	for _, tg := range gr.Tags {
+		g.noteTag(tg, gr.Description)
+	}
 	for _, r := range gr.Routes {
 		addOperation(g, r, path, gr.Tags, mws)
 	}
@@ -196,6 +245,9 @@ func addOperation(g *specGen, r contract.Route, groupPath string, groupTags []st
 	}
 	op.Deprecated = r.Deprecated
 	op.Tags = mergeTags(groupTags, r.Tags)
+	for _, tg := range op.Tags {
+		g.noteTag(tg, "")
+	}
 	applyHooks(op, mws)
 
 	// handler 源码注释兜底 Summary/Description（RouteMeta 未写时；首行 → Summary，其余 → Description）
@@ -232,6 +284,12 @@ func addOperation(g *specGen, r contract.Route, groupPath string, groupTags []st
 		p := openapi3.NewPathParameter(name)
 		if f, ok := pathFields[name]; ok {
 			p.Schema = paramSchema(f.Type)
+			if !contract.HasParamBinder(f.Type) {
+				p.Schema = applyFieldTags(p.Schema, f)
+				if f.Type.Kind() == reflect.Pointer && p.Schema.Value != nil {
+					p.Schema.Value.Nullable = true
+				}
+			}
 			if d, ok := f.Tag.Lookup("description"); ok && d != "" {
 				p.Description = d
 			}
@@ -568,8 +626,14 @@ func queryParams(t reflect.Type) []*openapi3.Parameter {
 				p.Description = d
 			}
 			p.Schema = paramSchema(f.Type)
+			if !contract.HasParamBinder(f.Type) {
+				p.Schema = applyFieldTags(p.Schema, f)
+				if f.Type.Kind() == reflect.Pointer && p.Schema.Value != nil {
+					p.Schema.Value.Nullable = true
+				}
+			}
 			if dv, ok := f.Tag.Lookup("default"); ok && dv != "" {
-				p.Schema.Value.Default = parseDefault(dv, f.Type.Kind())
+				p.Schema.Value.Default = parseDefault(dv, derefKind(f.Type))
 			}
 			if isRequiredOpenAPI(f) {
 				p.Required = true
@@ -658,11 +722,22 @@ func schemaByKind(t reflect.Type) *openapi3.Schema {
 	}
 }
 
+// parseDefault default 标签值按字段类型转型（指针字段解引用；转型失败保留字符串）。
+// 覆盖全标量类型：整数（64 位解析）、无符号、浮点、布尔；其余类型原样字符串。
 func parseDefault(s string, kind reflect.Kind) any {
 	switch kind {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if v, err := strconv.Atoi(s); err == nil {
+	case reflect.String:
+		return s
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return v
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if v, err := strconv.ParseUint(s, 10, 64); err == nil {
+			return v
+		}
+	case reflect.Float32, reflect.Float64:
+		if v, err := strconv.ParseFloat(s, 64); err == nil {
 			return v
 		}
 	case reflect.Bool:
