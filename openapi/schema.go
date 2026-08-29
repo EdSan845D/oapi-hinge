@@ -186,17 +186,42 @@ func (b *schemaBuilder) buildStruct(t reflect.Type) *openapi3.Schema {
 	return s
 }
 
-// schemaName 组件裸名：类型名（泛型参数扁平化）。
-// 例：User -> User；Paged[User] -> Paged_User。
-// 跨包同名冲突由 assignNames 统一升级（裸名优先 + 冲突升级策略）。
+// schemaName 组件裸名：类型名（泛型参数取末段限定名扁平化 + 非法字符清洗）。
+// 例：User -> User；Paged[github.com/x/handlers.User] -> Paged_handlers.User。
+// 泛型实例的 reflect Name() 含类型参数完整路径（含 /），必须压缩与清洗才能用作组件名。
 func schemaName(t reflect.Type) string {
-	name := t.Name() // 泛型实例形如 Paged[User]
-	name = strings.ReplaceAll(name, "[", "_")
-	name = strings.ReplaceAll(name, "]", "")
+	name := t.Name()
+	if i := strings.Index(name, "["); i >= 0 {
+		origin := name[:i]
+		args := name[i+1 : len(name)-1] // 去首尾 []
+		var parts []string
+		for _, a := range strings.Split(args, ",") {
+			a = strings.TrimSpace(a)
+			a = a[strings.LastIndex(a, "/")+1:] // 类型参数取末段限定名（handlers.User）
+			parts = append(parts, a)
+		}
+		name = origin + "_" + strings.Join(parts, "_")
+	}
+	name = sanitizeIdent(name)
 	if name == "" {
 		return "Anonymous"
 	}
 	return name
+}
+
+// sanitizeIdent 组件名合法字符清洗：仅保留 [a-zA-Z0-9_-]，其余（含点号——
+// kin-openapi 内存态校验对带点组件名的引用解析有问题）替换为 _。
+func sanitizeIdent(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
 }
 
 // assignNames 两阶段命名的第二阶段：为收集到的全部组件类型分配最终组件名。

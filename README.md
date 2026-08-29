@@ -1,4 +1,4 @@
-﻿# oapi-hinge
+# oapi-hinge
 
 一个 Go API 框架：**统一 Handler 模板 + 原生框架运行时 + OpenAPI 文档自动生成**。
 
@@ -58,7 +58,7 @@ func All() []*contract.Group {
 
 | 子模块 | 说明 | 依赖 |
 |---|---|---|
-| `contract` | 核心契约：RouteMeta / Group / 响应壳 / 逃生舱 | 无（纯标准库） |
+| `contract` | 核心契约：RouteMeta / Group / 响应壳 / 逐级定制 | 无（纯标准库） |
 | `servergin` | gin 运行时适配器 | contract + gin |
 | `serverecho` | echo 运行时适配器 | contract + echo |
 | `openapi` | OpenAPI 3.1 文档生成器（开发期工具） | contract + kin-openapi |
@@ -201,7 +201,7 @@ s.AddValidator(validator.Playground()) // 支持 validate:"required,email,min=8"
 - **框架可移植**：同一份路由注册表挂到 gin 或 echo 只差一行装配代码，业务代码零改动；
 - **运行时零开发期依赖**：文档生成器带 `//go:build openapi` 标签，release 构建完全不包含 kin-openapi / yaml 等开发期依赖；
 - **schema 自研反射生成**：组件化 `$ref` 去重、递归类型防栈溢出、`time.Time`/`[]byte`/泛型等开箱即用；
-- **逃生舱体系**：遇到模板覆盖不了的场景，按优先级开逃生舱——`header` 标签绑定 → `contract.Response[R]` 响应定制（状态码/响应头/Cookie）→ `contract.WithFramework` 注入框架上下文；
+- **逐级定制**：模板覆盖不了的场景，按优先级逐级放开——`header` 标签绑定 → `contract.Response[R]` 响应定制（状态码/响应头/Cookie）→ `contract.WithFramework` 注入框架上下文；
 - **中间件文档钩子**：中间件按函数名（反射派生）可选注册文档钩子（如鉴权中间件自动标注 BearerAuth），未注册钩子的中间件照常运行但不污染文档；
 - **性能可控**：统一模板相对原生 gin Handler 的单请求开销约 0.8~1.9µs（反射调用），挂载期预计算 + 字段元数据缓存已将额外分配降到每次请求 4~6 个。
 

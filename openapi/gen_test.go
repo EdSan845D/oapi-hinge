@@ -14,7 +14,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// 逃生舱文档生成验证：header 标签进文档、Response[R] 解包取 Data schema
+// 定制能力文档生成验证：header 标签进文档、Response[R] 解包取 Data schema
 // anyBodyHandler 通用无参处理器（B=any 场景复用）
 func anyBodyHandler(ctx context.Context, _ contract.NoReq, _ any) (map[string]string, error) {
 	return map[string]string{}, nil

@@ -62,7 +62,7 @@ func bindFields(c *gin.Context, e reflect.Value, metas []contract.FieldMeta) err
 			}
 			continue
 		}
-		// 逃生舱 1：header 标签优先（独立于 query/form）
+		// header 标签优先（独立于 query/form）
 		if m.Header != "" {
 			if err := contract.SetRaw(f, c.GetHeader(m.Header), m.Header); err != nil {
 				return err

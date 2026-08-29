@@ -8,6 +8,7 @@
 package openapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -26,14 +27,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// respWrapperIface 响应定制壳接口（逃生舱 2：contract.Response[R]）
+// respWrapperIface 响应定制壳接口（contract.Response[R]）
 var respWrapperIface = reflect.TypeOf((*contract.ResponseWrapper)(nil)).Elem()
 
 var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
 
 // 壳推导状态（dev 工具单线程；generate 重置）。
 // envelopeInstance 由 OptionWithEnvelope 注入运行时实际壳实例；
-// envelopeSchemaCustom 标记 OptionWithEnvelopeSchema 手写逃生舱。
+// envelopeSchemaCustom 标记 OptionWithEnvelopeSchema 手写壳 schema（仅无法从壳实例推导时使用）。
 var (
 	envelopeSchema       EnvelopeSchema = defaultEnvelopeSchema
 	envelopeSchemaCustom bool
@@ -92,6 +93,17 @@ func buildDoc(groups []*contract.Group, opts ...Option) (*openapi3.T, []string, 
 	mergeManualPaths(doc)
 	warnings = append(warnings, g.warns...)
 	warnings = append(warnings, unmatchedRegistrations()...)
+	// 生成期规范校验（默认开启）：程序化构建的 doc 内部 $ref 尚未解析（Value 为 nil），
+	// kin-openapi 的 Validate 不解析引用，因此先 YAML 序列化往返再校验——
+	// 与最终交付内容完全一致，同时能抓住序列化产物的问题（如非法组件名字符）。
+	if data, merr := yaml.Marshal(doc); merr == nil {
+		loaded, lerr := openapi3.NewLoader().LoadFromData(data)
+		if lerr != nil {
+			warnings = append(warnings, "spec validation failed: "+lerr.Error())
+		} else if verr := loaded.Validate(context.Background()); verr != nil {
+			warnings = append(warnings, "spec validation failed: "+verr.Error())
+		}
+	}
 	return doc, warnings, nil
 }
 
@@ -326,7 +338,7 @@ func addOperation(g *specGen, r contract.Route, groupPath string, groupTags []st
 	if rT.Kind() == reflect.Pointer {
 		rT = rT.Elem()
 	}
-	// 逃生舱 2：Response[R] 包装 → 取 Data 字段类型作为响应 schema
+	// Response[R] 包装 → 取 Data 字段类型作为响应 schema
 	if rT.Implements(respWrapperIface) {
 		if f, ok := rT.FieldByName("Data"); ok {
 			rT = f.Type
@@ -360,7 +372,7 @@ func addOperation(g *specGen, r contract.Route, groupPath string, groupTags []st
 		}
 	}
 
-	// 路由文档钩子：中间件钩子之后、最后应用（兜底逃生舱）
+	// 路由文档钩子：中间件钩子之后、最后应用（兜底改写）
 	if hasDoc && rd.Hook != nil {
 		rd.Hook(op)
 	}
@@ -407,7 +419,7 @@ func mergeTags(a, b []string) []string {
 	return out
 }
 
-// effectiveEnvelope 返回路由实际生效的壳实例；nil 表示走手写壳逃生舱
+// effectiveEnvelope 返回路由实际生效的壳实例；nil 表示走手写壳 schema
 // （OptionWithEnvelopeSchema 且未提供壳实例/路由级壳）。
 func effectiveEnvelope(r contract.Route) response.Envelope {
 	if r.Envelope != nil {
@@ -427,7 +439,7 @@ func okResponse(g *specGen, r contract.Route, data *openapi3.SchemaRef) *openapi
 	env := effectiveEnvelope(r)
 	var schema *openapi3.SchemaRef
 	if env == nil {
-		// 手写壳逃生舱：OptionWithEnvelopeSchema 且未提供壳实例/路由级壳
+		// 手写壳 schema：OptionWithEnvelopeSchema 且未提供壳实例/路由级壳
 		schema = envelopeSchema(data)
 	} else {
 		status := r.DefaultStatusCode
@@ -601,7 +613,7 @@ func queryParams(t reflect.Type) []*openapi3.Parameter {
 			if !f.IsExported() {
 				continue
 			}
-			// 逃生舱 1：header 标签优先（独立于 query/form）
+			// header 标签优先（独立于 query/form）
 			if hname, hok := tagValueOf(f, "header"); hok {
 				p := openapi3.NewHeaderParameter(hname)
 				if d, ok := f.Tag.Lookup("description"); ok && d != "" {

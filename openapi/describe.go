@@ -35,7 +35,7 @@ type RouteDoc struct {
 	// Hide 从文档中剔除该接口（运行时照常服务）——内网接口的轻量方案
 	Hide bool
 
-	// Hook 兜底逃生舱：拿到最终 operation 任意改写。
+	// Hook 兜底：拿到最终 operation 任意改写。
 	// 应用顺序：中间件文档钩子先、本钩子最后。
 	Hook DocHook
 }
@@ -49,7 +49,7 @@ type ErrorDecl struct {
 	Code int
 	// Description 响应描述（如 "用户不存在"），同时作为响应体 msg 的示例值
 	Description string
-	// Schema 逃生舱：整体覆盖失败响应体（如自定义错误协议）；
+	// Schema 自定义覆盖：整体替换失败响应体（如自定义错误协议）；
 	// 缺省由壳推导
 	Schema *openapi3.SchemaRef
 }

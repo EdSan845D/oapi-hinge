@@ -180,7 +180,7 @@ func TestGroupMiddleware(t *testing.T) {
 	}
 }
 
-// TestEscapeHatches 逃生舱：header 标签 / Response 定制 / Framework 注入
+// TestEscapeHatches 定制能力：header 标签 / Response 定制 / Framework 注入
 func TestEscapeHatches(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -212,15 +212,15 @@ func TestEscapeHatches(t *testing.T) {
 			Prefix: "/escape",
 			Routes: []contract.Route{
 				contract.New(contract.RouteMeta[escapeHeaderReq, any, map[string]string]{
-					Method: "GET", Path: "/header", Summary: "逃生舱1",
+					Method: "GET", Path: "/header", Summary: "定制1",
 					Handler: escapeHeader,
 				}),
 				contract.New(contract.RouteMeta[contract.NoReq, any, contract.Response[testUser]]{
-					Method: "POST", Path: "/created", Summary: "逃生舱2",
+					Method: "POST", Path: "/created", Summary: "定制2",
 					Handler: escapeCreated,
 				}),
 				contract.New(contract.RouteMeta[contract.NoReq, any, map[string]string]{
-					Method: "GET", Path: "/framework", Summary: "逃生舱3",
+					Method: "GET", Path: "/framework", Summary: "定制3",
 					Handler: escapeFramework,
 				}),
 			},
@@ -404,7 +404,7 @@ func TestDefaultStatusCode(t *testing.T) {
 					Summary:           "动态覆盖",
 					DefaultStatusCode: http.StatusCreated,
 					Handler: func(ctx context.Context, _ contract.NoReq, _ any) (contract.Response[map[string]string], error) {
-						// 逃生舱 2 动态状态码优先于路由级默认
+						// Response[R] 动态状态码优先于路由级默认
 						return contract.Response[map[string]string]{Status: http.StatusAccepted, Data: map[string]string{"id": "u2"}}, nil
 					},
 				}),

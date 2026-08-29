@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/EdSan845D/oapi-hinge/contract"
+	"github.com/EdSan845D/oapi-hinge/contract/response"
 
 	"github.com/getkin/kin-openapi/openapi3"
 
@@ -164,14 +165,14 @@ func TestTypeSchemaOverride(t *testing.T) {
 	}
 	s := readSpec(t, out)
 
-	// 组件替换：$ref 结构不变，组件内容 = 注册 schema（不再有 properties）
+	// 组件替换：$ref 结构不变，组件内容 = 注册 schema（不再有原字段）
 	if !strings.Contains(s, "#/components/schemas/overriddenType") {
 		t.Fatalf("$ref missing:\n%s", s)
 	}
 	if !strings.Contains(s, "format: decimal") || !strings.Contains(s, "type: number") {
 		t.Fatalf("overridden component content missing:\n%s", s)
 	}
-	if strings.Contains(s, "V:") { // 原结构体字段不应出现（组件已被替换）
+	if strings.Contains(s, "V:") {
 		t.Fatalf("overridden component leaked original fields:\n%s", s)
 	}
 }
@@ -252,13 +253,12 @@ func TestBuildAPI(t *testing.T) {
 	if len(doc.Paths.InMatchingOrder()) == 0 {
 		t.Fatal("Build doc has no paths")
 	}
-	// Build 不落盘：验证组件正常
 	if len(doc.Components.Schemas) == 0 {
 		t.Fatal("Build doc has no components")
 	}
 }
 
-// ============ default 标签全标量类型转型 ============
+// ============ body default 标签全标量类型转型 ============
 
 type defaultTypesReq struct {
 	Price   float64 `json:"price" default:"9.9"`
@@ -296,6 +296,41 @@ func TestBodyDefaultTypeCoercion(t *testing.T) {
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("default %q missing:\n%s", want, s)
+		}
+	}
+}
+
+// ============ 泛型组件名合法字符回归：Paged[User] 不再产生非法 / ============
+
+func TestGenericComponentNameCharset(t *testing.T) {
+	resetRegistries()
+	defer resetRegistries()
+
+	pagedHandler := func(ctx context.Context, _ contract.NoReq, _ any) (response.Paged[testdataa.User], error) {
+		return response.Paged[testdataa.User]{Items: []testdataa.User{{ID: "a1", Name: "alice"}}, Total: 1}, nil
+	}
+
+	groups := []*contract.Group{{
+		Prefix: "/pg",
+		Routes: []contract.Route{
+			contract.New(contract.RouteMeta[contract.NoReq, any, response.Paged[testdataa.User]]{
+				Method: "GET", Path: "/x", Summary: "泛型分页", Handler: pagedHandler,
+			}),
+		},
+	}}
+	out := t.TempDir() + "/spec.yaml"
+	warns, err := generate(out, groups, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := readSpec(t, out)
+	// 泛型参数取末段限定名：Paged[...a.User] -> Paged_a_User（合法字符集，无点号）
+	if !strings.Contains(s, "Paged_a_User") {
+		t.Fatalf("generic component name missing:\n%s", s)
+	}
+	for _, w := range warns {
+		if strings.Contains(w, "spec validation failed") {
+			t.Fatalf("generated spec invalid:\n%s", s)
 		}
 	}
 }

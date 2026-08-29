@@ -32,7 +32,7 @@ func OptionWithSecurity(schemes openapi3.SecuritySchemes) Option {
 // 生成期调用其 Success/Failure 反射推导成功/失败响应 schema——
 // 文档形态与运行时同构，消灭手工配对。壳实例建议放业务共享包
 // （如 routes.APIEnvelope），main.go 与 main_doc.go 引用同一份。
-// 优先级：RouteMeta.Envelope（路由级）> 本 Option > 手写逃生舱 > 默认壳推导。
+// 优先级：RouteMeta.Envelope（路由级）> 本 Option > 手写壳 schema > 默认壳推导。
 func OptionWithEnvelope(env response.Envelope) Option {
 	return func(doc *openapi3.T) {
 		if env != nil {
@@ -55,7 +55,7 @@ func OptionWithSourceComments() Option {
 }
 
 // EnvelopeSchema 响应壳 schema 包装函数：输入业务数据 schema，输出壳 schema。
-// 手写逃生舱：仅当无法从壳实例推导（如 map 形态壳需要精确 key 文档）时使用；
+// 手写壳 schema：仅当无法从壳实例推导（如 map 形态壳需要精确 key 文档）时使用；
 // 常规场景用 OptionWithEnvelope 自动推导。
 type EnvelopeSchema func(data *openapi3.SchemaRef) *openapi3.SchemaRef
 
@@ -70,9 +70,9 @@ func defaultEnvelopeSchema(data *openapi3.SchemaRef) *openapi3.SchemaRef {
 	return &openapi3.SchemaRef{Value: env}
 }
 
-// OptionWithEnvelopeSchema 手写逃生舱：自定义响应壳在 OpenAPI 文档中的 schema。
+// OptionWithEnvelopeSchema 手写壳 schema：自定义响应壳在 OpenAPI 文档中的 schema。
 // 传入 nil 恢复默认 {code, data, msg}。
-// 注意：若配置了 OptionWithEnvelope 或路由级 Envelope，实例推导优先于本逃生舱。
+// 注意：若配置了 OptionWithEnvelope 或路由级 Envelope，实例推导优先于本选项。
 func OptionWithEnvelopeSchema(fn EnvelopeSchema) Option {
 	return func(doc *openapi3.T) {
 		if fn != nil {

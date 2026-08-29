@@ -114,7 +114,7 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 			return fail(c, status, code, msg)
 		}
 
-		// 出参转换 + 逃生舱 2 解包（响应定制壳 Status/Headers/Cookies）
+		// 出参转换 + 响应定制解包（contract.Response[R] 的 Status/Headers/Cookies）
 		status := successStatus
 		respVal := out[0]
 		if w, ok := respVal.Interface().(contract.ResponseWrapper); ok {

@@ -1,4 +1,4 @@
-﻿# oapi-hinge 使用手册
+# oapi-hinge 使用手册
 
 > 适用版本：V0.1.0 <br/>
 > 设计动机与架构总览见 [README](../README.md)。
@@ -173,7 +173,7 @@ type ListUsersReq struct {
 	Page    int       `query:"page" default:"1" description:"页码"`
 	Size    int       `query:"size" default:"10"`
 	ID      int       `path:"id"`                          // 路由写 /users/{id}
-	Token   string    `header:"X-Token"`                   // 逃生舱 1：请求头
+	Token   string    `header:"X-Token"`                   // 请求头
 	Keyword string    `query:"keyword" binding:"required"` // 必填
 	Created time.Time `query:"created"`                    // RFC3339，如 2026-08-28T00:00:00Z
 }

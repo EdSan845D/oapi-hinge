@@ -116,7 +116,7 @@ type RouteMeta[Q, B, R any] struct {
 	Description string
 	Tags        []string
 	// DefaultStatusCode 成功响应默认 HTTP 状态码；0 → 200。
-	// 动态覆盖优先级：contract.Response[R].Status（逃生舱 2）> DefaultStatusCode > 200。
+	// 动态覆盖优先级：contract.Response[R].Status > DefaultStatusCode > 200。
 	// OpenAPI 文档生成器读取该值作为成功响应码（替代硬编码 200）。
 	DefaultStatusCode int
 	// Deprecated 弃用标记（运行时+文档共用层）：
