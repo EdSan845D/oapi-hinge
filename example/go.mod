@@ -1,6 +1,6 @@
 module github.com/EdSan845D/oapi-hinge/example
 
-go 1.26.5
+go 1.26
 
 require (
 	github.com/EdSan845D/oapi-hinge/contract v0.0.0

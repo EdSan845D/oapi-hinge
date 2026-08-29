@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, alpha]
   pull_request:
 
 jobs:
@@ -17,21 +17,31 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.26'
 
       - name: Build
         working-directory: ${{ matrix.module }}
-        run: go build ./...
+        run: |
+          if [ "${{ matrix.module }}" = "openapi" ]; then
+            go build -tags openapi ./...
+          else
+            go build ./...
+          fi
 
       - name: Vet
         working-directory: ${{ matrix.module }}
-        run: go vet ./...
+        run: |
+          if [ "${{ matrix.module }}" = "openapi" ]; then
+            go vet -tags openapi ./...
+          else
+            go vet ./...
+          fi
 
       - name: Test
         working-directory: ${{ matrix.module }}
         run: |
           if [ "${{ matrix.module }}" = "openapi" ]; then
-            go test -tags openapi -v ./...
+            go test -tags openapi ./...
           else
             go test ./...
           fi

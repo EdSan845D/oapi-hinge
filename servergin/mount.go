@@ -1,7 +1,6 @@
 package servergin
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -162,72 +161,21 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 	})
 }
 
-// resolveErrorStatus 提取错误自带的状态信息（StatusError / StatusCoder）；
-// ok=false 表示普通错误，由调用方决定兜底策略（业务错误走 mapError，绑定错误走 bindStatus）。
-func resolveErrorStatus(err error) (status, code int, msg string, ok bool) {
-	if se, e := errors.AsType[*contract.StatusError](err); e {
-		status = se.StatusCode()
-		code = se.Code
-		if code == 0 {
-			if status == http.StatusOK {
-				code = CodeError
-			} else {
-				code = status
-			}
-		}
-		msg = se.Msg
-		if msg == "" {
-			msg = err.Error()
-		}
-		return status, code, msg, true
-	}
-	if sc, e := errors.AsType[contract.StatusCoder](err); e {
-		status = sc.StatusCode()
-		if status == 0 {
-			status = http.StatusInternalServerError
-		}
-		return status, CodeError, err.Error(), true
-	}
-	return 0, 0, "", false
-}
-
 // resolveError 业务错误 → (HTTP状态码, 业务code, 对外信息)。
-// 优先级：错误自带状态码（StatusError / StatusCoder）→ SetErrorMapper 全局映射（存量行为）。
+// 默认策略在 contract 层（contract.ResolveError）：错误自带状态码优先 → SetErrorMapper 兜底。
 func resolveError(s *Server, err error) (int, int, string) {
-	if status, code, msg, ok := resolveErrorStatus(err); ok {
-		return status, code, msg
-	}
-	status, code := s.mapError(err)
-	return status, code, err.Error()
+	return contract.ResolveError(s.mapError, err)
 }
 
 // bindError 绑定/校验阶段错误（Q/B 绑定、TransformIn、校验器）的状态决策：
 // 携带状态码的错误（如 ParamBinder 返回 NotFound）走统一错误链；
 // 普通错误保持 bindStatus 语义（默认 200 + CodeError 存量行为，SetBindErrorStatus 可调）。
 func (s *Server) bindError(err error) (int, int, string) {
-	if status, code, msg, ok := resolveErrorStatus(err); ok {
+	if status, code, msg, ok := contract.ResolveErrorStatus(err); ok {
 		return status, code, msg
 	}
-	status, code := bindFail(s.bindStatus)
+	status, code := contract.BindFail(s.bindStatus)
 	return status, code, err.Error()
-}
-
-// bindFail 绑定/校验失败响应的 (status, code)：默认 200 + CodeError（存量行为）；
-// 自定义非 200 状态码时 code 跟随状态码（与 StatusError 约定一致）
-func bindFail(status int) (int, int) {
-	if status <= 0 || status == http.StatusOK {
-		return http.StatusOK, CodeError
-	}
-	return status, status
-}
-
-// 默认错误映射：ErrNotFound -> 404；其余业务错误 -> HTTP 200 + code:7
-// （如需 RESTful 语义（如 400/422），用 SetErrorMapper 覆盖或返回 StatusError）
-func defaultErrorMapper(err error) (int, int) {
-	if errors.Is(err, contract.ErrNotFound) {
-		return http.StatusNotFound, http.StatusNotFound
-	}
-	return http.StatusOK, CodeError
 }
 
 // ginPath 把 OpenAPI 风格路径 /users/{id} 转为 Gin 风格 /users/:id

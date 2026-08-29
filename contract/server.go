@@ -1,18 +1,85 @@
 package contract
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/EdSan845D/oapi-hinge/contract/response"
 )
 
 // Server 运行时适配器接口规范：各框架适配器（servergin / serverecho）
 // 提供具体实现，业务装配层面向该接口编程时可互换适配器。
+// 作为 server 实现的示范存在：适配器可参考其形态提供自己的 Mount 签名。
 type Server interface {
 	Mount(g any, groups []*Group)
+}
+
+// ============ 错误解析默认策略（适配器直接使用，也可自行实现覆盖） ============
+// 与响应壳/绑定公用件同层：默认实现集中在此，适配器保持薄封装。
+
+// ResolveErrorStatus 提取错误自带的状态信息（StatusError → StatusCoder）。
+// ok=false 表示普通错误，由调用方决定兑底策略（业务错误走 errorMapper，绑定错误走 bindStatus）。
+func ResolveErrorStatus(err error) (status, code int, msg string, ok bool) {
+	if se, e := errors.AsType[*StatusError](err); e {
+		status = se.StatusCode()
+		code = se.Code
+		if code == 0 {
+			if status == http.StatusOK {
+				code = response.CodeError
+			} else {
+				code = status
+			}
+		}
+		msg = se.Msg
+		if msg == "" {
+			msg = err.Error()
+		}
+		return status, code, msg, true
+	}
+	if sc, e := errors.AsType[StatusCoder](err); e {
+		status = sc.StatusCode()
+		if status == 0 {
+			status = http.StatusInternalServerError
+		}
+		return status, response.CodeError, err.Error(), true
+	}
+	return 0, 0, "", false
+}
+
+// ResolveError 业务错误解析：错误自带状态码优先，否则调用 mapError 兑底
+// （mapError 由适配器注入，Server.SetErrorMapper；传 nil 则用 DefaultErrorMapper）。
+func ResolveError(mapError func(err error) (httpStatus, bizCode int), err error) (int, int, string) {
+	if status, code, msg, ok := ResolveErrorStatus(err); ok {
+		return status, code, msg
+	}
+	if mapError == nil {
+		mapError = DefaultErrorMapper
+	}
+	status, code := mapError(err)
+	return status, code, err.Error()
+}
+
+// DefaultErrorMapper 默认兑底映射：ErrNotFound → 404；其余业务错误 → HTTP 200 + code=7。
+func DefaultErrorMapper(err error) (httpStatus, bizCode int) {
+	if errors.Is(err, ErrNotFound) {
+		return http.StatusNotFound, http.StatusNotFound
+	}
+	return http.StatusOK, response.CodeError
+}
+
+// BindFail 绑定/校验失败响应的 (status, code)：默认 200 + CodeError（存量行为）；
+// 自定义非 200 状态码时 code 跟随状态码（与 StatusError 约定一致）。
+func BindFail(status int) (int, int) {
+	if status <= 0 || status == http.StatusOK {
+		return http.StatusOK, response.CodeError
+	}
+	return status, status
 }
 
 func IsBodyMethod(method string) bool {

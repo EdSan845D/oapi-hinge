@@ -971,3 +971,22 @@ func bindFields(c chi.Context, e reflect.Value, metas []contract.FieldMeta) erro
 
 **Q：脚手架生成的项目编译不过？**
 当前版本暂时不考虑脚手架,目前先按照找第 1 节手动接入。
+
+## 5. 测试
+
+每个子模块独立测试；openapi 必须带构建标签：
+
+```bash
+# 单模块示例
+cd servergin && go test ./...
+
+# 文档生成器（必须带 tag，否则测试不跑）
+cd openapi && go test -tags openapi ./...
+
+# 一键全量（build + vet + test）
+./test.sh
+```
+
+测试文件命名约定：`server_test.go`（基础链路）、`feature_test.go`（能力）、`parambinder_test.go`（绑定器）、`bench_test.go`（基准）、`constraints_test.go`（约束映射）等，按领域一个文件。
+
+CI（`.github/workflows/ci.yml`）随 push 到 main / alpha 触发，openapi 自动带 `-tags openapi`；`openapi.GenerateStrict` 可用于把警告升级为失败的严格检查。

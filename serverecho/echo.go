@@ -42,7 +42,7 @@ type Server struct {
 // New 创建 Server
 func New() *Server {
 	s := &Server{}
-	s.mapError = defaultErrorMapper
+	s.mapError = contract.DefaultErrorMapper
 	s.decorate = func(c echo.Context, ctx context.Context) context.Context {
 		return contract.WithFramework(ctx, c)
 	}

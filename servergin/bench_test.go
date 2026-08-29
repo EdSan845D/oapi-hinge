@@ -138,13 +138,25 @@ func benchEngine(b *testing.B, e *gin.Engine, method, path, body string) {
 }
 
 // --- 场景 1：无参 GET ---
-func BenchmarkServergin_Health(b *testing.B) { benchEngine(b, newBenchServergin(), http.MethodGet, "/api/health", "") }
-func BenchmarkNative_Health(b *testing.B)    { benchEngine(b, newBenchNative(), http.MethodGet, "/api/health", "") }
+func BenchmarkServergin_Health(b *testing.B) {
+	benchEngine(b, newBenchServergin(), http.MethodGet, "/api/health", "")
+}
+func BenchmarkNative_Health(b *testing.B) {
+	benchEngine(b, newBenchNative(), http.MethodGet, "/api/health", "")
+}
 
 // --- 场景 2：query 绑定 GET ---
-func BenchmarkServergin_List(b *testing.B) { benchEngine(b, newBenchServergin(), http.MethodGet, "/api/users?page=1&size=10", "") }
-func BenchmarkNative_List(b *testing.B)    { benchEngine(b, newBenchNative(), http.MethodGet, "/api/users?page=1&size=10", "") }
+func BenchmarkServergin_List(b *testing.B) {
+	benchEngine(b, newBenchServergin(), http.MethodGet, "/api/users?page=1&size=10", "")
+}
+func BenchmarkNative_List(b *testing.B) {
+	benchEngine(b, newBenchNative(), http.MethodGet, "/api/users?page=1&size=10", "")
+}
 
 // --- 场景 3：POST body + 校验 ---
-func BenchmarkServergin_Create(b *testing.B) { benchEngine(b, newBenchServergin(), http.MethodPost, "/api/users", `{"name":"Alice"}`) }
-func BenchmarkNative_Create(b *testing.B)    { benchEngine(b, newBenchNative(), http.MethodPost, "/api/users", `{"name":"Alice"}`) }
+func BenchmarkServergin_Create(b *testing.B) {
+	benchEngine(b, newBenchServergin(), http.MethodPost, "/api/users", `{"name":"Alice"}`)
+}
+func BenchmarkNative_Create(b *testing.B) {
+	benchEngine(b, newBenchNative(), http.MethodPost, "/api/users", `{"name":"Alice"}`)
+}
