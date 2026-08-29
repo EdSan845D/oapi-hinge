@@ -8,7 +8,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/http"
 
+	"github.com/EdSan845D/oapi-hinge/example/app/handlers"
 	"github.com/EdSan845D/oapi-hinge/example/app/middleware"
 	"github.com/EdSan845D/oapi-hinge/example/app/routes"
 	"github.com/EdSan845D/oapi-hinge/openapi"
@@ -24,6 +26,20 @@ func init() {
 		op.Security = &openapi3.SecurityRequirements{{"BearerAuth": []string{}}}
 		op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
 			WithDescription("Unauthorized：token 缺失或无效")})
+	})
+
+	// 路由级纯文档增强（DescribeRoute）：错误响应声明 / OperationID 覆盖 / 响应头。
+	// key = handler 函数引用（反射取「包.函数」）；只活在 doc 构建，release 二进制零内容。
+	openapi.DescribeRoute(handlers.GetUser, openapi.RouteDoc{
+		OperationID: "getUserById",
+		Errors: []openapi.ErrorDecl{
+			{Status: http.StatusNotFound, Description: "用户不存在"},
+		},
+	})
+	openapi.DescribeRoute(handlers.DeleteUser, openapi.RouteDoc{
+		Errors: []openapi.ErrorDecl{
+			{Status: http.StatusNotFound, Description: "用户不存在"},
+		},
 	})
 }
 
@@ -49,6 +65,7 @@ func main() {
 		openapi.OptionWithDocInfo(info),
 		openapi.OptionWithServer(servers),
 		openapi.OptionWithSecurity(security),
+		openapi.OptionWithSourceComments(), // 注释即文档：字段/结构体/handler 注释进描述
 	); err != nil {
 		panic(err)
 	}

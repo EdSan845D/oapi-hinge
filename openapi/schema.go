@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"time"
@@ -10,14 +11,22 @@ import (
 
 // schemaBuilder 从 Go 类型反射生成 OpenAPI schema。
 // 命名结构体注册到 components.schemas 并以 $ref 引用：组件去重 + 递归类型防栈溢出。
+// 组件名采用两阶段分配：探测遍历收集全部类型 → assignNames 统一命名（跨包同名防碰撞）→ 正式构建。
 type schemaBuilder struct {
 	doc      *openapi3.T
 	names    map[reflect.Type]string // 已注册（含注册中）的类型 -> 组件名
 	building map[reflect.Type]bool   // 递归保护：正在构建组件的类型
+	done     map[reflect.Type]bool   // 组件已构建（两阶段命名下 names 预分配 ≠ 已构建）
+	seen     []reflect.Type          // 首次注册顺序（供两阶段命名的冲突分析）
 }
 
-func newSchemaBuilder(doc *openapi3.T) *schemaBuilder {
-	return &schemaBuilder{doc: doc, names: map[reflect.Type]string{}, building: map[reflect.Type]bool{}}
+// names 可为 nil（探测模式：即时命名，仅用于收集类型集合）；
+// 正式构建传入 assignNames 预分配的命名表（跨包同名类型防碰撞）。
+func newSchemaBuilder(doc *openapi3.T, names map[reflect.Type]string) *schemaBuilder {
+	if names == nil {
+		names = map[reflect.Type]string{}
+	}
+	return &schemaBuilder{doc: doc, names: names, building: map[reflect.Type]bool{}, done: map[reflect.Type]bool{}}
 }
 
 var timeType = reflect.TypeOf(time.Time{})
@@ -34,15 +43,28 @@ func (b *schemaBuilder) ref(t reflect.Type) *openapi3.SchemaRef {
 	}
 
 	// 命名结构体：组件化（先占位再构建，递归命中直接返回 ref）
+	// 注意：两阶段命名下 names 可能已预分配，但不能据此返回——组件体可能尚未构建；
+	// 以 done/building 区分「已构建/构建中」，否则正式轮组件表为空
 	if t.Kind() == reflect.Struct && t.Name() != "" {
-		if name, ok := b.names[t]; ok {
-			return &openapi3.SchemaRef{Ref: "#/components/schemas/" + name}
+		if b.done[t] || b.building[t] {
+			return &openapi3.SchemaRef{Ref: "#/components/schemas/" + b.names[t]}
 		}
-		name := schemaName(t)
-		b.names[t] = name
+		name := b.names[t]
+		if name == "" {
+			name = schemaName(t)
+			b.names[t] = name
+			b.seen = append(b.seen, t)
+		}
 		b.building[t] = true
 		s := b.buildStruct(t)
 		delete(b.building, t)
+		b.done[t] = true
+		// 结构体注释 → 组件描述（注释即文档）
+		if td := typeDocsFor(t); td != nil && td.description != "" {
+			if ref := runCommentParser(td.description, &openapi3.SchemaRef{Value: s}); ref != nil && ref.Value != nil {
+				s = ref.Value
+			}
+		}
 		if b.doc.Components == nil {
 			b.doc.Components = &openapi3.Components{}
 		}
@@ -118,6 +140,8 @@ func (b *schemaBuilder) buildStruct(t reflect.Type) *openapi3.Schema {
 		if d, ok := f.Tag.Lookup("description"); ok && d != "" {
 			ref = withDescription(ref, d)
 		}
+		// 字段注释 → description（description 标签优先，内置解析器尊重已有描述）
+		ref = applyFieldComment(ref, t, f.Name)
 		s.Properties[name] = ref
 		// required 规则：json 未标 omitempty，或 binding 显式 required
 		if !omit || isRequiredOpenAPI(f) {
@@ -130,8 +154,9 @@ func (b *schemaBuilder) buildStruct(t reflect.Type) *openapi3.Schema {
 	return s
 }
 
-// schemaName 组件名：反射完整名（含包路径与泛型参数）转合法标识符。
-// 例：handlers.User -> handlers_User；response.Paged[handlers.User] -> response_Paged_handlers_User
+// schemaName 组件裸名：类型名（泛型参数扁平化）。
+// 例：User -> User；Paged[User] -> Paged_User。
+// 跨包同名冲突由 assignNames 统一升级（裸名优先 + 冲突升级策略）。
 func schemaName(t reflect.Type) string {
 	name := t.Name() // 泛型实例形如 Paged[User]
 	name = strings.ReplaceAll(name, "[", "_")
@@ -140,6 +165,85 @@ func schemaName(t reflect.Type) string {
 		return "Anonymous"
 	}
 	return name
+}
+
+// assignNames 两阶段命名的第二阶段：为收集到的全部组件类型分配最终组件名。
+// 策略：裸名优先；发现冲突（跨包同名，或裸名已被先前升级占用）时，冲突方整体升级为
+// 「末段包名_裸名」，候选仍冲突则加深包路径段，最终数字后缀兜底。
+// 全程按首次出现顺序处理，输出确定；升级时返回警告。
+func assignNames(types []reflect.Type) (map[reflect.Type]string, []string) {
+	final := make(map[reflect.Type]string, len(types))
+	used := map[string]bool{} // 已占用的最终组件名（含升级名）
+
+	var order []string
+	groups := map[string][]reflect.Type{}
+	for _, t := range types {
+		bare := schemaName(t)
+		if _, ok := groups[bare]; !ok {
+			order = append(order, bare)
+		}
+		groups[bare] = append(groups[bare], t)
+	}
+
+	var warns []string
+	for _, bare := range order {
+		ts := groups[bare]
+		if len(ts) == 1 && !used[bare] {
+			final[ts[0]] = bare
+			used[bare] = true
+			continue
+		}
+		// 冲突：跨包同名（或裸名已被先前升级占用）——冲突方整体升级，
+		// 避免「后注册者改名」的不确定性
+		assigned := false
+		for seg := 1; seg <= 8 && !assigned; seg++ {
+			cand := make(map[reflect.Type]string, len(ts))
+			taken := map[string]bool{}
+			ok := true
+			for _, t := range ts {
+				cn := pkgPrefix(t, seg) + "_" + bare
+				if cn == bare || taken[cn] || used[cn] {
+					ok = false
+					break
+				}
+				taken[cn] = true
+				cand[t] = cn
+			}
+			if !ok {
+				continue
+			}
+			var upgraded []string
+			for _, t := range ts {
+				final[t] = cand[t]
+				used[cand[t]] = true
+				upgraded = append(upgraded, cand[t])
+			}
+			warns = append(warns, fmt.Sprintf("schema name collision on %q -> %s（组件名已升级，引用已同步）",
+				bare, strings.Join(upgraded, ", ")))
+			assigned = true
+		}
+		if !assigned { // 数字兜底（8 级包路径仍冲突的理论情况）
+			for i, t := range ts {
+				final[t] = fmt.Sprintf("%s_%d", bare, i+1)
+				used[final[t]] = true
+			}
+			warns = append(warns, "schema name collision on "+bare+" -> 数字后缀兜底")
+		}
+	}
+	return final, warns
+}
+
+// pkgPrefix 取类型包路径的末 seg 段，"_" 连接（如 app/handlers, seg=1 -> "handlers"）
+func pkgPrefix(t reflect.Type, seg int) string {
+	p := t.PkgPath()
+	if p == "" {
+		return ""
+	}
+	parts := strings.Split(p, "/")
+	if seg > len(parts) {
+		seg = len(parts)
+	}
+	return strings.Join(parts[len(parts)-seg:], "_")
 }
 
 // jsonName 解析 json tag：返回字段名与是否 omitempty

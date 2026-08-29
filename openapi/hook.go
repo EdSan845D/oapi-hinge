@@ -13,6 +13,9 @@ type DocHook = func(op *openapi3.Operation)
 // 中间件文档钩子注册表：键为反射派生的函数名（contract.FuncName）
 var hooks = map[string]DocHook{}
 
+// hookUsed 已被路由树消费的钩子 key（Generate 结束时未消费的输出警告）
+var hookUsed = map[string]bool{}
+
 // RegisterMiddlewareDoc 把中间件函数与文档钩子绑定（可选择性注册）。
 // fn 传业务中间件函数引用（如 middleware.Auth），内部反射取名字做键，
 // 调用方不需要手写名字字符串。
@@ -30,8 +33,10 @@ func RegisterMiddlewareDoc(fn any, h DocHook) {
 // applyHooks 按中间件函数名匹配并应用文档钩子
 func applyHooks(op *openapi3.Operation, mws []any) {
 	for _, mw := range mws {
-		if h, ok := hooks[contract.FuncName(mw)]; ok {
+		name := contract.FuncName(mw)
+		if h, ok := hooks[name]; ok {
 			h(op)
+			hookUsed[name] = true
 		}
 	}
 }

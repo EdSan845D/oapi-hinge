@@ -119,6 +119,9 @@ type RouteMeta[Q, B, R any] struct {
 	// 动态覆盖优先级：contract.Response[R].Status（逃生舱 2）> DefaultStatusCode > 200。
 	// OpenAPI 文档生成器读取该值作为成功响应码（替代硬编码 200）。
 	DefaultStatusCode int
+	// Deprecated 弃用标记（运行时+文档共用层）：
+	// 文档生成 op.Deprecated=true；运行时后续可在 dev 模式对弃用接口打日志。
+	Deprecated bool
 	// Envelope 路由级响应壳；nil → 服务级默认壳（server.SetEnvelope）。
 	// 文档侧壳 schema 用 openapi.OptionWithEnvelopeSchema 配对配置。
 	Envelope response.Envelope
@@ -133,6 +136,7 @@ type Route struct {
 	Description       string
 	Tags              []string
 	DefaultStatusCode int
+	Deprecated        bool
 	Envelope          response.Envelope
 	Handler           any // func(context.Context, Q, B) (R, error)
 }
@@ -146,6 +150,7 @@ func New[Q, B, R any](m RouteMeta[Q, B, R]) Route {
 		Description:       m.Description,
 		Tags:              m.Tags,
 		DefaultStatusCode: m.DefaultStatusCode,
+		Deprecated:        m.Deprecated,
 		Envelope:          m.Envelope,
 		Handler:           m.Handler,
 	}

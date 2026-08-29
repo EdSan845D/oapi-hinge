@@ -20,8 +20,11 @@ import (
 //   - DeleteUser  DELETE 路径参数 + Empty 响应（data: null）
 
 type User struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
+	// 用户ID，全局唯一
+	ID string `json:"id"`
+	// 用户名
+	Name string `json:"name"`
+	// 邮箱，用于登录与通知
 	Email     string    `json:"email"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -81,7 +84,9 @@ func GetUser(ctx context.Context, req GetUserReq, _ any) (User, error) {
 
 // CreateUserReq 创建用户（演示：标签必填 + Validate() 自定义校验）
 type CreateUserReq struct {
-	Name  string `json:"name" binding:"required" description:"姓名"`
+	// 姓名(注释)
+	Name string `json:"name" binding:"required"`
+	// 邮箱(注释)
 	Email string `json:"email" binding:"required" description:"邮箱"`
 }
 
@@ -148,7 +153,7 @@ func Health(ctx context.Context, _ NoReq, _ any) (map[string]string, error) {
 // ChangePasswordReq 修改密码
 type ChangePasswordReq struct {
 	ID       string `path:"id" description:"用户ID"`
-	Password string `json:"password" validate:"required,min=8" description:"新密码"`
+	Password string `query:"password" validate:"required,min=8" description:"新密码"`
 }
 
 // InTransform 绑定后自动执行：去除首尾空白
