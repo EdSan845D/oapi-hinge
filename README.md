@@ -1,4 +1,4 @@
-# oapi-hinge
+﻿# oapi-hinge
 
 一个 Go API 框架：**统一 Handler 模板 + 原生框架运行时 + OpenAPI 文档自动生成**。
 
@@ -13,6 +13,8 @@
 3. **文档想自动生成**——类型即契约，OpenAPI 规范不该手写。
 
 oapi-hinge 用「契约层描述 + 框架适配器执行 + 纯 kin-openapi 生成文档」三层结构同时满足三者。
+
+📘 **使用手册**（快速开始 / OpenAPI 隔离构建 / 自定义适配器开发）：[docs/MANUAL.md](docs/MANUAL.md)
 
 ## 核心概念
 
