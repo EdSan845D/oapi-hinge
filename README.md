@@ -1,5 +1,7 @@
 # oapi-hinge
 
+[简体中文](README.md) | [English](README_EN.md)
+
 一个 Go API 框架：**统一 Handler 模板 + 原生框架运行时 + OpenAPI 文档自动生成**。
 
 本项目受 [go-fuego](https://github.com/go-fuego/fuego) 启发，文档生成基于 [kin-openapi](https://github.com/getkin/kin-openapi) 实现。
@@ -8,7 +10,7 @@
 
 业务 API 开发中，三个诉求经常打架：
 
-1. **Handler 想写成纯函数**——不依赖具体 Web 框架，单测不起服务器；
+1. **Handler 想写成纯函数**——不依赖具体 Web 框架，单元测试直接调用函数即可，无需启动 HTTP 服务器；
 2. **框架能力想全保留**——gin 的中间件生态、echo 的上下文特性，不想被抽象阉割；
 3. **文档想自动生成**——类型即契约，OpenAPI 规范不该手写。
 
@@ -205,7 +207,7 @@ s.AddValidator(validator.Playground()) // 支持 validate:"required,email,min=8"
 - **schema 自研反射生成**：组件化 `$ref` 去重、递归类型防栈溢出、`time.Time`/`[]byte`/泛型等开箱即用；
 - **逐级定制**：模板覆盖不了的场景，按优先级逐级放开——`header` 标签绑定 → `contract.Response[R]` 响应定制（状态码/响应头/Cookie）→ `contract.WithFramework` 注入框架上下文；
 - **中间件文档钩子**：中间件按函数名（反射派生）可选注册文档钩子（如鉴权中间件自动标注 BearerAuth），未注册钩子的中间件照常运行但不污染文档；
-- **性能可控**：统一模板相对原生 gin Handler 的单请求开销约 0.8~1.9µs（反射调用），挂载期预计算 + 字段元数据缓存已将额外分配降到每次请求 4~6 个。
+- **性能开销可量化**：统一模板经反射调用的单请求额外开销约 0.8~1.9µs；挂载期完成预计算，配合字段元数据缓存，每次请求仅额外引入 4~6 次内存分配。
 
 
 ## License

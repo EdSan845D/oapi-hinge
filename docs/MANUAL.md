@@ -1,5 +1,7 @@
 # oapi-hinge 使用手册
 
+[简体中文](MANUAL.md) | [English](MANUAL_EN.md)
+
 > 适用版本：V0.2.0 <br/>
 > 设计动机与架构总览见 [README](../README.md)。
 
