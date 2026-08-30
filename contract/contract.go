@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"time"
 
 	"github.com/EdSan845D/oapi-hinge/contract/response"
 )
@@ -31,6 +32,11 @@ type FileStream struct {
 	Size        int64  // 内容长度
 	ContentType string // 如 application/octet-stream、text/plain
 	Reader      io.Reader
+	// ---- 以下为可选增强字段，零值保持旧版行为 ----
+	ModTime      time.Time // 最后修改时间；零值忽略。Reader 可 Seek 且 Size>0 时驱动 Last-Modified 与 If-Modified-Since 条件请求
+	ETag         string    // 实体标签；空忽略。配合条件请求实现 304（强弱格式由调用方决定）
+	Disposition  string    // Content-Disposition 类型：""/attachment（默认）| inline（浏览器内联预览）
+	CacheControl string    // Cache-Control 头；空不输出（如 "private, max-age=3600"）
 }
 
 // Response 响应定制壳：业务层返回 contract.Response[R] 时，

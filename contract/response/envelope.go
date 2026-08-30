@@ -38,3 +38,18 @@ func (RawEnvelope) Success(status int, data any) any { return data }
 func (RawEnvelope) Failure(status int, code int, msg string) any {
 	return map[string]any{"error": msg}
 }
+
+// AggregateEnvelope 可选扩展接口：支持批量部分失败聚合输出的壳。
+// 适配器在错误链中发现 contract.AggregateError 且壳实现该接口时调用
+// AggregateFailure（输出 aggregated_error 明细）；未实现的壳行为不变。
+type AggregateEnvelope interface {
+	Envelope
+	// AggregateFailure 失败响应包装（含聚合明细）。status/code/msg 语义同 Failure，
+	// agg 为逐项失败明细（contract.ItemError 切片）。
+	AggregateFailure(status int, code int, msg string, agg any) any
+}
+
+// DefaultEnvelope 对聚合的原生支持：aggregated_error 明细进入默认壳。
+func (e DefaultEnvelope) AggregateFailure(status int, code int, msg string, agg any) any {
+	return Response[any]{Code: code, Data: nil, Msg: msg, AggregatedError: agg}
+}

@@ -29,6 +29,8 @@ type Server struct {
 	envelope response.Envelope
 	// 绑定/校验失败的 HTTP 状态码（默认 200，存量行为）；SetBindErrorStatus 可改
 	bindStatus int
+	// 关联 ID 注入开关（默认关闭，存量行为）；SetCorrelation(true) 开启
+	correlation bool
 }
 
 // New 创建 Server
@@ -91,6 +93,15 @@ func (s *Server) SetBindErrorStatus(status int) *Server {
 	if status > 0 {
 		s.bindStatus = status
 	}
+	return s
+}
+
+// SetCorrelation 扩展点：开启请求关联 ID（X-Correlation-Id）。
+// 开启后每个请求：入站沿用该头（缺失则生成 UUIDv4）→ 注入请求 ctx
+// （contract.CorrelationIDFrom 可读，先于业务 decorator）→ 回写响应头。
+// 默认关闭（存量行为）。echo 适配器同款开关，行为一致。
+func (s *Server) SetCorrelation(enable bool) *Server {
+	s.correlation = enable
 	return s
 }
 

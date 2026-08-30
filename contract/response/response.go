@@ -8,6 +8,10 @@ type Response[T any] struct {
 	Code int    `json:"code"`
 	Data T      `json:"data"`
 	Msg  string `json:"msg"`
+	// AggregatedError 批量操作的部分失败明细（contract.AggregateError.Failed）。
+	// 仅当错误链携带 AggregateError 且壳支持聚合输出时非空；omitempty 保证
+	// 普通请求的响应体与旧版逐字节一致。
+	AggregatedError any `json:"aggregated_error,omitempty"`
 }
 
 // Paged 分页响应

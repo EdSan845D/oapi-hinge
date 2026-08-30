@@ -941,6 +941,65 @@ func bindFields(c chi.Context, e reflect.Value, metas []contract.FieldMeta) erro
 
 ---
 
+## 2X. 增强能力（feat/improvements）
+
+以下能力自 feat/improvements 分支起提供，默认全部关闭或零值兼容存量行为。
+
+### X.1 FileStream：标准文件输出语义
+
+`contract.FileStream` 新增可选字段：Reader 实现 `io.ReadSeeker` 且 `Size > 0` 时，
+适配器走 `http.ServeContent`——自动获得 Range/206 多段、If-None-Match /
+If-Modified-Since / If-Range 条件请求、416 与 Accept-Ranges；否则回退旧全量输出。
+
+| 字段 | 语义 | 零值行为 |
+|---|---|---|
+| `ModTime` | 最后修改时间 → Last-Modified 与 If-Modified-Since | 不输出 |
+| `ETag` | 实体标签 → 304 协商 | 不输出 |
+| `Disposition` | `"inline"` 内联预览 / `attachment` 下载 | attachment（旧版行为） |
+| `CacheControl` | Cache-Control 头 | 不输出 |
+
+```go
+return &contract.FileStream{
+    Name: "clip.mp4", ContentType: "video/mp4", Size: n,
+    Disposition: "inline", ETag: `"v1"`, ModTime: mt, Reader: f,
+}, nil
+```
+
+### X.2 请求关联 ID（Correlation ID）
+
+`server.SetCorrelation(true)` 开启后，每个请求：入站沿用 `X-Correlation-Id`
+（缺失生成 UUIDv4）→ 注入请求 ctx（`contract.CorrelationIDFrom(ctx)` 可读，
+先于业务 decorator）→ 回写响应头。默认关闭。
+
+```go
+s := servergin.New().SetCorrelation(true)
+```
+
+### X.3 批量操作部分失败聚合（AggregateError）
+
+「整体受理、部分失败」场景：整体状态码/业务码走 StatusError 常规决策，
+逐项失败经壳的 `aggregated_error` 字段输出（默认壳原生支持；自定义壳实现
+`response.AggregateEnvelope` 可选接口即可获得同样能力）。
+
+```go
+return nil, &contract.AggregateError{
+    StatusError: contract.StatusError{Status: http.StatusOK, Msg: "部分删除失败"},
+    Total:       3,
+    Failed:      []contract.ItemError{{Key: "b.txt", Code: 7, Msg: "目标已存在"}},
+}
+```
+
+响应体：
+
+```json
+{"code":7,"data":null,"msg":"部分删除失败","aggregated_error":[{"key":"b.txt","code":7,"msg":"目标已存在"}]}
+```
+
+### X.4 业务 code 分配约定（建议）
+
+- 3 位：复用 HTTP 语义（401/403/404/409…）
+- 5 位：应用自定义码；4 开头 = 客户端错误，5 开头 = 服务端错误
+- 0 成功、7 默认业务失败（存量约定不变）
 ## 4. FAQ
 
 **Q：想要纯 RESTful 风格（无壳、4xx 语义）？**

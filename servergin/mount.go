@@ -1,6 +1,7 @@
 package servergin
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/EdSan845D/oapi-hinge/contract"
+	"github.com/EdSan845D/oapi-hinge/contract/response"
 	"github.com/EdSan845D/oapi-hinge/contract/validator"
 	"github.com/gin-gonic/gin"
 )
@@ -58,6 +60,16 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 	}
 
 	g.Handle(r.Method, ginPath(r.Path), func(c *gin.Context) {
+		// 关联 ID：开启后沿用入站 X-Correlation-Id（缺失则生成 UUIDv4），
+		// 注入请求 ctx 并回写响应头；先于业务 decorator，decorator 与 handler 均可读取。
+		if s.correlation {
+			cid := c.GetHeader(contract.HeaderCorrelationID)
+			if cid == "" {
+				cid = contract.NewCorrelationID()
+			}
+			c.Header(contract.HeaderCorrelationID, cid)
+			c.Request = c.Request.WithContext(contract.WithCorrelationID(c.Request.Context(), cid))
+		}
 		// 上下文装饰：最先执行（Q/B 绑定之前），TransformIn / 校验器 / TransformOut /
 		// handler 全程共享同一个已装饰 ctx（用户、租户、依赖注入等）
 		ctx := s.decorate(c, c.Request.Context())
@@ -113,7 +125,7 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 		if ei := out[1].Interface(); ei != nil {
 			err := ei.(error)
 			status, code, msg := resolveError(s, err)
-			fail(c, status, code, msg)
+			failAggregate(c, env, status, code, msg, err)
 			return
 		}
 
@@ -136,7 +148,7 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 		tv, err := contract.TransformOut(ctx, respVal)
 		if err != nil {
 			status, code, msg := resolveError(s, err)
-			fail(c, status, code, msg)
+			failAggregate(c, env, status, code, msg, err)
 			return
 		}
 		respAny := tv.Interface()
@@ -167,6 +179,20 @@ func resolveError(s *Server, err error) (int, int, string) {
 	return contract.ResolveError(s.mapError, err)
 }
 
+// failAggregate 失败输出：错误链携带 contract.AggregateError 且壳实现
+// response.AggregateEnvelope 时，额外输出逐项失败明细（aggregated_error）；
+// 其余情况与普通失败完全一致（含未实现聚合接口的自定义壳）。
+func failAggregate(c *gin.Context, env response.Envelope, status, code int, msg string, err error) {
+	var agg *contract.AggregateError
+	if errors.As(err, &agg) {
+		if ae, ok := env.(response.AggregateEnvelope); ok {
+			c.PureJSON(status, ae.AggregateFailure(status, code, msg, agg.Failed))
+			return
+		}
+	}
+	c.PureJSON(status, env.Failure(status, code, msg))
+}
+
 // bindError 绑定/校验阶段错误（Q/B 绑定、TransformIn、校验器）的状态决策：
 // 携带状态码的错误（如 ParamBinder 返回 NotFound）走统一错误链；
 // 普通错误保持 bindStatus 语义（默认 200 + CodeError 存量行为，SetBindErrorStatus 可调）。
@@ -183,23 +209,41 @@ func ginPath(p string) string {
 	return strings.NewReplacer("{", ":", "}", "").Replace(p)
 }
 
-// serveFile 输出二进制流（数据源为 io.Reader）
+// serveFile 输出二进制流。
+// Reader 实现 io.ReadSeeker 且 Size>0 时走 http.ServeContent：自动支持
+// Range/206 多段、If-None-Match / If-Modified-Since / If-Range 条件请求与 416；
+// 其余情况回退全量输出（与旧版行为一致）。
 func serveFile(c *gin.Context, f *contract.FileStream) {
 	contentType := f.ContentType
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	if f.CacheControl != "" {
+		c.Header("Cache-Control", f.CacheControl)
+	}
+	if f.ETag != "" {
+		c.Header("ETag", f.ETag)
+	}
+	disp := f.Disposition
+	if disp == "" {
+		disp = "attachment"
+	}
 	// 文件名缺省时不输出 Content-Disposition（避免空文件名的非法头）
 	if f.Name != "" {
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(f.Name)))
+		c.Header("Content-Disposition", fmt.Sprintf("%s; filename*=UTF-8''%s", disp, url.PathEscape(f.Name)))
 	}
+	// ServeContent 只在未显式设置时推断 Content-Type，先声明保证覆盖
+	c.Header("Content-Type", contentType)
 	if f.Size > 0 {
+		if rs, ok := f.Reader.(io.ReadSeeker); ok {
+			http.ServeContent(c.Writer, c.Request, "", f.ModTime, rs)
+			return
+		}
 		c.DataFromReader(http.StatusOK, f.Size, contentType, f.Reader, nil)
 		return
 	}
 	// Size 未知（<=0）：分块传输。DataFromReader 会写入 Content-Length，
 	// 长度不符会截断/挂起响应，这里改用 io.Copy
-	c.Header("Content-Type", contentType)
 	c.Status(http.StatusOK)
 	_, _ = io.Copy(c.Writer, f.Reader)
 }
