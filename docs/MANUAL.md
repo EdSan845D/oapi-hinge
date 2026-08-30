@@ -423,6 +423,46 @@ s.Mount(e.Group(routes.BasePath), routes.All()) // 同一份 routes.All()
 
 差异只有三处：适配器包名、`Group.Middlewares` 里的中间件类型（`echo.MiddlewareFunc`）、装饰器签名的 `echo.Context`。绑定规则、错误语义、响应壳、文档生成完全一致。更多框架（chi、fiber…）接入见[第 3 节](#3-编写新框架适配器)。
 
+### 1.12 per-request 依赖注入实践（不引入 DI 容器）
+
+业务 handler 是纯函数，请求级依赖（登录用户、租户、配置快照、专用客户端）统一走
+「**中间件解析 → context 携带 → handler 读取**」三段式，框架不内置 DI 容器：
+
+1. **中间件解析重依赖**：鉴权、查库等重操作放框架中间件（全局 `s.Use` 或
+   `Group.Middlewares`），结果写进框架上下文（gin `c.Set` / echo `c.Set`）
+2. **decorator 转存 context**：`SetContextDecorator` 把框架上下文里的依赖
+   WithValue 进请求级 `context.Context`（纯派生、轻量，每个请求都会执行）
+3. **handler 经类型化 getter 读取**：每类依赖写一组「key + With + From」三件套，
+   handler 只依赖 contract 与 getter，不感知框架
+
+每类依赖的标准三件套：
+
+```go
+type depKey struct{}
+
+func WithDep(ctx context.Context, d *Dep) context.Context {
+	return context.WithValue(ctx, depKey{}, d)
+}
+
+func DepFrom(ctx context.Context) *Dep {
+	d, _ := ctx.Value(depKey{}).(*Dep)
+	return d
+}
+```
+
+完整示例（用户身份，同款结构）：中间件解析 token → `handlers.WithClaims(ctx, user)`
+→ handler 内 `handlers.CurrentUser(ctx)`（见 snapshot-browser 的 `app/middleware/auth.go`
+与 `handlers/handlers.go`）。
+
+**为什么不引入 DI 容器**（对比 Cloudreve v4 的 `dependency.Dep` 巨型接口）：
+
+- 容器让业务包与「全体依赖」产生耦合，单测需要构造整个容器；纯函数 + 显式 ctx
+  读取让依赖在调用点可见
+- 框架内置容器等于替应用做架构决策；应用自己的依赖图放在 `main` 组装（普通结构体
+  + 构造注入，或闭包捕获）即可，框架对此零主张
+- 需要热重载类能力时，容器化的收益才出现——那也是应用层的事
+
+
 ---
 
 ## 2. OpenAPI 文档：构建期隔离
