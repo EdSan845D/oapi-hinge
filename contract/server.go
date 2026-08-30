@@ -214,8 +214,27 @@ type FieldMeta struct {
 	Query    string
 	Form     string
 	Header   string
+	Cookie   string
 	Def      string      // default 标签：绑定缺失时的运行时默认值（与文档 default 同步生效）
 	Children []FieldMeta // 内嵌结构体递归展平
+}
+
+// Source 返回字段的取值来源与参数名（用于字段级错误定位）。
+// 多标签共存时优先级：path > header > cookie > query/form；无标签返回空（body 字段）。
+func (m FieldMeta) Source() (name, in string) {
+	switch {
+	case m.Path != "":
+		return m.Path, "path"
+	case m.Header != "":
+		return m.Header, "header"
+	case m.Cookie != "":
+		return m.Cookie, "cookie"
+	case m.Query != "":
+		return m.Query, "query"
+	case m.Form != "":
+		return m.Form, "form"
+	}
+	return "", ""
 }
 
 // fieldCache Q 类型 -> 字段元数据缓存。
@@ -251,6 +270,7 @@ func ParseFields(t reflect.Type) []FieldMeta {
 		m.Query, _ = TagValue(f, "query")
 		m.Form, _ = TagValue(f, "form")
 		m.Header, _ = TagValue(f, "header")
+		m.Cookie, _ = TagValue(f, "cookie")
 		m.Def = f.Tag.Get("default")
 		out = append(out, m)
 	}

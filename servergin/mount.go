@@ -13,6 +13,7 @@ import (
 	"github.com/EdSan845D/oapi-hinge/contract/response"
 	"github.com/EdSan845D/oapi-hinge/contract/validator"
 	"github.com/gin-gonic/gin"
+	playground "github.com/go-playground/validator/v10"
 )
 
 func (s *Server) mountGroup(parent *gin.RouterGroup, grp *contract.Group) {
@@ -88,13 +89,13 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 			q := contract.NewValue(qType)
 			if err := bindQueryPath(c, q.Interface()); err != nil {
 				st, cd, msg := s.bindError(err)
-				fail(c, st, cd, msg)
+				failFields(c, env, st, cd, msg, err)
 				return
 			}
 			// 入参转换（Q）：与 B 一致，绑定后、校验前自动调用
 			if err := contract.TransformIn(ctx, q.Interface()); err != nil {
 				st, cd, msg := s.bindError(err)
-				fail(c, st, cd, msg)
+				failFields(c, env, st, cd, msg, err)
 				return
 			}
 			qArg = q.Elem()
@@ -128,15 +129,24 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 				}
 				if err := contract.BindMultipart(c.Request.MultipartForm, b.Interface()); err != nil {
 					st, cd, msg := s.bindError(err)
-					fail(c, st, cd, msg)
+					failFields(c, env, st, cd, msg, err)
 					return
 				}
 				bound = true
 			default:
 				if c.Request.Body != nil && c.Request.ContentLength > 0 {
 					if err := c.ShouldBindJSON(b.Interface()); err != nil {
+						err = contract.BindErrorFromJSON(err)
+						var ve playground.ValidationErrors
+						if errors.As(err, &ve) {
+							fields := make([]response.BindFieldError, 0, len(ve))
+							for _, fe := range ve {
+								fields = append(fields, response.BindFieldError{Field: fe.Field(), In: "body", Msg: "校验失败: " + fe.Tag()})
+							}
+							err = &response.BindError{Fields: fields}
+						}
 						st, cd, msg := s.bindError(err)
-						fail(c, st, cd, msg)
+						failFields(c, env, st, cd, msg, err)
 						return
 					}
 					bound = true
@@ -156,7 +166,7 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 		// 校验：内置（标签 required + Validate() 接口）+ 自定义校验器（可读装饰 ctx）
 		if err := validator.Run(ctx, r.Method, contract.CheckTarget(qType, qArg), contract.CheckTarget(bType, bArg), s.validators...); err != nil {
 			st, cd, msg := s.bindError(err)
-			fail(c, st, cd, msg)
+			failFields(c, env, st, cd, msg, err)
 			return
 		}
 
@@ -226,6 +236,20 @@ func failAggregate(c *gin.Context, env response.Envelope, status, code int, msg 
 	if errors.As(err, &agg) {
 		if ae, ok := env.(response.AggregateEnvelope); ok {
 			c.PureJSON(status, ae.AggregateFailure(status, code, msg, agg.Failed))
+			return
+		}
+	}
+	c.PureJSON(status, env.Failure(status, code, msg))
+}
+
+// failFields 绑定/校验失败输出：错误链携带 response.BindError 且壳实现
+// response.FieldErrorEnvelope 时，额外输出字段级明细（bind_errors）；
+// 其余情况与普通失败完全一致。
+func failFields(c *gin.Context, env response.Envelope, status, code int, msg string, err error) {
+	var be *response.BindError
+	if errors.As(err, &be) {
+		if fe, ok := env.(response.FieldErrorEnvelope); ok {
+			c.PureJSON(status, fe.FieldFailure(status, code, msg, be.Fields))
 			return
 		}
 	}

@@ -89,12 +89,12 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 			q := contract.NewValue(qType)
 			if err := bindQueryPath(c, q.Interface()); err != nil {
 				st, cd, msg := s.bindError(err)
-				return fail(c, st, cd, msg)
+				return failFields(c, env, st, cd, msg, err)
 			}
 			// 入参转换（Q）：与 B 一致，绑定后、校验前自动调用；ctx 为已装饰上下文
 			if err := contract.TransformIn(ctx, q.Interface()); err != nil {
 				st, cd, msg := s.bindError(err)
-				return fail(c, st, cd, msg)
+				return failFields(c, env, st, cd, msg, err)
 			}
 			qArg = q.Elem()
 		}
@@ -124,15 +124,16 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 				}
 				if err := contract.BindMultipart(c.Request().MultipartForm, b.Interface()); err != nil {
 					st, cd, msg := s.bindError(err)
-					return fail(c, st, cd, msg)
+					return failFields(c, env, st, cd, msg, err)
 				}
 				bound = true
 			default:
 				if c.Request().Body != nil && c.Request().ContentLength > 0 {
 					// 与 gin 适配器对齐：固定 JSON 解码
 					if err := json.NewDecoder(c.Request().Body).Decode(b.Interface()); err != nil {
+						err = contract.BindErrorFromJSON(err)
 						st, cd, msg := s.bindError(err)
-						return fail(c, st, cd, msg)
+						return failFields(c, env, st, cd, msg, err)
 					}
 					bound = true
 				}
@@ -150,7 +151,7 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 		// 校验：内置（标签 required + Validate() 接口）+ 自定义校验器（可读装饰 ctx）
 		if err := validator.Run(ctx, r.Method, contract.CheckTarget(qType, qArg), contract.CheckTarget(bType, bArg), s.validators...); err != nil {
 			st, cd, msg := s.bindError(err)
-			return fail(c, st, cd, msg)
+			return failFields(c, env, st, cd, msg, err)
 		}
 
 		out := h.Call([]reflect.Value{reflect.ValueOf(ctx), qArg, bArg})
@@ -228,6 +229,19 @@ func failAggregate(c echo.Context, env response.Envelope, status, code int, msg 
 	if errors.As(err, &agg) {
 		if ae, ok := env.(response.AggregateEnvelope); ok {
 			return c.JSON(status, ae.AggregateFailure(status, code, msg, agg.Failed))
+		}
+	}
+	return c.JSON(status, env.Failure(status, code, msg))
+}
+
+// failFields 绑定/校验失败输出：错误链携带 response.BindError 且壳实现
+// response.FieldErrorEnvelope 时，额外输出字段级明细（bind_errors）；
+// 其余情况与普通失败完全一致。
+func failFields(c echo.Context, env response.Envelope, status, code int, msg string, err error) error {
+	var be *response.BindError
+	if errors.As(err, &be) {
+		if fe, ok := env.(response.FieldErrorEnvelope); ok {
+			return c.JSON(status, fe.FieldFailure(status, code, msg, be.Fields))
 		}
 	}
 	return c.JSON(status, env.Failure(status, code, msg))

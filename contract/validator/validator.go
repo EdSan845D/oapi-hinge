@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/EdSan845D/oapi-hinge/contract/response"
 )
 
 // Func 自定义校验器签名。method 为 HTTP 方法；q/b 为解析后的请求值（指针）。
@@ -74,8 +76,9 @@ func checkRequired(req any) error {
 	if e.Kind() != reflect.Struct {
 		return nil
 	}
-	var walk func(v reflect.Value) error
-	walk = func(v reflect.Value) error {
+	var fields []response.BindFieldError
+	var walk func(v reflect.Value)
+	walk = func(v reflect.Value) {
 		t := v.Type()
 		for i := 0; i < v.NumField(); i++ {
 			f, ft := v.Field(i), t.Field(i)
@@ -90,9 +93,7 @@ func checkRequired(req any) error {
 					sub = sub.Elem()
 				}
 				if sub.Kind() == reflect.Struct {
-					if err := walk(sub); err != nil {
-						return err
-					}
+					walk(sub)
 				}
 				continue
 			}
@@ -100,12 +101,35 @@ func checkRequired(req any) error {
 				continue
 			}
 			if IsRequired(ft) && f.IsZero() {
-				return fmt.Errorf("%s is required", fieldName(ft))
+				name, in := fieldNameIn(ft)
+				fields = append(fields, response.BindFieldError{
+					Field: name,
+					In:    in,
+					Msg:   "is required",
+				})
 			}
 		}
-		return nil
 	}
-	return walk(e)
+	walk(e)
+	if len(fields) > 0 {
+		return &response.BindError{Fields: fields}
+	}
+	return nil
+}
+
+// fieldNameIn 推导字段的外部名称与来源（字段级错误明细用）：
+// 优先取来源标签名（path/header/cookie/query/form——客户端实际发送的名字），
+// 其次 json 名，最后 Go 字段名；无来源标签视为 body。
+func fieldNameIn(ft reflect.StructField) (string, string) {
+	for _, key := range []string{"path", "header", "cookie", "query", "form"} {
+		if v := strings.Split(ft.Tag.Get(key), ",")[0]; v != "" {
+			return v, key
+		}
+	}
+	if v := strings.Split(ft.Tag.Get("json"), ",")[0]; v != "" {
+		return v, "body"
+	}
+	return ft.Name, "body"
 }
 
 // IsRequired 判断字段是否声明必填（binding / validate 双标签兼容）

@@ -1,10 +1,13 @@
 package contract
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"mime/multipart"
 	"reflect"
+
+	"github.com/EdSan845D/oapi-hinge/contract/response"
 )
 
 // RawBody 原始请求体：B 声明为该类型时，适配器不做任何解码，
@@ -16,7 +19,6 @@ type RawBody []byte
 // B 中出现该类型字段（含切片，声明 *FileHeader / []*FileHeader）即触发
 // multipart 解析；字段必须带 form 标签声明 part 名（挂载期校验）。
 type FileHeader = multipart.FileHeader
-
 
 var (
 	fileHeaderType    = reflect.TypeOf(FileHeader{})
@@ -177,4 +179,22 @@ func bindMultipartFields(form *multipart.Form, e reflect.Value, metas []FieldMet
 		}
 	}
 	return nil
+}
+
+// BindErrorFromJSON 把 JSON body 解码错误映射为字段级绑定错误；
+// 无法定位字段时原样返回（汇总 msg 仍走统一错误链）。
+func BindErrorFromJSON(err error) error {
+	var te *json.UnmarshalTypeError
+	if errors.As(err, &te) && te.Field != "" {
+		return &response.BindError{Fields: []response.BindFieldError{{
+			Field: te.Field, In: "body", Msg: "类型错误，期望 " + te.Type.String(),
+		}}}
+	}
+	var se *json.SyntaxError
+	if errors.As(err, &se) {
+		return &response.BindError{Fields: []response.BindFieldError{{
+			In: "body", Msg: "JSON 语法错误",
+		}}}
+	}
+	return err
 }

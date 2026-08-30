@@ -167,7 +167,7 @@ func All() []*contract.Group {
 }
 ```
 
-### 1.4 声明 Q：query / path / header 参数
+### 1.4 声明 Q：query / path / header / cookie 参数
 
 ```go
 type ListUsersReq struct {
@@ -175,6 +175,7 @@ type ListUsersReq struct {
 	Size    int       `query:"size" default:"10"`
 	ID      int       `path:"id"`                          // 路由写 /users/{id}
 	Token   string    `header:"X-Token"`                   // 请求头
+	SID     string    `cookie:"sid"`                       // Cookie（缺失按空处理，default 可兜底）
 	Keyword string    `query:"keyword" binding:"required"` // 必填
 	Created time.Time `query:"created"`                    // RFC3339，如 2026-08-28T00:00:00Z
 }
@@ -1035,7 +1036,7 @@ return nil, &contract.AggregateError{
 {"code":7,"data":null,"msg":"部分删除失败","aggregated_error":[{"key":"b.txt","code":7,"msg":"目标已存在"}]}
 ```
 
-### X.5 原始请求体与文件上传（RawBody / multipart）
+### X.4 原始请求体与文件上传（RawBody / multipart）
 
 B 按静态类型分派绑定方式（行为恒定，不随请求头漂移）：
 
@@ -1074,11 +1075,31 @@ func Upload(ctx context.Context, _ contract.NoReq, b UploadReq) ([]string, error
 - 挂载期校验：FileHeader 字段缺 `form` 标签直接 panic（文件会静默丢失）。
 - 绑定后照常走 InTransform / 校验管线；Value part 支持自定义绑定器与 default 标签。
 - 纯 urlencoded 表单（无文件）暂不内置：用 `RawBody` + `url.ParseQuery` 兜底。
-### X.4 业务 code 分配约定（建议）
+### X.5 业务 code 分配约定（建议）
 
 - 3 位：复用 HTTP 语义（401/403/404/409…）
 - 5 位：应用自定义码；4 开头 = 客户端错误，5 开头 = 服务端错误
 - 0 成功、7 默认业务失败（存量约定不变）
+### X.6 绑定/校验字段级错误明细（bind_errors）
+
+绑定与校验失败不再只回一句整包文本：错误链携带 `response.BindError` 时，
+壳的 `bind_errors` 字段输出逐字段明细（默认壳原生支持；自定义壳实现
+`response.FieldErrorEnvelope` 可选接口即可获得同样能力）。
+
+- 覆盖范围：Q 绑定解析错误（query/path/header/cookie/form）、JSON body
+  类型/语法错误（可定位字段时）、必填缺失（`validator.Run` 聚合**全部**缺失字段，
+  不再逐个报）
+- 携带状态码的业务错误（如自定义绑定器返回 404）保持原语义：快速失败、
+  StatusError 优先，不进入聚合
+- 明细结构：`field`（客户端可见字段名，优先来源标签名，其次 json 名）、
+  `in`（来源：query/body/path/header/cookie/form/validate）、`msg`
+
+```json
+{"code":7,"data":null,"msg":"a: is required; b: is required",
+ "bind_errors":[{"field":"a","in":"query","msg":"is required"},
+                {"field":"b","in":"query","msg":"is required"}]}
+```
+
 ## 4. FAQ
 
 **Q：想要纯 RESTful 风格（无壳、4xx 语义）？**

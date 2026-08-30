@@ -545,6 +545,12 @@ func deriveEnvelopeSchema(sb *schemaBuilder, wrapped any, data *openapi3.SchemaR
 			if name == "" || name == "-" {
 				continue
 			}
+			// 明细字段（运行时按需输出，omitempty）：不进入默认壳 schema，
+			// 避免内部类型泄漏进所有生成的 spec 组件
+			switch name {
+			case "aggregated_error", "bind_errors":
+				continue
+			}
 			s.Properties[name] = envelopeFieldRef(sb, f.Type, data)
 			if !omit {
 				required = append(required, name)
@@ -638,6 +644,18 @@ func queryParams(t reflect.Type) []*openapi3.Parameter {
 			// header 标签优先（独立于 query/form）
 			if hname, hok := tagValueOf(f, "header"); hok {
 				p := openapi3.NewHeaderParameter(hname)
+				if d, ok := f.Tag.Lookup("description"); ok && d != "" {
+					p.Description = d
+				}
+				p.Schema = paramSchema(f.Type)
+				if isRequiredOpenAPI(f) {
+					p.Required = true
+				}
+				out = append(out, p)
+				continue
+			}
+			if cname, cok := tagValueOf(f, "cookie"); cok {
+				p := openapi3.NewCookieParameter(cname)
 				if d, ok := f.Tag.Lookup("description"); ok && d != "" {
 					p.Description = d
 				}

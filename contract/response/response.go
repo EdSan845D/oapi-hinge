@@ -12,6 +12,9 @@ type Response[T any] struct {
 	// 仅当错误链携带 AggregateError 且壳支持聚合输出时非空；omitempty 保证
 	// 普通请求的响应体与旧版逐字节一致。
 	AggregatedError any `json:"aggregated_error,omitempty"`
+	// BindErrors 绑定/校验阶段的字段级错误明细。仅当错误链携带 BindError 且
+	// 壳实现 FieldErrorEnvelope 时非空；omitempty 保证普通请求响应体不变。
+	BindErrors []BindFieldError `json:"bind_errors,omitempty"`
 }
 
 // Paged 分页响应

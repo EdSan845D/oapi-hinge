@@ -66,3 +66,28 @@ func TestGenerateBodyKinds(t *testing.T) {
 		t.Fatalf("multipart required list missing title")
 	}
 }
+
+type genCookieReq struct {
+	SID string `cookie:"sid" binding:"required"`
+}
+
+func genCookieHandler(ctx context.Context, q genCookieReq, _ any) (map[string]string, error) {
+	return nil, nil
+}
+
+func TestCookieParameterDoc(t *testing.T) {
+	groups := []*contract.Group{{
+		Prefix: "/c",
+		Routes: []contract.Route{contract.New(contract.RouteMeta[genCookieReq, any, map[string]string]{
+			Method: "GET", Path: "", Handler: genCookieHandler,
+		})},
+	}}
+	out := filepath.Join(t.TempDir(), "spec.yaml")
+	if err := Generate(out, groups); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	spec := readSpec(t, out)
+	if !strings.Contains(spec, "in: cookie") || !strings.Contains(spec, "sid") {
+		t.Fatalf("cookie param missing in spec")
+	}
+}
