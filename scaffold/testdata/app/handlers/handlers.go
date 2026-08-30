@@ -1,0 +1,49 @@
+// Package handlers 统一业务层：所有 Handler 严格遵循模板
+//
+//	func(ctx context.Context, query Q, body B) (resp R, err error)
+//
+// 本包不依赖任何 Web 框架，只依赖 context 与强类型请求/响应结构体，
+// 由 servergin（运行时）与 openapi（文档生成）共同消费。
+//
+// 参数标签约定（两个适配器共用）：
+//   - Q：query 参数用 `query:"name"` 标签，路径参数用 `path:"name"` 标签
+//   - B：POST/PUT/PATCH 传业务 body 结构体；无 body 的请求传 `any`
+//
+// 校验（servergin 自动执行）：
+//   - 字段标签 `binding:"required"`：必填校验
+//   - 结构体实现 `Validate() error` 方法：自定义校验（见 user.go CreateUserReq）
+//   - 注册自定义校验器：server.AddValidator(...)
+package handlers
+
+import (
+	"context"
+	"errors"
+
+	"github.com/EdSan845D/oapi-hinge/contract"
+)
+
+// 框架核心类型别名：业务层直接使用短名，类型本身来自 contract
+type (
+	NoReq      = contract.NoReq
+	Empty      = contract.Empty
+	FileStream = contract.FileStream
+)
+
+var (
+	ErrNotFound = errors.New("not found")
+	ErrNoUser   = errors.New("current user not found")
+)
+
+type userKey struct{}
+
+func WithUser(ctx context.Context, user any) context.Context {
+	return context.WithValue(ctx, userKey{}, user)
+}
+
+func CurrentUser(ctx context.Context) (any, error) {
+	user := ctx.Value(userKey{})
+	if user == nil {
+		return nil, ErrNoUser
+	}
+	return user, nil
+}

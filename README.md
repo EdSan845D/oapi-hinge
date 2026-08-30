@@ -54,26 +54,28 @@ func All() []*contract.Group {
 
 运行时与文档生成器消费同一棵树，行为天然一致。
 
-### 框架适配器（子模块）
+### 包结构（单模块）
 
-| 子模块 | 说明 | 依赖 |
+整个框架是单一 Go module `github.com/EdSan845D/oapi-hinge`，一个版本覆盖全部包：
+
+| 包 | 说明 | 依赖 |
 |---|---|---|
-| `contract` | 核心契约：RouteMeta / Group / 响应壳 / 逐级定制 | 无（纯标准库） |
-| `servergin` | gin 运行时适配器 | contract + gin |
-| `serverecho` | echo 运行时适配器 | contract + echo |
-| `openapi` | OpenAPI 3.1 文档生成器（开发期工具） | contract + kin-openapi |
+| `contract` | 核心契约：RouteMeta / Group / 响应壳 / 错误类型 / 扩展点注册表 | 无第三方依赖 |
+| `servergin` | gin 运行时适配器 | gin |
+| `serverecho` | echo 运行时适配器 | echo |
+| `openapi` | OpenAPI 3.1 文档生成器（开发期工具，`//go:build openapi` 隔离） | kin-openapi |
+| `scaffold` | 项目脚手架 CLI | 无第三方依赖 |
 
-按需引用子模块：用 gin 的项目不会拉到 echo，用 echo 的项目不会拉到 gin。
+release 构建不包含任何文档生成依赖（openapi 包整体构建标签隔离）。
 
 ## 快速开始
 
 ```bash
 # 使用脚手架生成项目（推荐）
-go run github.com/EdSan845D/oapi-hinge/scaffold create myapp -m github.com/you/myapp
+go run github.com/EdSan845D/oapi-hinge/scaffold@latest create myapp -m github.com/you/myapp
 
 # 或在已有项目手动接入
-go get github.com/EdSan845D/oapi-hinge/contract
-go get github.com/EdSan845D/oapi-hinge/servergin
+go get github.com/EdSan845D/oapi-hinge
 ```
 
 ```go

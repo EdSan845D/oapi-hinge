@@ -8,10 +8,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        module: [contract, servergin, serverecho, openapi, example]
     steps:
       - uses: actions/checkout@v4
 
@@ -19,29 +15,30 @@ jobs:
         with:
           go-version: '1.26'
 
+      # 默认构建（release 语义，不含 openapi 包）
       - name: Build
-        working-directory: ${{ matrix.module }}
-        run: |
-          if [ "${{ matrix.module }}" = "openapi" ]; then
-            go build -tags openapi ./...
-          else
-            go build ./...
-          fi
+        run: go build ./...
 
       - name: Vet
-        working-directory: ${{ matrix.module }}
-        run: |
-          if [ "${{ matrix.module }}" = "openapi" ]; then
-            go vet -tags openapi ./...
-          else
-            go vet ./...
-          fi
+        run: go vet ./...
 
       - name: Test
-        working-directory: ${{ matrix.module }}
+        run: go test ./...
+
+      # 文档生成器（必须带 tag）
+      - name: Build (openapi tag)
+        run: go build -tags openapi ./...
+
+      - name: Vet (openapi tag)
+        run: go vet -tags openapi ./...
+
+      - name: Test (openapi tag)
+        run: go test -tags openapi ./...
+
+      # 脚手架可用性冒烟：生成项目并编译（不跑 tidy，依赖版本以 tag 发布后为准）
+      - name: Scaffold smoke
         run: |
-          if [ "${{ matrix.module }}" = "openapi" ]; then
-            go test -tags openapi ./...
-          else
-            go test ./...
-          fi
+          go run ./scaffold create myapp --no-tidy
+          (cd myapp && go mod edit -replace github.com/EdSan845D/oapi-hinge=.. )
+          (cd myapp && go mod tidy)
+          (cd myapp && go build ./...)

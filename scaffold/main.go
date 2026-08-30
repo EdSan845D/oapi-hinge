@@ -22,10 +22,10 @@ import (
 	"strings"
 )
 
-//go:embed template
+//go:embed testdata
 var templateFS embed.FS
 
-const templateRoot = "template"
+const templateRoot = "testdata"
 
 func main() {
 	fs := flag.NewFlagSet("oapi-hinge", flag.ExitOnError)
@@ -151,7 +151,7 @@ func scaffold(project, mod string, force bool) error {
 			return nil
 		}
 		rel := strings.TrimPrefix(path, templateRoot+"/")
-		// 模板中的 go.mod.tmpl 在生成时改名为 go.mod（避免模板目录被 Go 视为嵌套模块）
+		// 模板中的 go.mod.tmpl 在生成时改名为 go.mod
 		if rel == "go.mod.tmpl" {
 			rel = "go.mod"
 		}

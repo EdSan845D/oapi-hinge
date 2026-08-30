@@ -17,13 +17,13 @@
 
 ### 三层结构
 
-| 层 | 子模块 | 职责 | 依赖 |
+| 层 | 包 | 职责 | 依赖 |
 |---|---|---|---|
 | 契约层 | `contract` | Handler 模板、路由分组树、响应壳、错误类型、绑定公用函数、扩展点注册表 | 无第三方依赖 |
-| 运行时层 | `servergin` / `serverecho` / 自定义 | 把路由树挂到具体框架并执行请求管线 | contract + 对应框架 |
-| 文档层 | `openapi` | 从同一棵路由树生成 OpenAPI 3.1（`-tags openapi` 隔离构建） | contract + kin-openapi |
+| 运行时层 | `servergin` / `serverecho` / 自定义 | 把路由树挂到具体框架并执行请求管线 | 对应框架 |
+| 文档层 | `openapi` | 从同一棵路由树生成 OpenAPI 3.1（`-tags openapi` 隔离构建） | kin-openapi |
 
-用 gin 的项目不会拉到 echo，用 echo 的项目不会拉到 gin；release 构建不包含任何文档生成依赖。
+单模块 `github.com/EdSan845D/oapi-hinge`，一个版本覆盖全部包；release 构建不包含任何文档生成依赖（openapi 包整体 `//go:build openapi` 隔离）。
 
 ### 统一 Handler 模板
 
@@ -62,8 +62,7 @@ func(ctx context.Context, q Q, b B) (r R, err error)
 ### 1.1 安装
 
 ```bash
-go get github.com/EdSan845D/oapi-hinge/contract
-go get github.com/EdSan845D/oapi-hinge/servergin
+go get github.com/EdSan845D/oapi-hinge
 ```
 
 ### 1.2 最小可运行项目
@@ -660,28 +659,16 @@ openapi.RegisterCommentParser(func(src string, sch *openapi3.SchemaRef) *openapi
 
 绑定元数据解析（`contract.ParseFields`）、标量/切片/指针/time 绑定（`contract.SetRaw/SetSliceValue`）、管线公用件（`contract.NewValue/CheckTarget/IsBodyMethod/CheckHandler/TransformIn/TransformOut`）**全部在 contract 层共享**，适配器不需要复制这些逻辑——这是与早期版本最大的区别。
 
-### 3.2 步骤一：建立子模块
+### 3.2 步骤一：建立适配器包
 
 ```bash
-mkdir serverchi && cd serverchi
+mkdir serverchi
 ```
 
-`go.mod`（依赖只有 contract + 目标框架）：
+单模块仓库：直接在仓库根新建包目录，**不需要独立 go.mod、不需要单独打 tag**——跟随主模块统一版本发布。
 
-```
-module github.com/EdSan845D/oapi-hinge/serverchi
-
-go 1.26.5
-
-require (
-	github.com/EdSan845D/oapi-hinge/contract v0.0.0
-	github.com/go-chi/chi/v5 v5.x.x
-)
-```
-
-- 仓库根 `go.work` 临时加 `use ./serverchi`（发布时移除）
 - **包名跟随现有约定**：servergin 是 `package servergin`、serverecho 是 `package serverecho`（注意两者文档注释里的 `Package server` 是历史笔误，以 `package` 行为准）；新适配器建议 `package serverchi`，避免 import 歧义
-- 发布时独立打子模块 tag（如 `serverchi/v0.1.0`）
+- 依赖纪律：适配器包只 import contract + 目标框架本体，不 import openapi
 
 ### 3.3 步骤二：Server 配置与扩展点
 
@@ -948,7 +935,7 @@ func bindFields(c chi.Context, e reflect.Value, metas []contract.FieldMeta) erro
 13. **装饰器在每个请求最前执行**（含校验失败请求）——文档注释要写明"保持轻量，重操作放中间件"
 14. **默认装饰器注入 `contract.WithFramework`**——文档语义依赖它
 15. **共享缓存别重复造**：`ParseFields`/`SetRaw`/`SetSliceValue`/`NewValue`/`CheckTarget`/`IsBodyMethod` 都在 contract 层，适配器只写取值函数
-16. **依赖最小化**：子模块 go.mod 只 require contract + 框架本体；文档层（kin-openapi）永远不出现在适配器依赖里
+16. **依赖最小化**：适配器包只 import contract + 框架本体；文档层（kin-openapi）永远不出现在适配器包的 import 里
 
 ---
 
@@ -970,18 +957,18 @@ func bindFields(c chi.Context, e reflect.Value, metas []contract.FieldMeta) erro
 返回 `contract.Framework(ctx)` 断言（默认装饰器已注入）；自定义装饰器时记得手动链上 `contract.WithFramework`。这是最后手段，优先用标签与 `Response[R]`。
 
 **Q：脚手架生成的项目编译不过？**
-当前版本暂时不考虑脚手架,目前先按照找第 1 节手动接入。
+确认 go.mod 里 oapi-hinge 版本 ≥ v0.2.0（单模块版本），重新执行 `go mod tidy`；仍不行请提 issue。
 
 ## 5. 测试
 
-每个子模块独立测试；openapi 必须带构建标签：
+openapi 必须带构建标签：
 
 ```bash
-# 单模块示例
-cd servergin && go test ./...
+# 默认构建（release 语义，不含 openapi 包）
+go build ./... && go vet ./... && go test ./...
 
 # 文档生成器（必须带 tag，否则测试不跑）
-cd openapi && go test -tags openapi ./...
+go test -tags openapi ./...
 
 # 一键全量（build + vet + test）
 ./test.sh
