@@ -118,7 +118,7 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 				b.Elem().Set(reflect.ValueOf(contract.RawBody(data)))
 				bound = true
 			case contract.HasFileHeader(bType):
-				if err := c.Request().ParseMultipartForm(contract.DefaultMultipartMemory); err != nil {
+				if err := c.Request().ParseMultipartForm(32 << 20); err != nil {
 					st, cd, msg := s.bindError(err)
 					return fail(c, st, cd, msg)
 				}

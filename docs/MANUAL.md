@@ -1066,10 +1066,11 @@ func Upload(ctx context.Context, _ contract.NoReq, b UploadReq) ([]string, error
 }
 ```
 
-- multipart 内存缓冲水位固定 32MB（`contract.DefaultMultipartMemory`）：
-  **这是内存调优参数而非上传大小上限**——超出水位的 part 自动落盘临时文件，
-  传多大的文件都不会占满内存；上传上限属业务层（如 MaxBytesReader 中间件），
-  与框架无关。需要调水位时另行讨论，目前不做配置面。
+- multipart 内存缓冲水位固定 32MB（框架内部值，无配置面）：这是内存调优参数
+  而非上传大小上限——超出水位的 part 自动落盘临时文件，传多大的文件都不会
+  占满内存；上传上限属业务层（如 MaxBytesReader 中间件）。应用需要自定义
+  水位时，在中间件里先调用 `ParseMultipartForm(n)` 即可（标准库语义：已解析
+  的请求，适配器内的后续调用为空操作）。
 - 挂载期校验：FileHeader 字段缺 `form` 标签直接 panic（文件会静默丢失）。
 - 绑定后照常走 InTransform / 校验管线；Value part 支持自定义绑定器与 default 标签。
 - 纯 urlencoded 表单（无文件）暂不内置：用 `RawBody` + `url.ParseQuery` 兜底。

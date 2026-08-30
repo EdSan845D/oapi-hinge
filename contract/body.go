@@ -17,11 +17,6 @@ type RawBody []byte
 // multipart 解析；字段必须带 form 标签声明 part 名（挂载期校验）。
 type FileHeader = multipart.FileHeader
 
-// DefaultMultipartMemory multipart 内存缓冲水位默认值（32MB）。
-// 注意：这是内存调优参数而非上传大小上限——超出水位的 part 自动落盘临时文件；
-// 上传大小上限属业务层（如 MaxBytesReader 中间件）。路由级覆盖见
-// RouteMeta.MultipartMemory。
-const DefaultMultipartMemory int64 = 32 << 20
 
 var (
 	fileHeaderType    = reflect.TypeOf(FileHeader{})

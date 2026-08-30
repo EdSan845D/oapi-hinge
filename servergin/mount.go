@@ -118,8 +118,10 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 				b.Elem().Set(reflect.ValueOf(contract.RawBody(data)))
 				bound = true
 			case contract.HasFileHeader(bType):
-				// multipart 文件表单：标准库解析（gin/echo 行为一致），按 form 标签填充
-				if err := c.Request.ParseMultipartForm(contract.DefaultMultipartMemory); err != nil {
+				// multipart 文件表单：标准库解析（gin/echo 行为一致），按 form 标签填充。
+				// 内存缓冲水位固定 32MB；应用需自定义时在中间件里先 ParseMultipartForm(n)，
+				// 标准库对已解析请求为空操作，此处调用自动退化为 no-op。
+				if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
 					st, cd, msg := s.bindError(err)
 					fail(c, st, cd, msg)
 					return
