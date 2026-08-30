@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "oapi-hinge 一次请求的完整管线",
+    "locale": "zh-CN",
+    "viewBox": [960, 880],
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "bind-and-validate", "label": "绑定与校验", "focus": ["adapter", "binder", "validator"], "note": "解析失败逐字段收集，必填缺失聚合为 bind_errors 明细。" },
+      { "id": "body-dispatch", "label": "B 类型分派", "focus": ["adapter", "binder"], "note": "按 B 静态类型分派：JSON / RawBody / multipart 文件表单。" },
+      { "id": "status-decision", "label": "状态码与壳", "focus": ["handler", "envelope", "client"], "note": "StatusError / DefaultStatusCode / Response[R] 三级决策后进统一壳。" }
+    ]
+  },
+  "participants": [
+    { "id": "client", "type": "external", "label": "客户端", "sublabel": "浏览器 / CLI" },
+    { "id": "engine", "type": "backend", "label": "gin 引擎", "sublabel": "中间件 · CORS" },
+    { "id": "adapter", "type": "backend", "label": "servergin", "sublabel": "请求管线" },
+    { "id": "binder", "type": "backend", "label": "参数绑定", "sublabel": "Q 标签 · B 分派" },
+    { "id": "validator", "type": "security", "label": "validator.Run", "sublabel": "必填聚合" },
+    { "id": "handler", "type": "backend", "label": "业务纯函数", "sublabel": "func(ctx, Q, B)" },
+    { "id": "envelope", "type": "backend", "label": "响应壳", "sublabel": "{code, data, msg}" }
+  ],
+  "segments": [
+    { "from": 150, "to": 245, "label": "入站" },
+    { "from": 258, "to": 500, "label": "绑定与校验" },
+    { "from": 512, "to": 600, "label": "调用" },
+    { "from": 612, "to": 780, "label": "状态码与响应" }
+  ],
+  "messages": [
+    { "id": "request-in", "from": "client", "to": "engine", "y": 185, "label": "POST 请求（JSON / multipart / 原始字节）", "variant": "emphasis" },
+    { "id": "route-hit", "from": "engine", "to": "adapter", "y": 225, "label": "命中路由 → 请求管线" },
+    { "id": "bind-q", "from": "adapter", "to": "binder", "y": 268, "label": "绑定 Q：query/path/header/cookie 标签", "note": "解析失败逐字段收集，不快速失败" },
+    { "id": "q-done", "from": "binder", "to": "adapter", "y": 303, "label": "Q 完成（解析错误进 bind_errors）", "variant": "return" },
+    { "id": "bind-b", "from": "adapter", "to": "binder", "y": 348, "label": "B 分派：JSON / RawBody / multipart(FileHeader)" },
+    { "id": "b-done", "from": "binder", "to": "adapter", "y": 383, "label": "B 完成（TransformIn 后进校验）", "variant": "return" },
+    { "id": "validate", "from": "adapter", "to": "validator", "y": 428, "label": "validator.Run：必填聚合 + Validate() + Playground", "variant": "security" },
+    { "id": "validate-ok", "from": "validator", "to": "adapter", "y": 463, "label": "通过（缺失字段 → bind_errors 明细）", "variant": "return" },
+    { "id": "call-handler", "from": "adapter", "to": "handler", "y": 518, "label": "调用 func(ctx, Q, B)（含 TransformOut）", "variant": "emphasis" },
+    { "id": "handler-ret", "from": "handler", "to": "adapter", "y": 568, "label": "(R, error)", "variant": "return" },
+    { "id": "status-decision", "from": "adapter", "to": "envelope", "y": 630, "label": "状态码决策：StatusError / Response[R] / DefaultStatusCode" },
+    { "id": "envelope-wrap", "from": "envelope", "to": "adapter", "y": 665, "label": "{code,data,msg}（+bind_errors / aggregated_error）", "variant": "return" },
+    { "id": "write-out", "from": "adapter", "to": "engine", "y": 700, "label": "JSON 输出 / FileStream 直出" },
+    { "id": "response-out", "from": "engine", "to": "client", "y": 735, "label": "HTTP 响应 + X-Correlation-Id", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "engine", "from": 185, "to": 742, "type": "backend" },
+    { "participant": "adapter", "from": 225, "to": 705, "type": "backend" },
+    { "participant": "binder", "from": 262, "to": 390, "type": "backend" },
+    { "participant": "validator", "from": 422, "to": 468, "type": "security" },
+    { "participant": "handler", "from": 520, "to": 555, "type": "backend" },
+    { "participant": "envelope", "from": 622, "to": 670, "type": "backend" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "字段级错误", "items": ["解析失败逐字段收集，不快速失败", "必填缺失由 validator.Run 聚合输出", "bind_errors 由实现 FieldErrorEnvelope 的壳承载"] },
+    { "dot": "emerald", "title": "B 类型分派", "items": ["RawBody：零解码整包字节", "FileHeader 字段 → multipart 解析", "其余走 JSON（gin/echo 行为一致）"] },
+    { "dot": "rose", "title": "错误语义", "items": ["StatusError 携带状态码快速失败", "404 等业务语义不因聚合改变", "非 200 与 200 响应走同一套壳"] }
+  ]
+}

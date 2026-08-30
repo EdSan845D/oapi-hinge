@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "oapi-hinge 框架总览",
+    "locale": "zh-CN",
+    "viewBox": [1300, 780],
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "request-path", "label": "请求路径", "focus": ["client", "gin", "servergin", "handlers", "contract"], "note": "客户端请求经 gin 引擎进入 servergin 管线，到达业务纯函数。" },
+      { "id": "docs-path", "label": "文档路径", "focus": ["registry", "openapi", "spec", "docsreader"], "note": "同一份路由注册表在构建期推导 OpenAPI 3.1。" },
+      { "id": "engines", "label": "双引擎", "focus": ["gin", "servergin", "serverecho", "echo"], "note": "同一注册表挂载到 gin 或 echo，业务代码零改动。" }
+    ]
+  },
+  "components": [
+    { "id": "contract", "type": "backend", "label": "contract 契约层", "sublabel": "类型 · 错误 · 壳 · 绑定", "pos": [160, 190], "size": [140, 64], "tag": "零框架依赖" },
+    { "id": "handlers", "type": "backend", "label": "业务 Handler", "sublabel": "func(ctx, Q, B) 纯函数", "pos": [400, 190], "size": [140, 64] },
+    { "id": "servergin", "type": "backend", "label": "servergin", "sublabel": "gin 适配器", "pos": [640, 190], "size": [130, 60] },
+    { "id": "gin", "type": "external", "label": "gin", "sublabel": "HTTP 引擎", "pos": [840, 190], "size": [110, 60] },
+    { "id": "client", "type": "external", "label": "客户端", "sublabel": "浏览器 / Apifox", "pos": [1030, 190], "size": [120, 60] },
+    { "id": "registry", "type": "backend", "label": "路由注册表", "sublabel": "routes.All() · RouteMeta", "pos": [400, 380], "size": [150, 64], "tag": "单点真相" },
+    { "id": "openapi", "type": "backend", "label": "openapi 生成器", "sublabel": "//go:build openapi", "pos": [640, 380], "size": [140, 60], "tag": "构建期" },
+    { "id": "spec", "type": "database", "label": "openapi.yaml", "sublabel": "OpenAPI 3.1", "pos": [840, 380], "size": [120, 60] },
+    { "id": "docsreader", "type": "external", "label": "Swagger / Apifox", "sublabel": "规范导入", "pos": [1030, 380], "size": [120, 60] },
+    { "id": "serverecho", "type": "backend", "label": "serverecho", "sublabel": "echo 适配器", "pos": [740, 540], "size": [130, 60] },
+    { "id": "echo", "type": "external", "label": "echo", "sublabel": "HTTP 引擎", "pos": [940, 540], "size": [110, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "消费项目（snapshot-browser 等）", "wraps": ["handlers", "registry"] },
+    { "kind": "region", "label": "oapi-hinge 单模块", "wraps": ["contract", "servergin", "openapi", "serverecho", "echo"] }
+  ],
+  "connections": [
+    { "id": "client-gin", "from": "client", "to": "gin", "label": "HTTP 请求", "variant": "emphasis" },
+    { "id": "gin-servergin", "from": "gin", "to": "servergin", "label": "请求管线" },
+    { "id": "servergin-handlers", "from": "servergin", "to": "handlers", "label": "调用 Handler", "variant": "emphasis", "labelDy": -26 },
+    { "id": "handlers-contract", "from": "handlers", "to": "contract", "label": "Q/B/R 类型 · 错误 · 壳", "labelDy": 56 },
+    { "id": "handlers-registry", "from": "handlers", "to": "registry", "label": "注册 RouteMeta", "fromSide": "bottom", "toSide": "top" },
+    { "id": "registry-servergin", "from": "registry", "to": "servergin", "label": "Mount()", "labelAt": [640, 300] },
+    { "id": "registry-openapi", "from": "registry", "to": "openapi", "label": "Generate()", "variant": "dashed", "labelAt": [500, 470] },
+    { "id": "openapi-spec", "from": "openapi", "to": "spec", "label": "OpenAPI 3.1" },
+    { "id": "spec-docsreader", "from": "spec", "to": "docsreader", "label": "导入 / 在线预览", "labelDy": 54 },
+    { "id": "registry-serverecho", "from": "registry", "to": "serverecho", "label": "Mount()（echo 同款）", "variant": "dashed", "labelAt": [640, 560] },
+    { "id": "serverecho-echo", "from": "serverecho", "to": "echo", "label": "挂载" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "单点真相", "items": ["routes.All() 同时驱动运行时挂载与文档生成", "改一处注册，行为与规范同步"] },
+    { "dot": "emerald", "title": "依赖边界", "items": ["contract 契约层零框架依赖", "业务层只写纯函数 Handler", "gin/echo 细节留在适配器内"] },
+    { "dot": "rose", "title": "构建期隔离", "items": ["openapi 包整体 //go:build openapi 隔离", "release 二进制零文档依赖"] }
+  ]
+}

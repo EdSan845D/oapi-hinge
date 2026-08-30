@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "路由注册表的数据流：运行时与文档",
+    "locale": "zh-CN",
+    "viewBox": [1080, 720],
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "runtime-path", "label": "运行时路径", "focus": ["handlers", "registry", "mount", "ginroutes", "apiclient"], "note": "注册表挂载为 gin 路由树，处理真实请求。" },
+      { "id": "docs-path", "label": "文档路径", "focus": ["registry", "generate", "spec", "docsreader"], "note": "同一棵树在构建期推导 OpenAPI 3.1，导入文档工具。" }
+    ]
+  },
+  "stages": [
+    { "label": "声明" },
+    { "label": "消费" },
+    { "label": "产物" },
+    { "label": "使用" }
+  ],
+  "nodes": [
+    { "id": "handlers", "type": "backend", "label": "业务纯函数", "sublabel": "app/handlers", "stage": 0, "row": 0 },
+    { "id": "registry", "type": "backend", "label": "统一注册表", "sublabel": "routes.All()", "stage": 0, "row": 1, "tag": "单点真相" },
+    { "id": "mount", "type": "backend", "label": "servergin.Mount", "sublabel": "运行时挂载", "stage": 1, "row": 0 },
+    { "id": "generate", "type": "backend", "label": "openapi.Generate", "sublabel": "-tags openapi", "stage": 1, "row": 2, "tag": "构建期" },
+    { "id": "ginroutes", "type": "database", "label": "gin 路由树", "sublabel": "中间件 + 处理链", "stage": 2, "row": 0 },
+    { "id": "spec", "type": "database", "label": "openapi.yaml", "sublabel": "OpenAPI 3.1", "stage": 2, "row": 2 },
+    { "id": "apiclient", "type": "external", "label": "API 调用方", "sublabel": "请求 / 响应", "stage": 3, "row": 0 },
+    { "id": "docsreader", "type": "external", "label": "Swagger / Apifox", "sublabel": "规范导入", "stage": 3, "row": 2 }
+  ],
+  "flows": [
+    { "from": "handlers", "to": "registry", "label": "注册 RouteMeta", "classification": "类型即契约", "variant": "emphasis", "route": "straight", "labelDy": 24 },
+    { "from": "registry", "to": "mount", "label": "路由组树", "classification": "运行时", "variant": "emphasis", "route": "vertical-channel", "labelDy": -30 },
+    { "from": "registry", "to": "generate", "label": "同一棵树", "classification": "构建期", "variant": "default", "route": "vertical-channel", "labelDy": 30 },
+    { "from": "mount", "to": "ginroutes", "label": "挂载处理链", "classification": "中间件继承", "variant": "emphasis", "route": "straight" },
+    { "from": "generate", "to": "spec", "label": "写出 YAML / JSON", "classification": "确定性推导", "variant": "emphasis", "route": "straight" },
+    { "from": "ginroutes", "to": "apiclient", "label": "处理请求", "classification": "统一壳", "variant": "emphasis", "route": "straight" },
+    { "from": "spec", "to": "docsreader", "label": "导入 / 在线预览", "classification": "零手工维护", "variant": "default", "route": "straight" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "单点真相", "items": ["运行时与文档消费同一份注册表", "改一处注册，行为与规范同步"] },
+    { "dot": "emerald", "title": "构建期隔离", "items": ["openapi 包整体 //go:build openapi 隔离", "release 二进制零文档依赖"] },
+    { "dot": "rose", "title": "一致性保证", "items": ["文档与行为的分歧在生成期即暴露", "无须人工同步 API 文档"] }
+  ]
+}
