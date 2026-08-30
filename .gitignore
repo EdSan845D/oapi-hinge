@@ -29,11 +29,11 @@ go.work.sum
 
 # Editor/IDE
 # .idea/
-# .vscode/
+.vscode/
 
 
 bin/
 openapi.yaml
 openapi.json
 
-.vscode/
+docs/*.html
