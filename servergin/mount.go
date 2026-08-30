@@ -119,7 +119,7 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 				bound = true
 			case contract.HasFileHeader(bType):
 				// multipart 文件表单：标准库解析（gin/echo 行为一致），按 form 标签填充
-				if err := c.Request.ParseMultipartForm(multipartMemory(r.MultipartMemory)); err != nil {
+				if err := c.Request.ParseMultipartForm(contract.DefaultMultipartMemory); err != nil {
 					st, cd, msg := s.bindError(err)
 					fail(c, st, cd, msg)
 					return
@@ -231,14 +231,6 @@ func failAggregate(c *gin.Context, env response.Envelope, status, code int, msg 
 }
 
 var rawBodyType = reflect.TypeOf(contract.RawBody(nil))
-
-// multipartMemory 路由级缓冲水位：0 → 默认 32MB（内存调优参数，非上传上限）
-func multipartMemory(v int64) int64 {
-	if v <= 0 {
-		return contract.DefaultMultipartMemory
-	}
-	return v
-}
 
 // bindError 绑定/校验阶段错误（Q/B 绑定、TransformIn、校验器）的状态决策：
 // 携带状态码的错误（如 ParamBinder 返回 NotFound）走统一错误链；

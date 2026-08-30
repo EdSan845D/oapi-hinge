@@ -131,10 +131,6 @@ type RouteMeta[Q, B, R any] struct {
 	// Envelope 路由级响应壳；nil → 服务级默认壳（server.SetEnvelope）。
 	// 文档侧壳 schema 用 openapi.OptionWithEnvelopeSchema 配对配置。
 	Envelope response.Envelope
-	// MultipartMemory B 为 multipart 表单（含 FileHeader 字段）时的内存缓冲水位（字节）；
-	// 0 → 32MB（DefaultMultipartMemory）。注意：这是内存调优参数而非上传大小上限，
-	// 超出水位的 part 自动落盘临时文件；上传上限属业务层（如 MaxBytesReader 中间件）。
-	MultipartMemory int64
 	Handler  AdaptHandler[Q, B, R]
 }
 
@@ -148,7 +144,6 @@ type Route struct {
 	DefaultStatusCode int
 	Deprecated        bool
 	Envelope          response.Envelope
-	MultipartMemory   int64
 	Handler           any // func(context.Context, Q, B) (R, error)
 }
 
@@ -163,7 +158,6 @@ func New[Q, B, R any](m RouteMeta[Q, B, R]) Route {
 		DefaultStatusCode: m.DefaultStatusCode,
 		Deprecated:        m.Deprecated,
 		Envelope:          m.Envelope,
-		MultipartMemory:   m.MultipartMemory,
 		Handler:           m.Handler,
 	}
 }

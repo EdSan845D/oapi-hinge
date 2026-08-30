@@ -1066,9 +1066,10 @@ func Upload(ctx context.Context, _ contract.NoReq, b UploadReq) ([]string, error
 }
 ```
 
-- `RouteMeta.MultipartMemory`：路由级内存缓冲水位（字节），0 → 32MB。
-  **这是内存调优参数而非上传大小上限**（超出水位自动落盘临时文件）；
-  上传上限属业务层（如 MaxBytesReader 中间件）。
+- multipart 内存缓冲水位固定 32MB（`contract.DefaultMultipartMemory`）：
+  **这是内存调优参数而非上传大小上限**——超出水位的 part 自动落盘临时文件，
+  传多大的文件都不会占满内存；上传上限属业务层（如 MaxBytesReader 中间件），
+  与框架无关。需要调水位时另行讨论，目前不做配置面。
 - 挂载期校验：FileHeader 字段缺 `form` 标签直接 panic（文件会静默丢失）。
 - 绑定后照常走 InTransform / 校验管线；Value part 支持自定义绑定器与 default 标签。
 - 纯 urlencoded 表单（无文件）暂不内置：用 `RawBody` + `url.ParseQuery` 兜底。

@@ -118,7 +118,7 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 				b.Elem().Set(reflect.ValueOf(contract.RawBody(data)))
 				bound = true
 			case contract.HasFileHeader(bType):
-				if err := c.Request().ParseMultipartForm(multipartMemory(r.MultipartMemory)); err != nil {
+				if err := c.Request().ParseMultipartForm(contract.DefaultMultipartMemory); err != nil {
 					st, cd, msg := s.bindError(err)
 					return fail(c, st, cd, msg)
 				}
@@ -234,14 +234,6 @@ func failAggregate(c echo.Context, env response.Envelope, status, code int, msg 
 }
 
 var rawBodyType = reflect.TypeOf(contract.RawBody(nil))
-
-// multipartMemory 路由级缓冲水位：0 → 默认 32MB（内存调优参数，非上传上限）
-func multipartMemory(v int64) int64 {
-	if v <= 0 {
-		return contract.DefaultMultipartMemory
-	}
-	return v
-}
 
 // serveFile 输出二进制流。
 // Reader 实现 io.ReadSeeker 且 Size>0 时走 http.ServeContent：自动支持
