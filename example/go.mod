@@ -3,7 +3,7 @@ module github.com/EdSan845D/oapi-hinge/example
 go 1.26
 
 require (
-	github.com/EdSan845D/oapi-hinge/contract v0.0.0
+	github.com/EdSan845D/oapi-hinge/contract v0.1.0-rc.1.0.20260829173751-fae6e5d00b96
 	github.com/EdSan845D/oapi-hinge/openapi v0.0.0
 	github.com/EdSan845D/oapi-hinge/servergin v0.0.0
 	github.com/bdpiprava/scalar-go v0.13.0
@@ -26,7 +26,6 @@ require (
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
-	github.com/kr/pretty v0.3.1 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -34,6 +33,7 @@ require (
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
+	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.12 // indirect
