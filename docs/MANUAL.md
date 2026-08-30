@@ -1060,6 +1060,21 @@ return nil, &contract.AggregateError{
 **Q：脚手架生成的项目编译不过？**
 确认 go.mod 里 oapi-hinge 版本 ≥ v0.2.0（单模块版本），重新执行 `go mod tidy`；仍不行请提 issue。
 
+**Q：文件预览/下载路由要加安全头（CSP 沙箱、缓存策略）？**
+缓存策略用 `FileStream.CacheControl` 字段即可；内联预览用 `Disposition: "inline"`。
+更严格的 CSP 沙箱（防预览页逃逸）属于业务语义，建议以业务中间件实现后挂到
+下载/预览路由组（`Group.Middlewares`）：
+
+```go
+// gin 版；echo 版同理（c.Response().Header().Set）
+func Sandbox() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Content-Security-Policy", "sandbox; default-src 'none'")
+		c.Next()
+	}
+}
+```
+
 ## 5. 测试
 
 openapi 必须带构建标签：
