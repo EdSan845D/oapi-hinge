@@ -45,6 +45,12 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 	h := reflect.ValueOf(r.Handler)
 	qType := h.Type().In(1)
 	bType := h.Type().In(2)
+	// multipart 契约校验：FileHeader 字段缺 form 标签会让文件静默丢失，挂载期报错
+	if contract.HasFileHeader(bType) {
+		if err := contract.CheckMultipartTags(bType); err != nil {
+			panic(fmt.Sprintf("servergin: mount %s %s: %v", r.Method, r.Path, err))
+		}
+	}
 	// 响应壳：路由级覆盖 > 服务级
 	env := s.envelope
 	if r.Envelope != nil {
@@ -94,16 +100,47 @@ func (s *Server) mount(g *gin.RouterGroup, r contract.Route) {
 			qArg = q.Elem()
 		}
 
-		// B：JSON body 解析（非 body 方法、无 body 或接口占位 any 时跳过）
+		// B：按静态类型分派——RawBody 原始字节 / multipart 文件表单 / JSON（默认）。
+		// 非 body 方法或接口占位（any/NoReq）时跳过绑定，handler 收到零值。
 		bArg := reflect.New(bType).Elem()
 		if contract.IsBodyMethod(r.Method) && bType.Kind() != reflect.Interface {
 			b := contract.NewValue(bType)
-			if c.Request.Body != nil && c.Request.ContentLength > 0 {
-				if err := c.ShouldBindJSON(b.Interface()); err != nil {
+			bound := false
+			switch {
+			case bType == rawBodyType:
+				// 原始请求体：零解码整包字节交给业务层（webhook 验签/自定义编码）
+				data, err := io.ReadAll(c.Request.Body)
+				if err != nil {
 					st, cd, msg := s.bindError(err)
 					fail(c, st, cd, msg)
 					return
 				}
+				b.Elem().Set(reflect.ValueOf(contract.RawBody(data)))
+				bound = true
+			case contract.HasFileHeader(bType):
+				// multipart 文件表单：标准库解析（gin/echo 行为一致），按 form 标签填充
+				if err := c.Request.ParseMultipartForm(multipartMemory(r.MultipartMemory)); err != nil {
+					st, cd, msg := s.bindError(err)
+					fail(c, st, cd, msg)
+					return
+				}
+				if err := contract.BindMultipart(c.Request.MultipartForm, b.Interface()); err != nil {
+					st, cd, msg := s.bindError(err)
+					fail(c, st, cd, msg)
+					return
+				}
+				bound = true
+			default:
+				if c.Request.Body != nil && c.Request.ContentLength > 0 {
+					if err := c.ShouldBindJSON(b.Interface()); err != nil {
+						st, cd, msg := s.bindError(err)
+						fail(c, st, cd, msg)
+						return
+					}
+					bound = true
+				}
+			}
+			if bound {
 				// 入参转换：绑定后、校验前；ctx 为已装饰上下文（含用户/框架信息）
 				if err := contract.TransformIn(ctx, b.Interface()); err != nil {
 					st, cd, msg := s.bindError(err)
@@ -191,6 +228,16 @@ func failAggregate(c *gin.Context, env response.Envelope, status, code int, msg 
 		}
 	}
 	c.PureJSON(status, env.Failure(status, code, msg))
+}
+
+var rawBodyType = reflect.TypeOf(contract.RawBody(nil))
+
+// multipartMemory 路由级缓冲水位：0 → 默认 32MB（内存调优参数，非上传上限）
+func multipartMemory(v int64) int64 {
+	if v <= 0 {
+		return contract.DefaultMultipartMemory
+	}
+	return v
 }
 
 // bindError 绑定/校验阶段错误（Q/B 绑定、TransformIn、校验器）的状态决策：

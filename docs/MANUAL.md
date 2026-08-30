@@ -1035,6 +1035,43 @@ return nil, &contract.AggregateError{
 {"code":7,"data":null,"msg":"部分删除失败","aggregated_error":[{"key":"b.txt","code":7,"msg":"目标已存在"}]}
 ```
 
+### X.5 原始请求体与文件上传（RawBody / multipart）
+
+B 按静态类型分派绑定方式（行为恒定，不随请求头漂移）：
+
+| B 形态 | 绑定 | requestBody 文档 |
+|---|---|---|
+| `contract.RawBody` | 零解码，整包字节 | application/octet-stream + binary |
+| 含 `contract.FileHeader` 字段 | multipart/form-data（标准库解析，gin/echo 一致） | multipart schema，文件字段 binary |
+| 其余 | JSON（现状） | application/json |
+
+```go
+// 原始请求体：webhook 验签、自定义编码
+func VerifyWebhook(ctx context.Context, _ contract.NoReq, body contract.RawBody) (string, error) {
+	// body 即原始字节，自行 HMAC 校验
+}
+
+// 文件上传：FileHeader 字段（标准库类型别名）+ form 标签声明 part 名
+type UploadReq struct {
+	Title string                 `form:"title" binding:"required"`
+	Files []*contract.FileHeader `form:"files"`
+}
+
+func Upload(ctx context.Context, _ contract.NoReq, b UploadReq) ([]string, error) {
+	for _, fh := range b.Files {
+		f, _ := fh.Open()
+		defer f.Close()
+		// 处理上传流
+	}
+}
+```
+
+- `RouteMeta.MultipartMemory`：路由级内存缓冲水位（字节），0 → 32MB。
+  **这是内存调优参数而非上传大小上限**（超出水位自动落盘临时文件）；
+  上传上限属业务层（如 MaxBytesReader 中间件）。
+- 挂载期校验：FileHeader 字段缺 `form` 标签直接 panic（文件会静默丢失）。
+- 绑定后照常走 InTransform / 校验管线；Value part 支持自定义绑定器与 default 标签。
+- 纯 urlencoded 表单（无文件）暂不内置：用 `RawBody` + `url.ParseQuery` 兜底。
 ### X.4 业务 code 分配约定（建议）
 
 - 3 位：复用 HTTP 语义（401/403/404/409…）

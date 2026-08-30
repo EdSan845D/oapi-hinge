@@ -45,6 +45,12 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 	h := reflect.ValueOf(r.Handler)
 	qType := h.Type().In(1)
 	bType := h.Type().In(2)
+	// multipart 契约校验：FileHeader 字段缺 form 标签会让文件静默丢失，挂载期报错
+	if contract.HasFileHeader(bType) {
+		if err := contract.CheckMultipartTags(bType); err != nil {
+			panic(fmt.Sprintf("serverecho: mount %s %s: %v", r.Method, r.Path, err))
+		}
+	}
 	// 响应壳：路由级覆盖 > 服务级
 	env := s.envelope
 	if r.Envelope != nil {
@@ -93,17 +99,45 @@ func (s *Server) mount(g *echo.Group, r contract.Route) {
 			qArg = q.Elem()
 		}
 
-		// B：JSON body 解析（非 body 方法、无 body 或接口占位 any 时跳过）
+		// B：按静态类型分派——RawBody 原始字节 / multipart 文件表单 / JSON（默认）。
+		// 非 body 方法或接口占位（any/NoReq）时跳过绑定，handler 收到零值。
+		// multipart 与 RawBody 均走标准库解析（与 gin 适配器行为一致），不走 echo 的
+		// Content-Type 分发 binder（echo 的 c.Bind 非 JSON 会走 form 绑定，两端不一致）。
 		bArg := reflect.New(bType).Elem()
 		if contract.IsBodyMethod(r.Method) && bType.Kind() != reflect.Interface {
 			b := contract.NewValue(bType)
-			if c.Request().Body != nil && c.Request().ContentLength > 0 {
-				// 与 gin 适配器对齐：固定 JSON 解码（echo 的 c.Bind 按 Content-Type 分发，
-				// 非 JSON Content-Type 会走 form 绑定，同一份路由表两端行为不一致）
-				if err := json.NewDecoder(c.Request().Body).Decode(b.Interface()); err != nil {
+			bound := false
+			switch {
+			case bType == rawBodyType:
+				// 原始请求体：零解码整包字节交给业务层（webhook 验签/自定义编码）
+				data, err := io.ReadAll(c.Request().Body)
+				if err != nil {
 					st, cd, msg := s.bindError(err)
 					return fail(c, st, cd, msg)
 				}
+				b.Elem().Set(reflect.ValueOf(contract.RawBody(data)))
+				bound = true
+			case contract.HasFileHeader(bType):
+				if err := c.Request().ParseMultipartForm(multipartMemory(r.MultipartMemory)); err != nil {
+					st, cd, msg := s.bindError(err)
+					return fail(c, st, cd, msg)
+				}
+				if err := contract.BindMultipart(c.Request().MultipartForm, b.Interface()); err != nil {
+					st, cd, msg := s.bindError(err)
+					return fail(c, st, cd, msg)
+				}
+				bound = true
+			default:
+				if c.Request().Body != nil && c.Request().ContentLength > 0 {
+					// 与 gin 适配器对齐：固定 JSON 解码
+					if err := json.NewDecoder(c.Request().Body).Decode(b.Interface()); err != nil {
+						st, cd, msg := s.bindError(err)
+						return fail(c, st, cd, msg)
+					}
+					bound = true
+				}
+			}
+			if bound {
 				// 入参转换：绑定后、校验前；ctx 为已装饰上下文（含用户/框架信息）
 				if err := contract.TransformIn(ctx, b.Interface()); err != nil {
 					st, cd, msg := s.bindError(err)
@@ -197,6 +231,16 @@ func failAggregate(c echo.Context, env response.Envelope, status, code int, msg 
 		}
 	}
 	return c.JSON(status, env.Failure(status, code, msg))
+}
+
+var rawBodyType = reflect.TypeOf(contract.RawBody(nil))
+
+// multipartMemory 路由级缓冲水位：0 → 默认 32MB（内存调优参数，非上传上限）
+func multipartMemory(v int64) int64 {
+	if v <= 0 {
+		return contract.DefaultMultipartMemory
+	}
+	return v
 }
 
 // serveFile 输出二进制流。

@@ -320,11 +320,33 @@ func addOperation(g *specGen, r contract.Route, groupPath string, groupTags []st
 	}
 
 	if bT.Kind() != reflect.Interface {
-		ref := g.sb.ref(bT)
-		op.RequestBody = &openapi3.RequestBodyRef{Value: openapi3.NewRequestBody().
-			WithRequired(true).
-			WithDescription("Request body for " + bT.String()).
-			WithContent(openapi3.NewContentWithSchemaRef(ref, []string{"application/json"}))}
+		bt := bT
+		for bt.Kind() == reflect.Pointer {
+			bt = bt.Elem()
+		}
+		switch {
+		case bt == rawBodyType:
+			// RawBody：原始字节体（application/octet-stream + binary）
+			bin := openapi3.NewStringSchema()
+			bin.Format = "binary"
+			op.RequestBody = &openapi3.RequestBodyRef{Value: openapi3.NewRequestBody().
+				WithRequired(true).
+				WithDescription("Raw request body").
+				WithContent(openapi3.NewContentWithSchemaRef(&openapi3.SchemaRef{Value: bin}, []string{"application/octet-stream"}))}
+		case contract.HasFileHeader(bT):
+			// multipart 文件表单
+			sch := multipartSchema(bT)
+			op.RequestBody = &openapi3.RequestBodyRef{Value: openapi3.NewRequestBody().
+				WithRequired(true).
+				WithDescription("Request body for " + bT.String()).
+				WithContent(openapi3.NewContentWithSchemaRef(&openapi3.SchemaRef{Value: sch}, []string{"multipart/form-data"}))}
+		default:
+			ref := g.sb.ref(bT)
+			op.RequestBody = &openapi3.RequestBodyRef{Value: openapi3.NewRequestBody().
+				WithRequired(true).
+				WithDescription("Request body for " + bT.String()).
+				WithContent(openapi3.NewContentWithSchemaRef(ref, []string{"application/json"}))}
+		}
 	}
 
 	// 成功响应码：路由级默认状态码 > 200（配合 contract.RouteMeta.DefaultStatusCode）
@@ -782,4 +804,65 @@ func operationID(h any) string {
 		name = name[i+1:]
 	}
 	return name
+}
+
+var rawBodyType = reflect.TypeOf(contract.RawBody(nil))
+
+var fileHeaderT = reflect.TypeOf(contract.FileHeader{})
+
+func isFileHeaderSchemaType(t reflect.Type) bool {
+	if t == fileHeaderT {
+		return true
+	}
+	if t.Kind() == reflect.Pointer && t.Elem() == fileHeaderT {
+		return true
+	}
+	if t.Kind() == reflect.Slice {
+		e := t.Elem()
+		if e == fileHeaderT {
+			return true
+		}
+		if e.Kind() == reflect.Pointer && e.Elem() == fileHeaderT {
+			return true
+		}
+	}
+	return false
+}
+
+// multipartSchema 为含 FileHeader 字段的 B 生成 multipart/form-data 的 requestBody
+// schema：FileHeader 字段 → {type: string, format: binary}；其余 form 标签字段 →
+// 标量/切片 schema；binding:"required" 字段进入 required 列表。
+// v1 仅扁平字段（不递归内嵌结构体）。
+func multipartSchema(t reflect.Type) *openapi3.Schema {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	sch := openapi3.NewObjectSchema()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() || f.Anonymous {
+			continue
+		}
+		name := f.Tag.Get("form")
+		if name == "" {
+			continue
+		}
+		var ps *openapi3.Schema
+		if isFileHeaderSchemaType(f.Type) {
+			ps = openapi3.NewStringSchema()
+			ps.Format = "binary"
+		} else if ref := paramSchema(f.Type); ref != nil && ref.Value != nil {
+			ps = ref.Value
+		} else {
+			ps = openapi3.NewStringSchema()
+		}
+		if sch.Properties == nil {
+			sch.Properties = openapi3.Schemas{}
+		}
+		sch.Properties[name] = &openapi3.SchemaRef{Value: ps}
+		if isRequiredOpenAPI(f) {
+			sch.Required = append(sch.Required, name)
+		}
+	}
+	return sch
 }
