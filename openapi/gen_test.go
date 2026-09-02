@@ -3,29 +3,20 @@
 package openapi
 
 import (
-	"context"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/EdSan845D/oapi-hinge/contract"
+	"github.com/EdSan845D/oapi-hinge/hinge"
 
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// 定制能力文档生成验证：header 标签进文档、Response[R] 解包取 Data schema
-// anyBodyHandler 通用无参处理器（B=any 场景复用）
-func anyBodyHandler(ctx context.Context, _ contract.NoReq, _ any) (map[string]string, error) {
-	return map[string]string{}, nil
-}
-
+// 定制能力文档生成验证：header 标签进文档、Response[R] 解包取 Data schema。
+// v0.2 端点表范式：测试直接构造 []hinge.Endpoint（QType/BType/RType 由 hinge.Type[T]() 填充）。
 type docHeaderReq struct {
 	Lang string `header:"Accept-Language" description:"语言"`
-}
-
-func docHeaderHandler(ctx context.Context, req docHeaderReq, _ any) (map[string]string, error) {
-	return map[string]string{}, nil
 }
 
 type docUser struct {
@@ -33,32 +24,21 @@ type docUser struct {
 	Name string `json:"name"`
 }
 
-func docCreatedHandler(ctx context.Context, _ contract.NoReq, _ any) (contract.Response[docUser], error) {
-	return contract.Response[docUser]{Status: http.StatusCreated, Data: docUser{}}, nil
-}
-
 func TestGenerateEscapeHatches(t *testing.T) {
-	groups := []*contract.Group{
+	eps := []hinge.Endpoint{
 		{
-			Prefix: "/doc",
-			Routes: []contract.Route{
-				contract.New(contract.RouteMeta[docHeaderReq, any, map[string]string]{
-					Method:  "GET",
-					Path:    "/h",
-					Summary: "header",
-					Handler: docHeaderHandler,
-				}),
-				contract.New(contract.RouteMeta[contract.NoReq, any, contract.Response[docUser]]{
-					Method:  "POST",
-					Path:    "/c",
-					Summary: "created",
-					Handler: docCreatedHandler,
-				}),
-			},
+			Owner: "t", Handler: "DocHeader",
+			Method: "GET", Path: "/doc/h", Summary: "header",
+			QType: hinge.Type[docHeaderReq](), RType: hinge.Type[map[string]string](),
+		},
+		{
+			Owner: "t", Handler: "DocCreated",
+			Method: "POST", Path: "/doc/c", Summary: "created",
+			RType: hinge.Type[hinge.Response[docUser]](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)
@@ -83,23 +63,19 @@ func TestGenerateEscapeHatches(t *testing.T) {
 	}
 }
 
-// ============ 升级能力验证：DefaultStatusCode 文档联动 + EnvelopeSchema 可替换 ============
+// ============ 升级能力验证：Status 文档联动 + EnvelopeSchema 可替换 ============
 
 func TestGenerateDefaultStatusCode(t *testing.T) {
-	groups := []*contract.Group{
+	eps := []hinge.Endpoint{
 		{
-			Prefix: "/doc",
-			Routes: []contract.Route{
-				contract.New(contract.RouteMeta[contract.NoReq, any, map[string]string]{
-					Method: "POST", Path: "/create", Summary: "创建",
-					DefaultStatusCode: http.StatusCreated,
-					Handler:           anyBodyHandler,
-				}),
-			},
+			Owner: "t", Handler: "Create",
+			Method: "POST", Path: "/doc/create", Summary: "创建",
+			Status: http.StatusCreated,
+			RType:  hinge.Type[map[string]string](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)
@@ -107,26 +83,22 @@ func TestGenerateDefaultStatusCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(data)
-	// 成功响应码使用路由级 DefaultStatusCode 而非硬编码 200
+	// 成功响应码使用端点级 Status 而非硬编码 200
 	if !strings.Contains(s, `"201":`) {
 		t.Fatalf("default status code not reflected in doc:\n%s", s)
 	}
 }
 
 func TestGenerateCustomEnvelopeSchema(t *testing.T) {
-	groups := []*contract.Group{
+	eps := []hinge.Endpoint{
 		{
-			Prefix: "/doc",
-			Routes: []contract.Route{
-				contract.New(contract.RouteMeta[contract.NoReq, any, map[string]string]{
-					Method: "GET", Path: "/h", Summary: "header",
-					Handler: anyBodyHandler,
-				}),
-			},
+			Owner: "t", Handler: "H",
+			Method: "GET", Path: "/doc/h", Summary: "header",
+			RType: hinge.Type[map[string]string](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
-	err := Generate(out, groups, OptionWithEnvelopeSchema(func(data *openapi3.SchemaRef) *openapi3.SchemaRef {
+	err := Generate(out, eps, OptionWithEnvelopeSchema(func(data *openapi3.SchemaRef) *openapi3.SchemaRef {
 		obj := openapi3.NewObjectSchema()
 		obj.Properties = openapi3.Schemas{"error": data}
 		return &openapi3.SchemaRef{Value: obj}
@@ -148,35 +120,28 @@ func TestGenerateCustomEnvelopeSchema(t *testing.T) {
 	}
 }
 
-// ============ path 参数类型取自 Q + 401 不再全局硬编码 ============
+// ============ path 参数类型取自 Q + 401 只随 ep.Auth 声明 ============
 
 type docPathReq struct {
 	ID  int    `path:"id" description:"用户ID"`
 	Sub string `path:"sub"`
 }
 
-func docPathHandler(ctx context.Context, req docPathReq, _ any) (map[string]string, error) {
-	return map[string]string{}, nil
-}
-
 func TestGeneratePathParamsFromQueryStruct(t *testing.T) {
-	groups := []*contract.Group{
+	eps := []hinge.Endpoint{
 		{
-			Prefix: "/doc",
-			Routes: []contract.Route{
-				contract.New(contract.RouteMeta[docPathReq, any, map[string]string]{
-					Method: "GET", Path: "/users/{id}/{sub}", Summary: "路径参数",
-					Handler: docPathHandler,
-				}),
-				contract.New(contract.RouteMeta[contract.NoReq, any, map[string]string]{
-					Method: "GET", Path: "/health", Summary: "公开接口",
-					Handler: anyBodyHandler,
-				}),
-			},
+			Owner: "t", Handler: "DocPath",
+			Method: "GET", Path: "/doc/users/{id}/{sub}", Summary: "路径参数",
+			QType: hinge.Type[docPathReq](), RType: hinge.Type[map[string]string](),
+		},
+		{
+			Owner: "t", Handler: "Health",
+			Method: "GET", Path: "/doc/health", Summary: "公开接口",
+			RType: hinge.Type[map[string]string](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)
@@ -193,44 +158,28 @@ func TestGeneratePathParamsFromQueryStruct(t *testing.T) {
 	if !strings.Contains(s, "用户ID") {
 		t.Fatalf("path param description missing:\n%s", s)
 	}
-	// ③ 公开接口不再硬编码 401（鉴权 401 由中间件文档钩子按需声明）
+	// ③ 公开接口不再硬编码 401（401 只随 ep.Auth 按需声明）
 	if strings.Contains(s, "401") {
 		t.Fatalf("global 401 should be gone:\n%s", s)
 	}
 }
 
-// ---- ParamBinder 文档联动：注册绑定器的类型，参数 schema 标注为 string ----
+// ============ ep.Auth → security + 401；ep.Limit/Timeout → 扩展字段 ============
 
-type docIDs []string
-
-func init() {
-	contract.RegisterParamBinder(func(src []string) (docIDs, error) {
-		return docIDs(strings.Split(src[0], ",")), nil
-	})
-}
-
-type docBinderReq struct {
-	Tags docIDs `query:"tags" description:"标签，逗号分隔"`
-}
-
-func docBinderHandler(ctx context.Context, req docBinderReq, _ any) (map[string]string, error) {
-	return map[string]string{}, nil
-}
-
-func TestGenerateParamBinder(t *testing.T) {
-	groups := []*contract.Group{
+func TestGenerateAuthAndExtensions(t *testing.T) {
+	eps := []hinge.Endpoint{
 		{
-			Prefix: "/doc",
-			Routes: []contract.Route{
-				contract.New(contract.RouteMeta[docBinderReq, any, map[string]string]{
-					Method: "GET", Path: "/tags", Summary: "binder",
-					Handler: docBinderHandler,
-				}),
-			},
+			Owner: "t", Handler: "Admin",
+			Method: "GET", Path: "/doc/admin", Summary: "受保护接口",
+			Auth: "BearerAuth", Limit: "120/min",
+			RType: hinge.Type[map[string]string](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps, OptionWithSecurity(openapi3.SecuritySchemes{
+		"BearerAuth": &openapi3.SecuritySchemeRef{Value: openapi3.NewSecurityScheme().
+			WithType("http").WithScheme("bearer")},
+	})); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)
@@ -238,11 +187,41 @@ func TestGenerateParamBinder(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(data)
-	// binder 类型参数：schema 为 string（而非 docIDs 的 array 形态）
-	if !strings.Contains(s, "type: string") {
-		t.Fatalf("binder param schema not string:\n%s", s)
+	if !strings.Contains(s, "BearerAuth") {
+		t.Fatalf("security scheme missing:\n%s", s)
 	}
-	if strings.Contains(s, "type: array") {
-		t.Fatalf("binder param leaked array schema:\n%s", s)
+	if !strings.Contains(s, `"401":`) {
+		t.Fatalf("401 response missing for auth endpoint:\n%s", s)
+	}
+	if !strings.Contains(s, "x-rate-limit") {
+		t.Fatalf("x-rate-limit extension missing:\n%s", s)
+	}
+}
+
+// ---- 切片 query 参数：array schema（v0.2 移除 ParamBinder 注册表后的形态）----
+
+type docSliceReq struct {
+	Tags []string `query:"tags" description:"标签，逗号分隔"`
+}
+
+func TestGenerateSliceQueryParam(t *testing.T) {
+	eps := []hinge.Endpoint{
+		{
+			Owner: "t", Handler: "Tags",
+			Method: "GET", Path: "/doc/tags", Summary: "tags",
+			QType: hinge.Type[docSliceReq](), RType: hinge.Type[map[string]string](),
+		},
+	}
+	out := t.TempDir() + "/spec.yaml"
+	if err := Generate(out, eps); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "type: array") {
+		t.Fatalf("slice param schema not array:\n%s", s)
 	}
 }

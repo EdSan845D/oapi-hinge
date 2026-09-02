@@ -3,46 +3,35 @@
 package openapi
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/EdSan845D/oapi-hinge/contract"
+	"github.com/EdSan845D/oapi-hinge/hinge"
 )
 
-// ============ 新特性测试：RawBody / multipart 的 requestBody 推导 ============
+// ============ RawBody / multipart 的 requestBody 推导（v0.2 端点表构造）============
 
 type genUploadReq struct {
-	Title string                 `form:"title" binding:"required"`
-	Files []*contract.FileHeader `form:"files"`
-}
-
-func genRawBodyHandler(ctx context.Context, _ contract.NoReq, b contract.RawBody) (string, error) {
-	return string(b), nil
-}
-
-func genUploadHandler(ctx context.Context, _ contract.NoReq, b genUploadReq) (map[string]any, error) {
-	return nil, nil
+	Title string                `form:"title" binding:"required"`
+	Files []*hinge.FileHeader `form:"files"`
 }
 
 func TestGenerateBodyKinds(t *testing.T) {
-	groups := []*contract.Group{
+	eps := []hinge.Endpoint{
 		{
-			Prefix: "/raw",
-			Routes: []contract.Route{contract.New(contract.RouteMeta[contract.NoReq, contract.RawBody, string]{
-				Method: "POST", Path: "", Summary: "原始字节体", Handler: genRawBodyHandler,
-			})},
+			Owner: "t", Handler: "Raw",
+			Method: "POST", Path: "/raw", Summary: "原始字节体",
+			BType: hinge.Type[hinge.RawBody](), RType: hinge.Type[string](),
 		},
 		{
-			Prefix: "/up",
-			Routes: []contract.Route{contract.New(contract.RouteMeta[contract.NoReq, genUploadReq, map[string]any]{
-				Method: "POST", Path: "", Summary: "文件上传", Handler: genUploadHandler,
-			})},
+			Owner: "t", Handler: "Upload",
+			Method: "POST", Path: "/up", Summary: "文件上传",
+			BType: hinge.Type[genUploadReq](), RType: hinge.Type[map[string]any](),
 		},
 	}
 	out := filepath.Join(t.TempDir(), "spec.yaml")
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	spec := readSpec(t, out)
@@ -71,19 +60,16 @@ type genCookieReq struct {
 	SID string `cookie:"sid" binding:"required"`
 }
 
-func genCookieHandler(ctx context.Context, q genCookieReq, _ any) (map[string]string, error) {
-	return nil, nil
-}
-
 func TestCookieParameterDoc(t *testing.T) {
-	groups := []*contract.Group{{
-		Prefix: "/c",
-		Routes: []contract.Route{contract.New(contract.RouteMeta[genCookieReq, any, map[string]string]{
-			Method: "GET", Path: "", Handler: genCookieHandler,
-		})},
-	}}
+	eps := []hinge.Endpoint{
+		{
+			Owner: "t", Handler: "Cookie",
+			Method: "GET", Path: "/c",
+			QType: hinge.Type[genCookieReq](), RType: hinge.Type[map[string]string](),
+		},
+	}
 	out := filepath.Join(t.TempDir(), "spec.yaml")
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	spec := readSpec(t, out)

@@ -1,5 +1,7 @@
 # oapi-hinge 使用手册
 
+> ⚠️ **v0.2 迁移提示（2026-09）**：本文档基于 v0.1 范式（路由注册表 + Mount），v0.2 已改为「Enterpoint + oapi:* 注解 + hinge gen 代码生成」。迁移对照表见 [README.md](../README.md) 的「从 v0.1 迁移」章节；绑定/校验/响应壳/错误链等扩展点语义保持不变，仅声明与装配方式变化。本文档的扩展点章节仍然有效，路由声明章节请以 README 与 example/ 为准。
+
 [简体中文](MANUAL.md) | [English](MANUAL_EN.md)
 
 > 适用版本：V0.2.0 <br/>

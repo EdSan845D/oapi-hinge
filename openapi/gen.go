@@ -1,8 +1,8 @@
 //go:build openapi
 
-// Package openapi 开发期 OpenAPI 文档生成器：从统一路由注册表生成 OpenAPI 3.1 规范。
+// Package openapi 开发期 OpenAPI 文档生成器：从端点表（[]hinge.Endpoint）生成 OpenAPI 3.1 规范。
 // 纯 kin-openapi 实现：类型反射生成 schema（schema.go）、
-// 路由树递归生成 operation。仅 -tags openapi 构建，release 构建零开发期依赖。
+// 端点表扁平遍历生成 operation。仅 -tags openapi 构建，release 构建零开发期依赖。
 //
 // 用法：go run -tags openapi . -out openapi.yaml
 package openapi
@@ -15,30 +15,30 @@ import (
 	"os"
 	"reflect"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/EdSan845D/oapi-hinge/contract"
-	"github.com/EdSan845D/oapi-hinge/contract/response"
+	"github.com/EdSan845D/oapi-hinge/hinge"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"gopkg.in/yaml.v3"
 )
 
-// respWrapperIface 响应定制壳接口（contract.Response[R]）
-var respWrapperIface = reflect.TypeOf((*contract.ResponseWrapper)(nil)).Elem()
+// respWrapperIface 响应定制壳接口（hinge.Response[R]）
+var respWrapperIface = reflect.TypeOf((*hinge.ResponseWrapper)(nil)).Elem()
 
 var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
 
 // 壳推导状态（dev 工具单线程；generate 重置）。
 // envelopeInstance 由 OptionWithEnvelope 注入运行时实际壳实例；
-// envelopeSchemaCustom 标记 OptionWithEnvelopeSchema 手写壳 schema（仅无法从壳实例推导时使用）。
+// envelopeSchemaCustom 标记 OptionWithEnvelopeSchema 手写壳 schema（仅无法从壳实例推导时使用）；
+// envelopeSchemas 由 OptionWithEnvelopeSchemas 注册命名壳（hinge.Endpoint.Envelope 引用名）的文档 schema。
 var (
 	envelopeSchema       EnvelopeSchema = defaultEnvelopeSchema
 	envelopeSchemaCustom bool
-	envelopeInstance     response.Envelope
+	envelopeInstance     hinge.Envelope
+	envelopeSchemas      map[string]EnvelopeSchema
 )
 
 // Option 文档生成选项：以函数式方式注入文档元信息
@@ -46,31 +46,30 @@ var (
 type Option = func(*openapi3.T)
 
 // Generate 生成 OpenAPI 文档并写入 out（.yaml/.yml -> YAML，.json -> JSON）。
-// groups 为路由分组树（routes.All()）；opts 注入文档元信息。
-// 警告（operationID 重复、schema 名升级、未匹配注册、缺 Summary）输出到 stderr；
+// eps 为端点表（hinge gen 产出的 Endpoints() 表或手写注册均可）；opts 注入文档元信息。
+// 警告（operationID 重复、schema 名升级、未知命名壳、缺 Summary）输出到 stderr；
 // 需要把警告当错误（CI）用 GenerateStrict。
-func Generate(out string, groups []*contract.Group, opts ...Option) error {
-	_, err := generate(out, groups, false, opts...)
+func Generate(out string, eps []hinge.Endpoint, opts ...Option) error {
+	_, err := generate(out, eps, false, opts...)
 	return err
 }
 
 // GenerateStrict 与 Generate 相同，但存在警告时返回错误（文档规范检查进 CI）。
-func GenerateStrict(out string, groups []*contract.Group, opts ...Option) error {
-	_, err := generate(out, groups, true, opts...)
+func GenerateStrict(out string, eps []hinge.Endpoint, opts ...Option) error {
+	_, err := generate(out, eps, true, opts...)
 	return err
 }
 
 // buildDoc 生成文档对象（两轮：探测收集类型 → 统一命名 → 正式构建）。
 // 警告返回给调用方（Generate 打 stderr；GenerateStrict 转 error）。
-func buildDoc(groups []*contract.Group, opts ...Option) (*openapi3.T, []string, error) {
+func buildDoc(eps []hinge.Endpoint, opts ...Option) (*openapi3.T, []string, error) {
 	resetEnvelopeState()
-	resetUsage()
 
 	// pass 1（探测）：只收集组件类型集合（含壳推导类型），产物丢弃
 	probeDoc := newDoc()
 	applyOpts(probeDoc, opts)
 	probe := &specGen{doc: probeDoc, sb: newSchemaBuilder(probeDoc, nil), probe: true, opIDs: map[string]string{}, tagDescs: map[string]string{}}
-	buildSpec(probe, groups)
+	buildSpec(probe, eps)
 
 	// 两阶段命名：裸名优先，跨包同名冲突整体升级
 	names, warnings := assignNames(probe.sb.seen)
@@ -87,12 +86,11 @@ func buildDoc(groups []*contract.Group, opts ...Option) (*openapi3.T, []string, 
 	doc := newDoc()
 	applyOpts(doc, opts)
 	g := &specGen{doc: doc, sb: newSchemaBuilder(doc, names), opIDs: map[string]string{}, tagDescs: map[string]string{}}
-	buildSpec(g, groups)
+	buildSpec(g, eps)
 
-	// 补录路由合并 + 未匹配注册检查
+	// 补录路由合并
 	mergeManualPaths(doc)
 	warnings = append(warnings, g.warns...)
-	warnings = append(warnings, unmatchedRegistrations()...)
 	// 生成期规范校验（默认开启）：程序化构建的 doc 内部 $ref 尚未解析（Value 为 nil），
 	// kin-openapi 的 Validate 不解析引用，因此先 YAML 序列化往返再校验——
 	// 与最终交付内容完全一致，同时能抓住序列化产物的问题（如非法组件名字符）。
@@ -109,8 +107,8 @@ func buildDoc(groups []*contract.Group, opts ...Option) (*openapi3.T, []string, 
 
 // Build 生成文档对象（不落盘）：自建 /docs、推送网关等自定义消费场景。
 // 警告输出 stderr；需要警告即失败用 GenerateStrict。
-func Build(groups []*contract.Group, opts ...Option) (*openapi3.T, error) {
-	doc, warnings, err := buildDoc(groups, opts...)
+func Build(eps []hinge.Endpoint, opts ...Option) (*openapi3.T, error) {
+	doc, warnings, err := buildDoc(eps, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -121,8 +119,8 @@ func Build(groups []*contract.Group, opts ...Option) (*openapi3.T, error) {
 }
 
 // generate 两轮生成：探测轮收集全部组件类型 → 统一命名 → 正式轮产出规范。
-func generate(out string, groups []*contract.Group, strict bool, opts ...Option) ([]string, error) {
-	doc, warnings, err := buildDoc(groups, opts...)
+func generate(out string, eps []hinge.Endpoint, strict bool, opts ...Option) ([]string, error) {
+	doc, warnings, err := buildDoc(eps, opts...)
 	if err != nil {
 		return warnings, err
 	}
@@ -167,6 +165,7 @@ func resetEnvelopeState() {
 	envelopeSchema = defaultEnvelopeSchema
 	envelopeSchemaCustom = false
 	envelopeInstance = nil
+	envelopeSchemas = nil
 	sourceComments = false
 }
 
@@ -181,7 +180,7 @@ type specGen struct {
 	warns    []string
 }
 
-// noteTag 记录顶层 tag（组 Description 作为 tag 描述，首个非空生效）。
+// noteTag 记录顶层 tag（v0.2 端点表无分组描述来源，desc 传空；首个非空生效）。
 func (g *specGen) noteTag(name, desc string) {
 	if name == "" {
 		return
@@ -196,10 +195,11 @@ func (g *specGen) noteTag(name, desc string) {
 	}
 }
 
-func buildSpec(g *specGen, groups []*contract.Group) {
-	checkDuplicates(groups)
-	for _, gr := range groups {
-		addGroup(g, gr, "", nil)
+// buildSpec 扁平遍历端点表，逐个生成 operation；最后写顶层 tags 声明。
+func buildSpec(g *specGen, eps []hinge.Endpoint) {
+	checkDuplicates(eps)
+	for i := range eps {
+		addOperation(g, &eps[i])
 	}
 	// 顶层 tags 声明（规范推荐；Swagger UI 按此分组/排序）
 	if len(g.tagNames) > 0 {
@@ -211,73 +211,73 @@ func buildSpec(g *specGen, groups []*contract.Group) {
 	}
 }
 
-// addGroup 递归生成一个分组的所有 operation。
-// inherited 为父组继承下来的中间件；组 Tags 与路由 Tags 合并。
-func addGroup(g *specGen, gr *contract.Group, prefix string, inherited []any) {
-	path := prefix + gr.Prefix
-	mws := append(append([]any{}, inherited...), gr.Middlewares...)
-	for _, tg := range gr.Tags {
-		g.noteTag(tg, gr.Description)
-	}
-	for _, r := range gr.Routes {
-		addOperation(g, r, path, gr.Tags, mws)
-	}
-	for _, child := range gr.Children {
-		addGroup(g, child, path, mws)
+// checkDuplicates 校验端点表中 method+path 无重复（文档期早期报错，
+// 避免 Paths.SetOperation 静默覆盖）
+func checkDuplicates(eps []hinge.Endpoint) {
+	seen := map[string]string{} // "GET /users/{id}" -> 端点名
+	for i := range eps {
+		ep := &eps[i]
+		key := ep.Method + " " + ep.Path
+		if prev, dup := seen[key]; dup {
+			panic(fmt.Sprintf("duplicate route %s: %s vs %s", key, prev, endpointName(ep)))
+		}
+		seen[key] = endpointName(ep)
 	}
 }
 
-// addOperation 为一个路由生成 OpenAPI 操作。
-// Handler 模板：func(context.Context, Q, B) (R, error)
-//   - Q：query 参数来自 `query` 标签，path 参数来自路径 {id}
-//   - B：interface{} 表示无 body，否则整包作为 application/json 请求体
-//   - R：Data 段 schema；*FileStream 输出二进制流，接口类型（Empty/any）输出任意 JSON 值 schema
-//   - 中间件文档钩子按函数名匹配（RegisterMiddlewareDoc）先应用，
-//     DescribeRoute 的 Hook 最后应用（可覆盖以上所有）
-func addOperation(g *specGen, r contract.Route, groupPath string, groupTags []string, mws []any) {
-	if err := contract.CheckHandler(r.Handler); err != nil {
-		// 生成期签名校验：给出路由定位，避免 In(1) 等下标访问 panic 信息晦涩
-		panic(fmt.Sprintf("openapi: %s %s: invalid handler: %v", r.Method, r.Path, err))
+// endpointName 端点展示名（查重 panic / 警告定位用）
+func endpointName(ep *hinge.Endpoint) string {
+	if ep.Owner != "" {
+		return ep.Owner + "." + ep.Handler
 	}
+	return ep.Handler
+}
 
-	// 路由级纯文档增强（Hide 在探测/正式两轮都直接跳过，类型集合保持一致）
-	rd, hasDoc := routeDocFor(r.Handler)
-	if hasDoc && rd.Hide {
-		return
-	}
-
+// addOperation 为一个端点生成 OpenAPI 操作。
+// 类型来源：ep.QType / ep.BType / ep.RType（生成表用 hinge.Type[T]() 填充；
+// nil 视同 v0.1 的 interface 占位：无参数 / 无 body / 任意 JSON 响应）。
+//   - Q：query 参数来自 `query` 标签，path 参数来自路径 {id}（Q 中 path 标签字段命中则用其类型），header/cookie 标签同 v0.1
+//   - B：nil / interface{} 表示无 body，否则整包作为 application/json 请求体
+//   - R：Data 段 schema；hinge.FileStream 输出二进制流并声明 404，接口类型（Empty/any）输出任意 JSON 值 schema
+//   - 文档语义映射：ep.Deprecated → deprecated；ep.Status(0→200) → 成功码；
+//     ep.Auth → security + 401；ep.Limit → x-rate-limit；ep.Timeout → x-timeout；ep.Envelope → 命名壳 schema
+func addOperation(g *specGen, ep *hinge.Endpoint) {
 	op := openapi3.NewOperation()
-	// Responses 先初始化：中间件文档钩子可能立即写入响应（如 401）
+	// Responses 先初始化：Auth 401 等响应随后写入
 	op.Responses = openapi3.NewResponses()
-	op.Summary = r.Summary
-	op.Description = r.Description
-	op.OperationID = operationID(r.Handler)
-	if hasDoc && rd.OperationID != "" {
-		op.OperationID = rd.OperationID
-	}
-	op.Deprecated = r.Deprecated
-	op.Tags = mergeTags(groupTags, r.Tags)
+	op.Summary = ep.Summary
+	op.Description = ep.Description
+	op.OperationID = operationID(ep)
+	op.Deprecated = ep.Deprecated
+	op.Tags = dedupTags(ep.Tags)
 	for _, tg := range op.Tags {
 		g.noteTag(tg, "")
 	}
-	applyHooks(op, mws)
 
-	// handler 源码注释兜底 Summary/Description（RouteMeta 未写时；首行 → Summary，其余 → Description）
-	if r.Summary == "" && sourceComments {
-		if hc := handlerCommentOf(r.Handler); hc != "" {
-			lines := strings.SplitN(hc, "\n", 2)
-			op.Summary = strings.TrimSpace(lines[0])
-			if len(lines) == 2 && op.Description == "" {
-				op.Description = strings.TrimSpace(lines[1])
-			}
+	// 环绕拦截器（oapi:auth / oapi:limit / oapi:timeout 注解进 Endpoint）的文档语义
+	if ep.Auth != "" {
+		op.Security = &openapi3.SecurityRequirements{{ep.Auth: {}}}
+		op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+			WithDescription("Unauthorized：token 缺失或无效")})
+	}
+	if ep.Limit != "" {
+		if op.Extensions == nil {
+			op.Extensions = map[string]any{}
 		}
+		op.Extensions["x-rate-limit"] = ep.Limit
+	}
+	if ep.Timeout > 0 {
+		if op.Extensions == nil {
+			op.Extensions = map[string]any{}
+		}
+		op.Extensions["x-timeout"] = ep.Timeout.Seconds()
 	}
 
 	// operationID 查重 + Summary 缺失提示（正式轮）
-	routeKey := r.Method + " " + groupPath + r.Path
+	routeKey := ep.Method + " " + ep.Path
 	if !g.probe {
 		if prev, dup := g.opIDs[op.OperationID]; dup {
-			g.warns = append(g.warns, fmt.Sprintf("duplicate operationID %q: %s vs %s（用 DescribeRoute OperationID 区分）",
+			g.warns = append(g.warns, fmt.Sprintf("duplicate operationID %q: %s vs %s（区分 Owner/Handler 消除）",
 				op.OperationID, prev, routeKey))
 		} else {
 			g.opIDs[op.OperationID] = routeKey
@@ -287,20 +287,17 @@ func addOperation(g *specGen, r contract.Route, groupPath string, groupTags []st
 		}
 	}
 
-	fn := reflect.TypeOf(r.Handler)
-	qT, bT, rT := fn.In(1), fn.In(2), fn.Out(0)
+	qT, bT, rT := ep.QType, ep.BType, ep.RType
 
 	// path 参数：优先取 Q 中 path 标签字段的类型与描述（缺省回退 string）
 	pathFields := pathFieldsOf(qT)
-	for _, name := range pathParams(r.Path) {
+	for _, name := range pathParams(ep.Path) {
 		p := openapi3.NewPathParameter(name)
 		if f, ok := pathFields[name]; ok {
 			p.Schema = paramSchema(f.Type)
-			if !contract.HasParamBinder(f.Type) {
-				p.Schema = applyFieldTags(p.Schema, f)
-				if f.Type.Kind() == reflect.Pointer && p.Schema.Value != nil {
-					p.Schema.Value.Nullable = true
-				}
+			p.Schema = applyFieldTags(p.Schema, f)
+			if f.Type.Kind() == reflect.Pointer && p.Schema.Value != nil {
+				p.Schema.Value.Nullable = true
 			}
 			if d, ok := f.Tag.Lookup("description"); ok && d != "" {
 				p.Description = d
@@ -315,11 +312,13 @@ func addOperation(g *specGen, r contract.Route, groupPath string, groupTags []st
 		}
 		op.AddParameter(p)
 	}
-	for _, p := range queryParams(qT) {
-		op.AddParameter(p)
+	if qT != nil {
+		for _, p := range queryParams(qT) {
+			op.AddParameter(p)
+		}
 	}
 
-	if bT.Kind() != reflect.Interface {
+	if bT != nil && bT.Kind() != reflect.Interface {
 		bt := bT
 		for bt.Kind() == reflect.Pointer {
 			bt = bt.Elem()
@@ -333,7 +332,7 @@ func addOperation(g *specGen, r contract.Route, groupPath string, groupTags []st
 				WithRequired(true).
 				WithDescription("Raw request body").
 				WithContent(openapi3.NewContentWithSchemaRef(&openapi3.SchemaRef{Value: bin}, []string{"application/octet-stream"}))}
-		case contract.HasFileHeader(bT):
+		case hasFileHeader(bT):
 			// multipart 文件表单
 			sch := multipartSchema(bT)
 			op.RequestBody = &openapi3.RequestBodyRef{Value: openapi3.NewRequestBody().
@@ -349,122 +348,134 @@ func addOperation(g *specGen, r contract.Route, groupPath string, groupTags []st
 		}
 	}
 
-	// 成功响应码：路由级默认状态码 > 200（配合 contract.RouteMeta.DefaultStatusCode）
-	successCode := strconv.Itoa(r.DefaultStatusCode)
-	if r.DefaultStatusCode == 0 {
+	// 成功响应码：ep.Status；0 → 200
+	successCode := strconv.Itoa(ep.Status)
+	if ep.Status == 0 {
 		successCode = "200"
-	}
-	// 401 等鉴权响应由中间件文档钩子按需声明（RegisterMiddlewareDoc），
-	// 不对全部接口硬编码 401（公开接口如 /health 不应出现 401）
-
-	if rT.Kind() == reflect.Pointer {
-		rT = rT.Elem()
-	}
-	// Response[R] 包装 → 取 Data 字段类型作为响应 schema
-	if rT.Implements(respWrapperIface) {
-		if f, ok := rT.FieldByName("Data"); ok {
-			rT = f.Type
-		}
 	}
 
 	var successResp *openapi3.ResponseRef
-	switch {
-	case rT == reflect.TypeOf(contract.FileStream{}):
-		bin := openapi3.NewStringSchema()
-		bin.Format = "binary"
-		successResp = &openapi3.ResponseRef{Value: openapi3.NewResponse().
-			WithDescription("文件二进制流").
-			WithContent(openapi3.NewContentWithSchemaRef(&openapi3.SchemaRef{Value: bin}, []string{"application/octet-stream"}))}
-		op.Responses.Set("404", &openapi3.ResponseRef{Value: openapi3.NewResponse().
-			WithDescription("文件不存在")})
-	case rT.Kind() == reflect.Interface:
-		// 接口类型响应（Empty=any / 裸 any）：空 schema 表示任意 JSON 值，
-		// 实际返回 null 时序列化为 data: null
-		successResp = okResponse(g, r, &openapi3.SchemaRef{Value: openapi3.NewSchema()})
-	default:
-		successResp = okResponse(g, r, g.sb.ref(rT))
+	if rT == nil {
+		// RType 未填（nil）：视同接口占位 → 任意 JSON 值
+		successResp = okResponse(g, ep, &openapi3.SchemaRef{Value: openapi3.NewSchema()})
+	} else {
+		if rT.Kind() == reflect.Pointer {
+			rT = rT.Elem()
+		}
+		// hinge.Response[R] 定制壳 → 取 Data 字段类型作为响应 schema
+		if rT.Implements(respWrapperIface) {
+			if f, ok := rT.FieldByName("Data"); ok {
+				rT = f.Type
+			}
+		}
+		switch {
+		case rT == reflect.TypeOf(hinge.FileStream{}):
+			bin := openapi3.NewStringSchema()
+			bin.Format = "binary"
+			successResp = &openapi3.ResponseRef{Value: openapi3.NewResponse().
+				WithDescription("文件二进制流").
+				WithContent(openapi3.NewContentWithSchemaRef(&openapi3.SchemaRef{Value: bin}, []string{"application/octet-stream"}))}
+			op.Responses.Set("404", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+				WithDescription("文件不存在")})
+		case rT.Kind() == reflect.Interface:
+			// 接口类型响应（Empty=any / 裸 any）：空 schema 表示任意 JSON 值，
+			// 实际返回 null 时序列化为 data: null
+			successResp = okResponse(g, ep, &openapi3.SchemaRef{Value: openapi3.NewSchema()})
+		default:
+			successResp = okResponse(g, ep, g.sb.ref(rT))
+		}
 	}
-	applySuccessHeaders(successResp, rd.ResponseHeaders)
 	op.Responses.Set(successCode, successResp)
 
-	// 错误响应声明（DescribeRoute.Errors）
-	if hasDoc {
-		for _, ed := range rd.Errors {
-			op.Responses.Set(strconv.Itoa(ed.Status), errorResponse(g, r, ed))
-		}
-	}
-
-	// 路由文档钩子：中间件钩子之后、最后应用（兜底改写）
-	if hasDoc && rd.Hook != nil {
-		rd.Hook(op)
-	}
-
 	// 合并到 Paths：同路径不同 method 共存
-	p := g.doc.Paths.Value(groupPath + r.Path)
+	p := g.doc.Paths.Value(ep.Path)
 	if p == nil {
 		p = &openapi3.PathItem{}
-		g.doc.Paths.Set(groupPath+r.Path, p)
+		g.doc.Paths.Set(ep.Path, p)
 	}
-	p.SetOperation(r.Method, op)
+	p.SetOperation(ep.Method, op)
 }
 
-// checkDuplicates 校验路由树中 path+method 无重复（文档期早期报错，避免静默覆盖）
-func checkDuplicates(groups []*contract.Group) {
-	seen := map[string]string{} // "GET /users/{id}" -> handler 名
-	var walk func(gs []*contract.Group, prefix string)
-	walk = func(gs []*contract.Group, prefix string) {
-		for _, g := range gs {
-			p := prefix + g.Prefix
-			for _, r := range g.Routes {
-				key := r.Method + " " + p + r.Path
-				if prev, dup := seen[key]; dup {
-					panic(fmt.Sprintf("duplicate route %s: %s vs %s", key, prev, operationID(r.Handler)))
-				}
-				seen[key] = operationID(r.Handler)
-			}
-			walk(g.Children, p)
-		}
+// dedupTags 去重保序（手写端点表的 Tags 可能重复）
+func dedupTags(tags []string) []string {
+	if len(tags) == 0 {
+		return nil
 	}
-	walk(groups, "")
-}
-
-// mergeTags 合并组 Tags 与路由 Tags（去重保序）
-func mergeTags(a, b []string) []string {
-	out := make([]string, 0, len(a)+len(b))
+	out := make([]string, 0, len(tags))
 	seen := map[string]bool{}
-	for _, t := range append(append([]string{}, a...), b...) {
-		if !seen[t] {
-			seen[t] = true
-			out = append(out, t)
+	for _, t := range tags {
+		if seen[t] {
+			continue
 		}
+		seen[t] = true
+		out = append(out, t)
 	}
 	return out
 }
 
-// effectiveEnvelope 返回路由实际生效的壳实例；nil 表示走手写壳 schema
-// （OptionWithEnvelopeSchema 且未提供壳实例/路由级壳）。
-func effectiveEnvelope(r contract.Route) response.Envelope {
-	if r.Envelope != nil {
-		return r.Envelope
+// operationID 文档操作 ID：Owner_Handler（如 UserEp_GetUser）；
+// Owner 为空时回退 method+path 清洗（如 GET /users/{id} → get_users_id）。
+func operationID(ep *hinge.Endpoint) string {
+	if ep.Owner != "" {
+		return ep.Owner + "_" + ep.Handler
 	}
-	if envelopeInstance != nil {
-		return envelopeInstance
-	}
-	if envelopeSchemaCustom {
-		return nil
-	}
-	return response.DefaultEnvelope{}
+	return fallbackOperationID(ep.Method, ep.Path)
 }
 
-// okResponse 成功响应：壳形态由实际生效的壳实例推导（文档与运行时同构）。
-func okResponse(g *specGen, r contract.Route, data *openapi3.SchemaRef) *openapi3.ResponseRef {
-	env := effectiveEnvelope(r)
+// fallbackOperationID method+path 清洗为合法标识符：
+// 小写；非 [a-z0-9] 的连续字符折叠为单个 _；去首尾 _。
+func fallbackOperationID(method, path string) string {
+	var b strings.Builder
+	prevUnderscore := false
+	for _, r := range strings.ToLower(method + " " + path) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevUnderscore = false
+		default:
+			if !prevUnderscore {
+				b.WriteRune('_')
+				prevUnderscore = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+// effectiveEnvelope 返回端点实际生效的壳文档方案。
+//   - ep.Envelope 命中 OptionWithEnvelopeSchemas 注册表 → 手写命名壳 schema（instance 为 nil）
+//   - ep.Envelope 未命中 → 正式轮输出警告并退回默认推导链
+//   - 默认推导链：OptionWithEnvelope 壳实例 > OptionWithEnvelopeSchema 手写壳 > 默认壳
+//
+// instance 非 nil 时从壳实例推导；否则 custom 非 nil 为手写壳 schema 函数。
+func effectiveEnvelope(g *specGen, ep *hinge.Endpoint) (hinge.Envelope, EnvelopeSchema) {
+	if ep.Envelope != "" {
+		if fn, ok := envelopeSchemas[ep.Envelope]; ok {
+			return nil, fn
+		}
+		if !g.probe {
+			g.warns = append(g.warns, fmt.Sprintf("unknown envelope %q: %s %s（未通过 OptionWithEnvelopeSchemas 注册，退回默认壳推导）",
+				ep.Envelope, ep.Method, ep.Path))
+		}
+	}
+	if envelopeInstance != nil {
+		return envelopeInstance, nil
+	}
+	if envelopeSchemaCustom {
+		return nil, envelopeSchema
+	}
+	return hinge.DefaultEnvelope{}, nil
+}
+
+// okResponse 成功响应：壳形态由实际生效的壳方案推导（文档与运行时同构）。
+func okResponse(g *specGen, ep *hinge.Endpoint, data *openapi3.SchemaRef) *openapi3.ResponseRef {
+	env, custom := effectiveEnvelope(g, ep)
 	var schema *openapi3.SchemaRef
 	if env == nil {
-		// 手写壳 schema：OptionWithEnvelopeSchema 且未提供壳实例/路由级壳
-		schema = envelopeSchema(data)
+		// 手写壳 schema：命名壳命中 / OptionWithEnvelopeSchema 且无壳实例
+		schema = custom(data)
 	} else {
-		status := r.DefaultStatusCode
+		status := ep.Status
 		if status == 0 {
 			status = http.StatusOK
 		}
@@ -476,49 +487,7 @@ func okResponse(g *specGen, r contract.Route, data *openapi3.SchemaRef) *openapi
 		WithContent(openapi3.NewContentWithSchemaRef(schema, []string{"application/json"}))}
 }
 
-// errorResponse 生成错误响应：默认形态由路由实际生效的壳推导
-// （含 code 默认值 / msg 示例注入，与运行时 resolveError 约定一致）；
-// ErrorDecl.Schema 显式覆盖。
-func errorResponse(g *specGen, r contract.Route, ed ErrorDecl) *openapi3.ResponseRef {
-	desc := ed.Description
-	if desc == "" {
-		desc = fmt.Sprintf("HTTP %d", ed.Status)
-	}
-	var schemaRef *openapi3.SchemaRef
-	if ed.Schema != nil {
-		schemaRef = ed.Schema
-	} else {
-		code := ed.Code
-		if code == 0 {
-			if ed.Status == http.StatusOK {
-				code = response.CodeError
-			} else {
-				code = ed.Status
-			}
-		}
-		env := effectiveEnvelope(r)
-		if env == nil {
-			schemaRef = envelopeSchema(&openapi3.SchemaRef{Value: openapi3.NewSchema()})
-		} else {
-			wrapped := env.Failure(ed.Status, code, desc)
-			schemaRef = deriveEnvelopeSchema(g.sb, wrapped, &openapi3.SchemaRef{Value: openapi3.NewSchema()})
-			// 推导 schema 上注入具体 code 默认值与 msg 示例
-			if s := schemaRef.Value; s != nil && s.Properties != nil {
-				if cr := s.Properties["code"]; cr != nil && cr.Value != nil {
-					cr.Value.Default = code
-				}
-				if mr := s.Properties["msg"]; mr != nil && mr.Value != nil {
-					mr.Value.Example = desc
-				}
-			}
-		}
-	}
-	return &openapi3.ResponseRef{Value: openapi3.NewResponse().
-		WithDescription(desc).
-		WithContent(openapi3.NewContentWithSchemaRef(schemaRef, []string{"application/json"}))}
-}
-
-// deriveEnvelopeSchema 调用壳实例的 Success/Failure 取返回值，反射生成壳 schema：
+// deriveEnvelopeSchema 调用壳实例的 Success 取返回值，反射生成壳 schema：
 //   - 返回接口/nil → 透传壳：直接使用 data（如 RawEnvelope.Success）
 //   - struct → 逐字段构建：interface 类型字段为业务数据位，用 data 替换；其余反射；壳本身内联
 //   - map → additionalProperties 同上（如 RawEnvelope.Failure 的 map[string]any）
@@ -578,40 +547,9 @@ func envelopeFieldRef(sb *schemaBuilder, t reflect.Type, data *openapi3.SchemaRe
 	return sb.ref(t)
 }
 
-// applySuccessHeaders 把声明的响应头写入成功响应。
-func applySuccessHeaders(resp *openapi3.ResponseRef, decls []HeaderDecl) {
-	if len(decls) == 0 || resp == nil || resp.Value == nil {
-		return
-	}
-	if resp.Value.Headers == nil {
-		resp.Value.Headers = openapi3.Headers{}
-	}
-	for _, hd := range decls {
-		if hd.Name == "" {
-			continue
-		}
-		h := &openapi3.Header{}
-		h.Description = hd.Description
-		h.Required = hd.Required
-		if hd.Schema != nil {
-			h.Schema = &openapi3.SchemaRef{Value: hd.Schema}
-		} else {
-			h.Schema = &openapi3.SchemaRef{Value: openapi3.NewStringSchema()}
-		}
-		resp.Value.Headers[hd.Name] = &openapi3.HeaderRef{Value: h}
-	}
-}
-
-// paramSchema 参数 schema：注册过 ParamBinder 文档 schema 的类型用注册值；
-// 注册过绑定器但未声明文档 schema 的回退 string（HTTP 形态是原始串）；
-// 普通类型按 kind 反射。
+// paramSchema 参数 schema：按 kind 反射。
+// v0.2 参数绑定由 hinge gen 产出（请求期零反射），不存在 ParamBinder 文档特判。
 func paramSchema(t reflect.Type) *openapi3.SchemaRef {
-	if s := binderSchemaFor(t); s != nil {
-		return &openapi3.SchemaRef{Value: s}
-	}
-	if contract.HasParamBinder(t) {
-		return &openapi3.SchemaRef{Value: openapi3.NewStringSchema()}
-	}
 	return &openapi3.SchemaRef{Value: schemaByKind(t)}
 }
 
@@ -678,11 +616,9 @@ func queryParams(t reflect.Type) []*openapi3.Parameter {
 				p.Description = d
 			}
 			p.Schema = paramSchema(f.Type)
-			if !contract.HasParamBinder(f.Type) {
-				p.Schema = applyFieldTags(p.Schema, f)
-				if f.Type.Kind() == reflect.Pointer && p.Schema.Value != nil {
-					p.Schema.Value.Nullable = true
-				}
+			p.Schema = applyFieldTags(p.Schema, f)
+			if f.Type.Kind() == reflect.Pointer && p.Schema.Value != nil {
+				p.Schema.Value.Nullable = true
 			}
 			if dv, ok := f.Tag.Lookup("default"); ok && dv != "" {
 				p.Schema.Value.Default = parseDefault(dv, derefKind(f.Type))
@@ -809,26 +745,39 @@ func pathParams(path string) []string {
 	return out
 }
 
-// operationID 取 Handler 裸函数名（如 handlers.ListUsers -> ListUsers）；
-// 跨包同名由 DescribeRoute.OperationID 覆盖 + 生成警告兜底
-func operationID(h any) string {
-	v := reflect.ValueOf(h)
-	name := runtime.FuncForPC(v.Pointer()).Name()
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		name = name[i+1:]
+var rawBodyType = reflect.TypeOf(hinge.RawBody(nil))
+
+var fileHeaderT = reflect.TypeOf(hinge.FileHeader{})
+
+// hasFileHeader 判断 B 是否声明了上传文件字段（含内嵌结构体递归）。
+// 生成器据此推导 multipart 请求体 schema（语义与 v0.1 contract.HasFileHeader 一致）。
+func hasFileHeader(t reflect.Type) bool {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
 	}
-	name = strings.TrimSuffix(name, "-fm")
-	if i := strings.LastIndex(name, "."); i >= 0 {
-		name = name[i+1:]
+	if t == nil || t.Kind() != reflect.Struct {
+		return false
 	}
-	return name
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.Anonymous {
+			ft := f.Type
+			if ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct && hasFileHeader(ft) {
+				return true
+			}
+			continue
+		}
+		if isFileHeaderField(f.Type) {
+			return true
+		}
+	}
+	return false
 }
 
-var rawBodyType = reflect.TypeOf(contract.RawBody(nil))
-
-var fileHeaderT = reflect.TypeOf(contract.FileHeader{})
-
-func isFileHeaderSchemaType(t reflect.Type) bool {
+func isFileHeaderField(t reflect.Type) bool {
 	if t == fileHeaderT {
 		return true
 	}
@@ -850,7 +799,7 @@ func isFileHeaderSchemaType(t reflect.Type) bool {
 // multipartSchema 为含 FileHeader 字段的 B 生成 multipart/form-data 的 requestBody
 // schema：FileHeader 字段 → {type: string, format: binary}；其余 form 标签字段 →
 // 标量/切片 schema；binding:"required" 字段进入 required 列表。
-// v1 仅扁平字段（不递归内嵌结构体）。
+// 仅扁平字段（不递归内嵌结构体）。
 func multipartSchema(t reflect.Type) *openapi3.Schema {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
@@ -866,7 +815,7 @@ func multipartSchema(t reflect.Type) *openapi3.Schema {
 			continue
 		}
 		var ps *openapi3.Schema
-		if isFileHeaderSchemaType(f.Type) {
+		if isFileHeaderField(f.Type) {
 			ps = openapi3.NewStringSchema()
 			ps.Format = "binary"
 		} else if ref := paramSchema(f.Type); ref != nil && ref.Value != nil {

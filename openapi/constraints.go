@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/EdSan845D/oapi-hinge/contract"
-
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
@@ -34,9 +32,10 @@ type fieldConstraints struct {
 }
 
 // applyFieldTags 把字段标签（约束 + example）叠加到字段 schema 上。
-// $ref（Value 为 nil）与 ParamBinder 参数化类型不叠加（避免污染共享/组件 schema）。
+// $ref（Value 为 nil）不叠加（避免污染共享/组件 schema）。
+// v0.2：ParamBinder 注册表已随反射绑定移除，参数类型一律按标量反射输出。
 func applyFieldTags(sch *openapi3.SchemaRef, sf reflect.StructField) *openapi3.SchemaRef {
-	if sch == nil || sch.Value == nil || contract.HasParamBinder(sf.Type) {
+	if sch == nil || sch.Value == nil {
 		return sch
 	}
 	kind := derefKind(sf.Type)

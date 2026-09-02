@@ -3,19 +3,17 @@
 package openapi
 
 import (
-	"context"
 	"strings"
 	"testing"
 
-	"github.com/EdSan845D/oapi-hinge/contract"
-	"github.com/EdSan845D/oapi-hinge/contract/response"
+	"github.com/EdSan845D/oapi-hinge/hinge"
 
 	"github.com/getkin/kin-openapi/openapi3"
 
 	testdataa "github.com/EdSan845D/oapi-hinge/openapi/testdata/a"
 )
 
-// ============ 约束映射：validate/binding 标签 → OpenAPI 约束 ============
+// ============ 约束映射：validate/binding 标签 → OpenAPI 约束（v0.2 端点表构造）============
 
 type constraintQueryReq struct {
 	Status  string   `query:"status" validate:"oneof=active inactive"`
@@ -28,24 +26,17 @@ type constraintQueryReq struct {
 	OptN    *int     `query:"opt"`
 }
 
-func constraintQueryHandler(ctx context.Context, req constraintQueryReq, _ any) (map[string]string, error) {
-	return map[string]string{}, nil
-}
-
 func TestConstraintMappingQuery(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	groups := []*contract.Group{{
-		Prefix: "/cq",
-		Routes: []contract.Route{
-			contract.New(contract.RouteMeta[constraintQueryReq, any, map[string]string]{
-				Method: "GET", Path: "/x", Summary: "约束", Handler: constraintQueryHandler,
-			}),
-		},
+	eps := []hinge.Endpoint{{
+		Owner: "t", Handler: "Query",
+		Method: "GET", Path: "/cq/x", Summary: "约束",
+		QType: hinge.Type[constraintQueryReq](), RType: hinge.Type[map[string]string](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatal(err)
 	}
 	s := readSpec(t, out)
@@ -72,24 +63,17 @@ type constraintBodyReq struct {
 	Nick  *string `json:"nick"`
 }
 
-func constraintBodyHandler(ctx context.Context, _ contract.NoReq, req constraintBodyReq) (map[string]string, error) {
-	return map[string]string{}, nil
-}
-
 func TestConstraintMappingBody(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	groups := []*contract.Group{{
-		Prefix: "/cb",
-		Routes: []contract.Route{
-			contract.New(contract.RouteMeta[contract.NoReq, constraintBodyReq, map[string]string]{
-				Method: "POST", Path: "/x", Summary: "约束", Handler: constraintBodyHandler,
-			}),
-		},
+	eps := []hinge.Endpoint{{
+		Owner: "t", Handler: "Body",
+		Method: "POST", Path: "/cb/x", Summary: "约束",
+		BType: hinge.Type[constraintBodyReq](), RType: hinge.Type[map[string]string](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatal(err)
 	}
 	s := readSpec(t, out)
@@ -116,19 +100,13 @@ func TestExampleTagCoercion(t *testing.T) {
 		N int  `query:"n" example:"5"`
 		B bool `query:"b" example:"true"`
 	}
-	handler := func(ctx context.Context, r req, _ any) (map[string]string, error) {
-		return map[string]string{}, nil
-	}
-	groups := []*contract.Group{{
-		Prefix: "/ex",
-		Routes: []contract.Route{
-			contract.New(contract.RouteMeta[req, any, map[string]string]{
-				Method: "GET", Path: "/x", Summary: "example 转型", Handler: handler,
-			}),
-		},
+	eps := []hinge.Endpoint{{
+		Owner: "t", Handler: "Example",
+		Method: "GET", Path: "/ex/x", Summary: "example 转型",
+		QType: hinge.Type[req](), RType: hinge.Type[map[string]string](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatal(err)
 	}
 	s := readSpec(t, out)
@@ -149,18 +127,13 @@ func TestTypeSchemaOverride(t *testing.T) {
 
 	RegisterTypeSchema[overriddenType](openapi3.NewFloat64Schema().WithFormat("decimal"))
 
-	groups := []*contract.Group{{
-		Prefix: "/to",
-		Routes: []contract.Route{
-			contract.New(contract.RouteMeta[contract.NoReq, overriddenType, map[string]string]{
-				Method: "POST", Path: "/x", Summary: "覆盖", Handler: func(ctx context.Context, _ contract.NoReq, req overriddenType) (map[string]string, error) {
-					return map[string]string{}, nil
-				},
-			}),
-		},
+	eps := []hinge.Endpoint{{
+		Owner: "t", Handler: "Override",
+		Method: "POST", Path: "/to/x", Summary: "覆盖",
+		BType: hinge.Type[overriddenType](), RType: hinge.Type[map[string]string](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatal(err)
 	}
 	s := readSpec(t, out)
@@ -185,18 +158,13 @@ func TestTypeSchemaFunc(t *testing.T) {
 		return openapi3.NewStringSchema().WithPattern("^ok$")
 	})
 
-	groups := []*contract.Group{{
-		Prefix: "/tf",
-		Routes: []contract.Route{
-			contract.New(contract.RouteMeta[contract.NoReq, overriddenType, map[string]string]{
-				Method: "POST", Path: "/x", Summary: "函数覆盖", Handler: func(ctx context.Context, _ contract.NoReq, req overriddenType) (map[string]string, error) {
-					return map[string]string{}, nil
-				},
-			}),
-		},
+	eps := []hinge.Endpoint{{
+		Owner: "t", Handler: "OverrideFunc",
+		Method: "POST", Path: "/tf/x", Summary: "函数覆盖",
+		BType: hinge.Type[overriddenType](), RType: hinge.Type[map[string]string](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatal(err)
 	}
 	s := readSpec(t, out)
@@ -211,22 +179,19 @@ func TestDocTags(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	groups := []*contract.Group{{
-		Prefix:      "/tg",
-		Description: "用户相关接口",
-		Tags:        []string{"用户"},
-		Routes: []contract.Route{
-			contract.New(contract.RouteMeta[contract.NoReq, any, map[string]string]{
-				Method: "GET", Path: "/x", Summary: "演示", Tags: []string{"用户"}, Handler: descEchoHandler,
-			}),
-		},
+	eps := []hinge.Endpoint{{
+		Owner: "t", Handler: "Demo",
+		Method: "GET", Path: "/tg/x", Summary: "演示",
+		Tags:  []string{"用户"},
+		RType: hinge.Type[map[string]string](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatal(err)
 	}
 	s := readSpec(t, out)
-	if !strings.Contains(s, "name: 用户") || !strings.Contains(s, "description: 用户相关接口") {
+	// 顶层 tags 声明：v0.2 端点表无分组描述来源，仅名称
+	if !strings.Contains(s, "name: 用户") {
 		t.Fatalf("top-level tags missing:\n%s", s)
 	}
 }
@@ -235,15 +200,12 @@ func TestBuildAPI(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	groups := []*contract.Group{{
-		Prefix: "/b",
-		Routes: []contract.Route{
-			contract.New(contract.RouteMeta[contract.NoReq, any, testdataa.User]{
-				Method: "GET", Path: "/x", Summary: "演示", Handler: testdataa.Health,
-			}),
-		},
+	eps := []hinge.Endpoint{{
+		Owner: "t", Handler: "Demo",
+		Method: "GET", Path: "/b/x", Summary: "演示",
+		RType: hinge.Type[testdataa.User](),
 	}}
-	doc, err := Build(groups)
+	doc, err := Build(eps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,24 +229,17 @@ type defaultTypesReq struct {
 	Enabled bool    `json:"enabled" default:"true"`
 }
 
-func defaultTypesHandler(ctx context.Context, _ contract.NoReq, req defaultTypesReq) (map[string]string, error) {
-	return map[string]string{}, nil
-}
-
 func TestBodyDefaultTypeCoercion(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	groups := []*contract.Group{{
-		Prefix: "/dt",
-		Routes: []contract.Route{
-			contract.New(contract.RouteMeta[contract.NoReq, defaultTypesReq, map[string]string]{
-				Method: "POST", Path: "/x", Summary: "default 转型", Handler: defaultTypesHandler,
-			}),
-		},
+	eps := []hinge.Endpoint{{
+		Owner: "t", Handler: "Defaults",
+		Method: "POST", Path: "/dt/x", Summary: "default 转型",
+		BType: hinge.Type[defaultTypesReq](), RType: hinge.Type[map[string]string](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
-	if err := Generate(out, groups); err != nil {
+	if err := Generate(out, eps); err != nil {
 		t.Fatal(err)
 	}
 	s := readSpec(t, out)
@@ -306,20 +261,13 @@ func TestGenericComponentNameCharset(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	pagedHandler := func(ctx context.Context, _ contract.NoReq, _ any) (response.Paged[testdataa.User], error) {
-		return response.Paged[testdataa.User]{Items: []testdataa.User{{ID: "a1", Name: "alice"}}, Total: 1}, nil
-	}
-
-	groups := []*contract.Group{{
-		Prefix: "/pg",
-		Routes: []contract.Route{
-			contract.New(contract.RouteMeta[contract.NoReq, any, response.Paged[testdataa.User]]{
-				Method: "GET", Path: "/x", Summary: "泛型分页", Handler: pagedHandler,
-			}),
-		},
+	eps := []hinge.Endpoint{{
+		Owner: "t", Handler: "Paged",
+		Method: "GET", Path: "/pg/x", Summary: "泛型分页",
+		RType: hinge.Type[hinge.Paged[testdataa.User]](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
-	warns, err := generate(out, groups, false)
+	warns, err := generate(out, eps, false)
 	if err != nil {
 		t.Fatal(err)
 	}

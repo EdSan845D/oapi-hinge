@@ -1,0 +1,8 @@
+# hinge 代码生成配置
+# 运行：go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen
+# CI 门禁：go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen -check
+module: opai-hinge
+scan:
+  - app/eps
+out: apigen
+targets: [gin]

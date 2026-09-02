@@ -151,6 +151,12 @@ func scaffold(project, mod string, force bool) error {
 			return nil
 		}
 		rel := strings.TrimPrefix(path, templateRoot+"/")
+		// v0.2 起模板已迁移到 Enterpoint 范式；v0.1 残留模板不再拷出（待后续版本从 embed 中移除）
+		for _, legacy := range []string{"app/handlers/", "app/routes/", "app/middleware/"} {
+			if strings.HasPrefix(rel, legacy) {
+				return nil
+			}
+		}
 		// 模板中的 go.mod.tmpl 在生成时改名为 go.mod
 		if rel == "go.mod.tmpl" {
 			rel = "go.mod"
@@ -215,5 +221,5 @@ func printNextSteps(project, mod, env string, noTidy bool) {
 	fmt.Println()
 	fmt.Println("module:", mod)
 	fmt.Println()
-	fmt.Println("新增接口三步: 1) app/handlers 写 Handler  2) app/routes/routes.go 注册一行  3) 完成")
+	fmt.Println("新增接口三步: 1) app/eps 写端点方法 + oapi:* 注解  2) go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen  3) 完成（注册与文档表已生成）")
 }

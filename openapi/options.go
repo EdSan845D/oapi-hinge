@@ -3,7 +3,8 @@
 package openapi
 
 import (
-	"github.com/EdSan845D/oapi-hinge/contract/response"
+	"github.com/EdSan845D/oapi-hinge/hinge"
+
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
@@ -21,19 +22,21 @@ func OptionWithServer(servers *openapi3.Servers) Option {
 	}
 }
 
-// OptionWithSecurity 设置安全方案（如 BearerAuth）
+// OptionWithSecurity 设置安全方案（如 BearerAuth）。
+// 端点的 oapi:auth 注解值（Endpoint.Auth）即 scheme 名：
+// 注册名为 "bearer:admin" 时，这里注册同名 scheme 即可自动关联。
 func OptionWithSecurity(schemes openapi3.SecuritySchemes) Option {
 	return func(doc *openapi3.T) {
 		doc.Components.SecuritySchemes = schemes
 	}
 }
 
-// OptionWithEnvelope 注入运行时实际使用的响应壳实例。
+// OptionWithEnvelope 注入运行时实际使用的默认响应壳实例。
 // 生成期调用其 Success/Failure 反射推导成功/失败响应 schema——
-// 文档形态与运行时同构，消灭手工配对。壳实例建议放业务共享包
-// （如 routes.APIEnvelope），main.go 与 main_doc.go 引用同一份。
-// 优先级：RouteMeta.Envelope（路由级）> 本 Option > 手写壳 schema > 默认壳推导。
-func OptionWithEnvelope(env response.Envelope) Option {
+// 文档形态与运行时同构，消灭手工配对。
+// 优先级：Endpoint.Envelope 命名壳（oapi:envelope 注解，配对
+// OptionWithEnvelopeSchemas）> 本 Option > 手写壳 schema > 默认壳推导。
+func OptionWithEnvelope(env hinge.Envelope) Option {
 	return func(doc *openapi3.T) {
 		if env != nil {
 			envelopeInstance = env
@@ -44,10 +47,10 @@ func OptionWithEnvelope(env response.Envelope) Option {
 // OptionWithSourceComments 开启「注释即文档」：解析主模块源码注释生成描述。
 //   - 字段上方注释 → query/header/path 参数与 body 字段的 description
 //   - 结构体上方注释 → components 组件 description
-//   - handler 函数上方注释 → operation Summary/Description 兜底（RouteMeta 未写时）
 //
 // 只解析主模块（go.mod 向上定位）的包；description 标签优先于注释；
 // 配合 RegisterCommentParser 可自定义解析语义（如从注释提取 example）。
+// v0.2 端点级 Summary/Description 来自 oapi:* 注解，不再依赖 handler 注释兜底。
 func OptionWithSourceComments() Option {
 	return func(doc *openapi3.T) {
 		sourceComments = true
@@ -70,9 +73,9 @@ func defaultEnvelopeSchema(data *openapi3.SchemaRef) *openapi3.SchemaRef {
 	return &openapi3.SchemaRef{Value: env}
 }
 
-// OptionWithEnvelopeSchema 手写壳 schema：自定义响应壳在 OpenAPI 文档中的 schema。
+// OptionWithEnvelopeSchema 手写默认壳 schema：自定义响应壳在 OpenAPI 文档中的 schema。
 // 传入 nil 恢复默认 {code, data, msg}。
-// 注意：若配置了 OptionWithEnvelope 或路由级 Envelope，实例推导优先于本选项。
+// 注意：若配置了 OptionWithEnvelope，壳实例推导优先于本选项。
 func OptionWithEnvelopeSchema(fn EnvelopeSchema) Option {
 	return func(doc *openapi3.T) {
 		if fn != nil {
@@ -81,6 +84,23 @@ func OptionWithEnvelopeSchema(fn EnvelopeSchema) Option {
 		} else {
 			envelopeSchema = defaultEnvelopeSchema
 			envelopeSchemaCustom = false
+		}
+	}
+}
+
+// OptionWithEnvelopeSchemas 注册命名壳的文档 schema（oapi:envelope <name> 注解引用）。
+// 端点 Endpoint.Envelope 命中注册表时使用对应壳 schema；
+// 未命中输出警告并退回默认壳推导。运行时侧需以同名 hinge.RegisterEnvelope 配对。
+func OptionWithEnvelopeSchemas(schemas map[string]EnvelopeSchema) Option {
+	return func(doc *openapi3.T) {
+		for name, fn := range schemas {
+			if name == "" || fn == nil {
+				continue
+			}
+			if envelopeSchemas == nil {
+				envelopeSchemas = map[string]EnvelopeSchema{}
+			}
+			envelopeSchemas[name] = fn
 		}
 	}
 }
