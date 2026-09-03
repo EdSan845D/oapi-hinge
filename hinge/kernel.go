@@ -1,9 +1,8 @@
-package hinge
+﻿package hinge
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"reflect"
 )
@@ -110,7 +109,7 @@ var errHandled = errors.New("hinge: response already written")
 //
 // bindQ / bindB 为生成的绑定器（无入参时传 nil）；h 为生成的闭包适配形态。
 func (k *Kernel) Handle(ep Endpoint, bindQ, bindB Binder, h HandlerFunc) func(RequestReader, Sink) {
-	env := EnvelopeFor(ep.Envelope, k.envelope)
+	env := k.envelopeFor(ep)
 	success := ep.Status
 	if success == 0 {
 		success = http.StatusOK
@@ -167,6 +166,20 @@ func (k *Kernel) Handle(ep Endpoint, bindQ, bindB Binder, h HandlerFunc) func(Re
 	}
 }
 
+// envelopeFor 解析端点响应壳：命名壳未注册时 fail fast（与拦截器同策略，
+// 杜绝静默回退默认壳导致的行为漂移）。
+func (k *Kernel) envelopeFor(ep Endpoint) Envelope {
+	if ep.Envelope == "" {
+		return k.envelope
+	}
+	regMu.RLock()
+	_, ok := envelopes[ep.Envelope]
+	regMu.RUnlock()
+	if !ok {
+		panic("hinge: envelope not registered: " + ep.Envelope + "（RegisterEnvelope）")
+	}
+	return envelopes[ep.Envelope]
+}
 // serve 单请求管线：绑定 → 校验 → 调用 → 出参转换 → 状态码决策 → 壳包装 → 写出。
 func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink, env Envelope, success int, bindQ, bindB Binder, h HandlerFunc) {
 	var qv, bv any
@@ -186,18 +199,8 @@ func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink
 		}
 		bv = v
 	}
-	// Validate() 接口（生成的绑定器已含必填与 InTransform；此处兜底手写端点）
-	for _, v := range []any{qv, bv} {
-		if isNilValue(v) {
-			continue
-		}
-		if vv, ok := v.(interface{ Validate() error }); ok {
-			if err := vv.Validate(); err != nil {
-				k.bindFail(s, env, WrapBindErr(fmt.Errorf("validate failed: %w", err)))
-				return
-			}
-		}
-	}
+	// Validate() 由生成的绑定器直调（生成期已知接收者形态，零反射）；
+	// 手写逃生口的端点请在闭包内自行调用。此处不再兜底，避免与绑定器重复执行。
 	for _, fn := range k.validators {
 		if err := fn(ctx, ep, qv, bv); err != nil {
 			k.bindFail(s, env, err)

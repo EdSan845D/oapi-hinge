@@ -1,4 +1,4 @@
-package gen
+﻿package gen
 
 import (
 	"fmt"
@@ -157,64 +157,68 @@ func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 	for _, ep := range eps {
 		pkgAlias(is, taken, ep.Pkg.ImportPath, ep.Pkg.Name)
 	}
-	var b strings.Builder
-	b.WriteString(genHeader(cfg))
-	b.WriteString("package " + cfg.Pkg + "\n\n")
-	b.WriteString(is.block())
-	b.WriteString("\n")
+	// 两遍组装：先渲染端点块（渲染会向 is 补充 import），最后统一落头部
+	var body strings.Builder
 	for _, ep := range eps {
 		ownerAlias := taken[ep.Pkg.ImportPath]
-		b.WriteString(fmt.Sprintf("var spec%s%s = hinge.Endpoint{\n", ep.Owner, ep.Handler))
-		fmt.Fprintf(&b, "\tOwner:   %q,\n", ep.Owner)
-		fmt.Fprintf(&b, "\tHandler: %q,\n", ep.Handler)
-		fmt.Fprintf(&b, "\tMethod:  %q,\n", ep.Method)
-		fmt.Fprintf(&b, "\tPath:    %q,\n", ep.FullPath)
-		fmt.Fprintf(&b, "\tSummary: %q,\n", ep.Summary)
+		body.WriteString(fmt.Sprintf("var spec%s%s = hinge.Endpoint{\n", ep.Owner, ep.Handler))
+		fmt.Fprintf(&body, "\tOwner:   %q,\n", ep.Owner)
+		fmt.Fprintf(&body, "\tHandler: %q,\n", ep.Handler)
+		fmt.Fprintf(&body, "\tMethod:  %q,\n", ep.Method)
+		fmt.Fprintf(&body, "\tPath:    %q,\n", ep.FullPath)
+		fmt.Fprintf(&body, "\tSummary: %q,\n", ep.Summary)
 		if ep.Description != "" {
-			fmt.Fprintf(&b, "\tDescription: %q,\n", ep.Description)
+			fmt.Fprintf(&body, "\tDescription: %q,\n", ep.Description)
 		}
 		if len(ep.Tags) > 0 {
-			fmt.Fprintf(&b, "\tTags: []string{%s},\n", quoteList(ep.Tags))
+			fmt.Fprintf(&body, "\tTags: []string{%s},\n", quoteList(ep.Tags))
 		}
 		if ep.Status != 0 {
-			fmt.Fprintf(&b, "\tStatus: %d,\n", ep.Status)
+			fmt.Fprintf(&body, "\tStatus: %d,\n", ep.Status)
 		}
 		if ep.Deprecated {
-			b.WriteString("\tDeprecated: true,\n")
+			body.WriteString("\tDeprecated: true,\n")
 		}
 		if ep.Envelope != "" {
-			fmt.Fprintf(&b, "\tEnvelope: %q,\n", ep.Envelope)
+			fmt.Fprintf(&body, "\tEnvelope: %q,\n", ep.Envelope)
 		}
 		if ep.Auth != "" {
-			fmt.Fprintf(&b, "\tAuth: %q,\n", ep.Auth)
+			fmt.Fprintf(&body, "\tAuth: %q,\n", ep.Auth)
 		}
 		if ep.Limit != "" {
-			fmt.Fprintf(&b, "\tLimit: %q,\n", ep.Limit)
+			fmt.Fprintf(&body, "\tLimit: %q,\n", ep.Limit)
 		}
 		if ep.TimeoutStr != "" {
-			fmt.Fprintf(&b, "\tTimeout: hinge.MustDuration(%q),\n", ep.TimeoutStr)
+			fmt.Fprintf(&body, "\tTimeout: hinge.MustDuration(%q),\n", ep.TimeoutStr)
 		}
 		if len(ep.Middleware) > 0 {
-			fmt.Fprintf(&b, "\tMiddleware: []string{%s},\n", quoteList(ep.Middleware))
+			fmt.Fprintf(&body, "\tMiddleware: []string{%s},\n", quoteList(ep.Middleware))
 		}
 		if ep.HasQ {
-			fmt.Fprintf(&b, "\tQType: hinge.Type[%s.%s](),\n", ownerAlias, ep.QName)
+			fmt.Fprintf(&body, "\tQType: hinge.Type[%s.%s](),\n", ownerAlias, ep.QName)
 		}
 		if ep.HasB {
 			bType := ownerAlias + "." + ep.BName
 			if ep.BodyKind == "raw" {
 				bType = "hinge.RawBody"
 			}
-			fmt.Fprintf(&b, "\tBType: hinge.Type[%s](),\n", bType)
+			fmt.Fprintf(&body, "\tBType: hinge.Type[%s](),\n", bType)
 		}
 		rd := &renderer{pkg: ep.Pkg, ownerAlias: ownerAlias, src: ep.RSrcFile, is: is}
 		rExpr, err := rd.expr(ep.RExpr)
 		if err != nil {
 			return "", fmt.Errorf("%s.%s R 类型: %w", ep.Owner, ep.Handler, err)
 		}
-		fmt.Fprintf(&b, "\tRType: hinge.Type[%s](),\n", rExpr)
-		b.WriteString("}\n\n")
+		fmt.Fprintf(&body, "\tRType: hinge.Type[%s](),\n", rExpr)
+		body.WriteString("}\n\n")
 	}
+
+	var b strings.Builder
+	b.WriteString(genHeader(cfg))
+	b.WriteString("package " + cfg.Pkg + "\n\n")
+	b.WriteString(is.block())
+	b.WriteString("\n")
+	b.WriteString(body.String())
 	return b.String(), nil
 }
 
@@ -282,14 +286,10 @@ func emitBinders(cfg Config, eps []*EndpointIR) (string, error) {
 		}
 	}
 
-	var b strings.Builder
-	b.WriteString(genHeader(cfg))
-	b.WriteString("package " + cfg.Pkg + "\n\n")
-	b.WriteString(is.block())
-	b.WriteString("\n")
+	var bodies strings.Builder
 
 	if hasRaw {
-		b.WriteString(`// bindRawBody 原始字节体绑定：整包透传（webhook 验签 / 自定义编码）。
+		bodies.WriteString(`// bindRawBody 原始字节体绑定：整包透传（webhook 验签 / 自定义编码）。
 func bindRawBody(ctx context.Context, r hinge.RequestReader) (any, error) {
 	data, err := r.Body()
 	if err != nil {
@@ -317,10 +317,17 @@ func bindRawBody(ctx context.Context, r hinge.RequestReader) (any, error) {
 			return "", err
 		}
 		sig := fmt.Sprintf("func %s(ctx context.Context, r hinge.RequestReader) (any, error) {\n", p.name)
-		b.WriteString(sig)
-		b.WriteString(body.String())
-		b.WriteString("}\n\n")
+		bodies.WriteString(sig)
+		bodies.WriteString(body.String())
+		bodies.WriteString("}\n\n")
 	}
+
+	var b strings.Builder
+	b.WriteString(genHeader(cfg))
+	b.WriteString("package " + cfg.Pkg + "\n\n")
+	b.WriteString(is.block())
+	b.WriteString("\n")
+	b.WriteString(bodies.String())
 	return b.String(), nil
 }
 
@@ -349,16 +356,22 @@ func emitFieldBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string
 	} else { // query / form（B 的 form 走独立分支，不走这里）
 		fmt.Fprintf(b, "\tif vals, ok := r.QueryValues(%q); ok && len(vals) > 0 && vals[0] != \"\" {\n", f.Source)
 	}
-	if f.Class == classSlice && in != "query" && in != "form" {
-		return fmt.Errorf("字段 %s：切片仅支持 query/form 来源（%s 不支持多值）", f.GoName, in)
-	}
-	switch f.Class {
-	case classScalar, classPtrScalar:
-		fmt.Fprintf(b, "\t\tx, err := hinge.Parse[%s](%s, %q)\n", t, valExpr, f.Source)
-	case classSlice:
-		fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](hinge.Flat(vals), %q)\n", t, f.Source)
-	default:
-		return fmt.Errorf("字段 %s：来源 %s 不支持该类型形态", f.GoName, in)
+	if f.Class == classSlice && (in == "query" || in == "form") {
+		src := "hinge.Flat(vals)"
+		if f.BaseKind == "string" {
+			src = "vals" // v0.1：[]string 不拆逗号（SetSliceValue 首分支）
+		}
+		fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](%s, %q)\n", t, src, f.Source)
+	} else if f.Class == classSlice {
+		// v0.1 语义：path/header/cookie 切片经 SetRaw→SetSliceValue([]string{raw})，单元素切片
+		fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s]([]string{raw}, %q)\n", t, f.Source)
+	} else {
+		switch f.Class {
+		case classScalar, classPtrScalar:
+			fmt.Fprintf(b, "\t\tx, err := hinge.Parse[%s](%s, %q)\n", t, valExpr, f.Source)
+		default:
+			return fmt.Errorf("字段 %s：来源 %s 不支持该类型形态", f.GoName, in)
+		}
 	}
 	if immediate {
 		b.WriteString("\t\tif err != nil {\n\t\t\treturn v, err\n\t\t}\n")
@@ -383,7 +396,7 @@ func emitFieldBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string
 		fmt.Fprintf(b, "\tif %s {\n", zeroCmp(f))
 		switch f.Class {
 		case classSlice:
-			fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](hinge.Flat([]string{%s}), %q)\n", t, strconv.Quote(f.Def), f.Source)
+			fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](%s, %q)\n", t, sliceDefSrc(f), f.Source)
 		default:
 			fmt.Fprintf(b, "\t\tx, err := hinge.Parse[%s](%s, %q)\n", t, strconv.Quote(f.Def), f.Source)
 		}
@@ -601,7 +614,7 @@ func emitMultipartValueBlock(b *strings.Builder, f Field, pkg *Package, ownerAli
 		fmt.Fprintf(b, "\tif %s {\n", zeroCmp(f))
 		switch f.Class {
 		case classSlice:
-			fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](hinge.Flat([]string{%s}), %q)\n", t, strconv.Quote(f.Def), f.Source)
+			fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](%s, %q)\n", t, sliceDefSrc(f), f.Source)
 		default:
 			fmt.Fprintf(b, "\t\tx, err := hinge.Parse[%s](%s, %q)\n", t, strconv.Quote(f.Def), f.Source)
 		}
@@ -816,12 +829,7 @@ func emitClosure(ep *EndpointIR, taken map[string]string) string {
 func emitTable(pkg *Package, eps []*EndpointIR) (string, error) {
 	is := newImportSet()
 	is.add(hingeImportPath, "")
-	var b strings.Builder
-	b.WriteString("// Code generated by hinge gen. DO NOT EDIT.\n")
-	b.WriteString("// Enterpoint 守卫与端点表：路径↔函数对应关系的唯一检视入口。\n\n")
-	b.WriteString("package " + pkg.Name + "\n\n")
-	b.WriteString(is.block())
-	b.WriteString("\n")
+	var body strings.Builder
 
 	owners := map[string]bool{}
 	var ownerOrder []string
@@ -833,9 +841,9 @@ func emitTable(pkg *Package, eps []*EndpointIR) (string, error) {
 	}
 	sort.Strings(ownerOrder)
 	for _, owner := range ownerOrder {
-		fmt.Fprintf(&b, "var _ hinge.Enterpoint = %s{}\n\n", owner)
-		fmt.Fprintf(&b, "// Enterpoint 标记实现（hinge gen 生成）。\nfunc (%s) Enterpoint() {}\n\n", owner)
-		fmt.Fprintf(&b, "// Endpoints 路径↔函数对应关系表（openapi 文档与一致性测试的消费源）。\nfunc (%s) Endpoints() []hinge.Endpoint {\n\treturn []hinge.Endpoint{\n", owner)
+		fmt.Fprintf(&body, "var _ hinge.Enterpoint = %s{}\n\n", owner)
+		fmt.Fprintf(&body, "// Enterpoint 标记实现（hinge gen 生成）。\nfunc (%s) Enterpoint() {}\n\n", owner)
+		fmt.Fprintf(&body, "// Endpoints 路径↔函数对应关系表（openapi 文档与一致性测试的消费源）。\nfunc (%s) Endpoints() []hinge.Endpoint {\n\treturn []hinge.Endpoint{\n", owner)
 		for _, ep := range eps {
 			if ep.Owner != owner {
 				continue
@@ -845,55 +853,71 @@ func emitTable(pkg *Package, eps []*EndpointIR) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("%s.%s R 类型: %w", ep.Owner, ep.Handler, err)
 			}
-			b.WriteString("\t\t{\n")
-			fmt.Fprintf(&b, "\t\t\tOwner:   %q,\n", ep.Owner)
-			fmt.Fprintf(&b, "\t\t\tHandler: %q,\n", ep.Handler)
-			fmt.Fprintf(&b, "\t\t\tMethod:  %q,\n", ep.Method)
-			fmt.Fprintf(&b, "\t\t\tPath:    %q,\n", ep.FullPath)
-			fmt.Fprintf(&b, "\t\t\tSummary: %q,\n", ep.Summary)
+			body.WriteString("\t\t{\n")
+			fmt.Fprintf(&body, "\t\t\tOwner:   %q,\n", ep.Owner)
+			fmt.Fprintf(&body, "\t\t\tHandler: %q,\n", ep.Handler)
+			fmt.Fprintf(&body, "\t\t\tMethod:  %q,\n", ep.Method)
+			fmt.Fprintf(&body, "\t\t\tPath:    %q,\n", ep.FullPath)
+			fmt.Fprintf(&body, "\t\t\tSummary: %q,\n", ep.Summary)
 			if ep.Description != "" {
-				fmt.Fprintf(&b, "\t\t\tDescription: %q,\n", ep.Description)
+				fmt.Fprintf(&body, "\t\t\tDescription: %q,\n", ep.Description)
 			}
 			if len(ep.Tags) > 0 {
-				fmt.Fprintf(&b, "\t\t\tTags: []string{%s},\n", quoteList(ep.Tags))
+				fmt.Fprintf(&body, "\t\t\tTags: []string{%s},\n", quoteList(ep.Tags))
 			}
 			if ep.Status != 0 {
-				fmt.Fprintf(&b, "\t\t\tStatus: %d,\n", ep.Status)
+				fmt.Fprintf(&body, "\t\t\tStatus: %d,\n", ep.Status)
 			}
 			if ep.Deprecated {
-				b.WriteString("\t\t\tDeprecated: true,\n")
+				body.WriteString("\t\t\tDeprecated: true,\n")
 			}
 			if ep.Envelope != "" {
-				fmt.Fprintf(&b, "\t\t\tEnvelope: %q,\n", ep.Envelope)
+				fmt.Fprintf(&body, "\t\t\tEnvelope: %q,\n", ep.Envelope)
 			}
 			if ep.Auth != "" {
-				fmt.Fprintf(&b, "\t\t\tAuth: %q,\n", ep.Auth)
+				fmt.Fprintf(&body, "\t\t\tAuth: %q,\n", ep.Auth)
 			}
 			if ep.Limit != "" {
-				fmt.Fprintf(&b, "\t\t\tLimit: %q,\n", ep.Limit)
+				fmt.Fprintf(&body, "\t\t\tLimit: %q,\n", ep.Limit)
 			}
 			if ep.TimeoutStr != "" {
-				fmt.Fprintf(&b, "\t\t\tTimeout: hinge.MustDuration(%q),\n", ep.TimeoutStr)
+				fmt.Fprintf(&body, "\t\t\tTimeout: hinge.MustDuration(%q),\n", ep.TimeoutStr)
 			}
 			if len(ep.Middleware) > 0 {
-				fmt.Fprintf(&b, "\t\t\tMiddleware: []string{%s},\n", quoteList(ep.Middleware))
+				fmt.Fprintf(&body, "\t\t\tMiddleware: []string{%s},\n", quoteList(ep.Middleware))
 			}
 			if ep.HasQ {
-				fmt.Fprintf(&b, "\t\t\tQType: hinge.Type[%s](),\n", ep.QName)
+				fmt.Fprintf(&body, "\t\t\tQType: hinge.Type[%s](),\n", ep.QName)
 			}
 			if ep.HasB {
 				bType := ep.BName
 				if ep.BodyKind == "raw" {
 					bType = "hinge.RawBody"
 				}
-				fmt.Fprintf(&b, "\t\t\tBType: hinge.Type[%s](),\n", bType)
+				fmt.Fprintf(&body, "\t\t\tBType: hinge.Type[%s](),\n", bType)
 			}
-			fmt.Fprintf(&b, "\t\t\tRType: hinge.Type[%s](),\n", rExpr)
-			b.WriteString("\t\t},\n")
+			fmt.Fprintf(&body, "\t\t\tRType: hinge.Type[%s](),\n", rExpr)
+			body.WriteString("\t\t},\n")
 		}
-		b.WriteString("\t}\n}\n\n")
+		body.WriteString("\t}\n}\n\n")
 	}
+
+	var b strings.Builder
+	b.WriteString("// Code generated by hinge gen. DO NOT EDIT.\n")
+	b.WriteString("// Enterpoint 守卫与端点表：路径↔函数对应关系的唯一检视入口。\n\n")
+	b.WriteString("package " + pkg.Name + "\n\n")
+	b.WriteString(is.block())
+	b.WriteString("\n")
+	b.WriteString(body.String())
 	return b.String(), nil
+}
+
+// sliceDefSrc 切片 default 值的源表达式：string 元素不拆逗号（v0.1 SetSliceValue 首分支），其余按逗号展开。
+func sliceDefSrc(f Field) string {
+	if f.BaseKind == "string" {
+		return "[]string{" + strconv.Quote(f.Def) + "}"
+	}
+	return "hinge.Flat([]string{" + strconv.Quote(f.Def) + "})"
 }
 
 func quoteList(vals []string) string {

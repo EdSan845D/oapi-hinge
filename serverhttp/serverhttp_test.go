@@ -118,7 +118,10 @@ func TestKernelNotFoundErrorMapping(t *testing.T) {
 	srv := httptest.NewServer(setup(t, false))
 	defer srv.Close()
 
-	resp, _ := http.Get(srv.URL + "/api/users/missing")
+	resp, err := http.Get(srv.URL + "/api/users/missing")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)

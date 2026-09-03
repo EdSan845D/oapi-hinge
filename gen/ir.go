@@ -93,6 +93,15 @@ func buildIR(packages []*Package) ([]*EndpointIR, error) {
 	for _, pkg := range packages {
 		b.buildPackage(pkg)
 	}
+	// 跨包同名 Enterpoint 检测：生成的注册函数/表按结构体名命名，重名会互相冲突
+	ownerPkg := map[string]string{}
+	for _, ep := range b.eps {
+		if prev, dup := ownerPkg[ep.Owner]; dup && prev != ep.Pkg.ImportPath {
+			b.errf("Enterpoint %s 跨包重名（%s 与 %s）：生成的注册函数与表会冲突，请重命名结构体", ep.Owner, prev, ep.Pkg.ImportPath)
+			continue
+		}
+		ownerPkg[ep.Owner] = ep.Pkg.ImportPath
+	}
 	// 全局查重：method+path
 	seen := map[string]string{}
 	for _, ep := range b.eps {

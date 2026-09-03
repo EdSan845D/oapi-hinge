@@ -9,6 +9,7 @@ import (
 	"fmt"
 	eps "github.com/EdSan845D/oapi-hinge/example/app/eps"
 	"github.com/EdSan845D/oapi-hinge/hinge"
+	"time"
 )
 func bindBCreateUserReq(ctx context.Context, r hinge.RequestReader) (any, error) {
 	var v eps.CreateUserReq
@@ -191,6 +192,14 @@ func bindQListUsersReq(ctx context.Context, r hinge.RequestReader) (any, error) 
 			add("size", "query", err.Error())
 		} else {
 		v.Size = x
+		}
+	}
+	if vals, ok := r.QueryValues("since"); ok && len(vals) > 0 && vals[0] != "" {
+		x, err := hinge.Parse[time.Time](vals[0], "since")
+		if err != nil {
+			add("since", "query", err.Error())
+		} else {
+		v.Since = x
 		}
 	}
 	if len(be.Fields) > 0 {

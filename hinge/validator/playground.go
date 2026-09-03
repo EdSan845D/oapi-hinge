@@ -3,6 +3,7 @@ package validator
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	"github.com/EdSan845D/oapi-hinge/hinge"
 	"github.com/go-playground/validator/v10"
@@ -24,7 +25,14 @@ func Playground() Func {
 			if isNil(v) {
 				continue
 			}
-			if err := playground.Struct(v); err != nil {
+			// 绑定器传入的是值；go-playground 结构体校验用指针（可寻址 + 指针接收者规则）
+			vv := v
+			if rv := reflect.ValueOf(v); rv.Kind() == reflect.Struct {
+				tmp := reflect.New(rv.Type())
+				tmp.Elem().Set(rv)
+				vv = tmp.Interface()
+			}
+			if err := playground.Struct(vv); err != nil {
 				return fmt.Errorf("validate failed: %w", err)
 			}
 		}

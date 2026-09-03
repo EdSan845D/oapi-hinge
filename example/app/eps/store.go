@@ -105,6 +105,8 @@ type ListUsersReq struct {
 	Page int `query:"page" default:"1"`
 	// 每页条数
 	Size int `query:"size" default:"10"`
+	// 只看该时间之后创建的用户
+	Since time.Time `query:"since"`
 }
 
 // GetUserReq 用户详情

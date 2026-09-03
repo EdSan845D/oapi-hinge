@@ -110,7 +110,11 @@ func collectDirs(fset *token.FileSet, moduleRoot, modulePath string, dirs []stri
 	for _, dir := range dirs {
 		abs := filepath.Join(moduleRoot, filepath.FromSlash(dir))
 		pkgsInDir, err := parser.ParseDir(fset, abs, func(fi fs.FileInfo) bool {
-			return !fi.IsDir() && strings.HasSuffix(fi.Name(), ".go") && !strings.HasSuffix(fi.Name(), "_test.go")
+			name := fi.Name()
+			if strings.HasSuffix(name, "hinge_gen_table.go") {
+				return false // 生成产物不参与扫描（自身会被重新生成）
+			}
+			return !fi.IsDir() && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
 		}, parser.ParseComments)
 		if err != nil {
 			return nil, fmt.Errorf("解析目录 %s: %w", dir, err)
