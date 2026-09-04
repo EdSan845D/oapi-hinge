@@ -111,9 +111,6 @@ func collectDirs(fset *token.FileSet, moduleRoot, modulePath string, dirs []stri
 		abs := filepath.Join(moduleRoot, filepath.FromSlash(dir))
 		pkgsInDir, err := parser.ParseDir(fset, abs, func(fi fs.FileInfo) bool {
 			name := fi.Name()
-			if strings.HasSuffix(name, "hinge_gen_table.go") {
-				return false // 生成产物不参与扫描（自身会被重新生成）
-			}
 			return !fi.IsDir() && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
 		}, parser.ParseComments)
 		if err != nil {
@@ -172,7 +169,12 @@ func (p *Package) aggregate(f *ast.File) {
 	}
 	for _, decl := range f.Decls {
 		fd, ok := decl.(*ast.FuncDecl)
-		if !ok || fd.Recv == nil || len(fd.Recv.List) == 0 {
+		if !ok {
+			continue
+		}
+		if fd.Recv == nil || len(fd.Recv.List) == 0 {
+			rootName := PKGFlag + p.Name
+			p.methods[rootName] = append(p.methods[rootName], fd)
 			continue
 		}
 		recvName := recvTypeName(fd.Recv.List[0].Type)

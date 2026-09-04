@@ -162,11 +162,11 @@ func (rd *renderer) expr(x ast.Expr) (string, error) {
 type fieldClass int
 
 const (
-	classScalar fieldClass = iota // string/bool/各宽度数值/time.Time
-	classPtrScalar                // *scalar
-	classSlice                    // []scalar
-	classFile                     // *hinge.FileHeader
-	classFileSlice                // []*hinge.FileHeader
+	classScalar    fieldClass = iota // string/bool/各宽度数值/time.Time
+	classPtrScalar                   // *scalar
+	classSlice                       // []scalar
+	classFile                        // *hinge.FileHeader
+	classFileSlice                   // []*hinge.FileHeader
 )
 
 // Field 展平后的绑定字段。

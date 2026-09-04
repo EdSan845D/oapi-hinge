@@ -13,34 +13,44 @@ import (
 )
 // RegisterFileEpGin 把 FileEp 的全部端点挂到 gin。
 func RegisterFileEpGin(r gin.IRouter, k *hinge.Kernel, ep eps.FileEp) {
-	r.GET("/files/:name", servergin.Handle(k, specFileEpDownloadSample, bindQDownloadSampleReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.GET("/files/:name", servergin.Handle(k, SpecFileEpDownloadSample, BindQDownloadSampleReq, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.DownloadSample(ctx, q.(eps.DownloadSampleReq))
+		}))
+}
+
+// RegisterPKG_epsGin 把 PKG_eps 的全部端点挂到 gin。
+func RegisterPKG_epsGin(r gin.IRouter, k *hinge.Kernel) {
+	r.GET("/", servergin.Handle(k, SpecPKG_epsIndex, nil, nil, func(ctx context.Context, q, b any) (any, error) {
+			return eps.Index(ctx, q)
 		}))
 }
 
 // RegisterSystemEpGin 把 SystemEp 的全部端点挂到 gin。
 func RegisterSystemEpGin(r gin.IRouter, k *hinge.Kernel, ep eps.SystemEp) {
-	r.GET("/health", servergin.Handle(k, specSystemEpHealth, nil, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.GET("/health", servergin.Handle(k, SpecSystemEpHealth, nil, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.Health(ctx, q)
 		}))
 }
 
 // RegisterUserEpGin 把 UserEp 的全部端点挂到 gin。
 func RegisterUserEpGin(r gin.IRouter, k *hinge.Kernel, ep eps.UserEp) {
-	r.PATCH("/users/:id/password", servergin.Handle(k, specUserEpChangePassword, bindQChangePasswordReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.PATCH("/users/:id/password", servergin.Handle(k, SpecUserEpChangePassword, BindQChangePasswordReq, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.ChangePassword(ctx, q.(eps.ChangePasswordReq))
 		}))
-	r.POST("/users", servergin.Handle(k, specUserEpCreateUser, nil, bindBCreateUserReq, func(ctx context.Context, q, b any) (any, error) {
+	r.POST("/users", servergin.Handle(k, SpecUserEpCreateUser, nil, BindBCreateUserReq, func(ctx context.Context, q, b any) (any, error) {
 			return ep.CreateUser(ctx, q, b.(eps.CreateUserReq))
 		}))
-	r.DELETE("/users/:id", servergin.Handle(k, specUserEpDeleteUser, bindQDeleteUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.DELETE("/users/:id", servergin.Handle(k, SpecUserEpDeleteUser, BindQDeleteUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.DeleteUser(ctx, q.(eps.DeleteUserReq))
 		}))
-	r.GET("/users/:id", servergin.Handle(k, specUserEpGetUser, bindQGetUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.GET("/users/:id", servergin.Handle(k, SpecUserEpGetUser, BindQGetUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.GetUser(ctx, q.(eps.GetUserReq))
 		}))
-	r.GET("/users", servergin.Handle(k, specUserEpListUsers, bindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.GET("/users", servergin.Handle(k, SpecUserEpListUsers, BindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.ListUsers(ctx, q.(eps.ListUsersReq))
+		}))
+	r.PUT("/users/:id/extra", servergin.Handle(k, SpecUserEpUpdateExtra, BindQGetUserReq, BindBExtraBody, func(ctx context.Context, q, b any) (any, error) {
+			return ep.UpdateExtra(ctx, q.(eps.GetUserReq), b.(eps.ExtraBody))
 		}))
 }
 

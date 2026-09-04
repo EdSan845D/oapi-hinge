@@ -6,13 +6,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EdSan845D/oapi-hinge/gen"
 	"github.com/EdSan845D/oapi-hinge/hinge"
 )
+
+// oapi:route GET /
+func Index(ctx context.Context, _ any) (string, error) {
+	return "CONGRATULATION! YOU SUCCEEDED", nil
+}
 
 // ============ Enterpoint：系统（无前缀、无鉴权） ============
 
 // SystemEp 系统端点。
-type SystemEp struct{}
+type SystemEp struct {
+	gen.EntryPoint
+}
 
 // oapi:route GET /health
 // 健康检查
@@ -75,6 +83,24 @@ func (ep UserEp) ChangePassword(ctx context.Context, q ChangePasswordReq) (Maske
 	}
 	// 真实场景在此更新存储中的凭证哈希
 	return MaskedUser{Name: u.Name, Email: u.Email}, nil
+}
+
+type ExtraBody struct {
+	Addr     string  `json:"addr"`
+	Phone    string  `json:"phone"`
+	Location *string `json:"location"`
+}
+
+// oapi:route PUT /{id}/extra
+// 修改用户扩展信息（演示 any 类型的请求体绑定）
+func (ep UserEp) UpdateExtra(ctx context.Context, q GetUserReq, b ExtraBody) (User, error) {
+	u, ok := ep.Store.Get(q.ID)
+	if !ok {
+		return User{}, hinge.NotFound("用户不存在")
+	}
+	u.Extra = b
+	ep.Store.Update(u)
+	return u, nil
 }
 
 // ============ Enterpoint：文件 ============

@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// oapi:interceptor
 // Auth 示例鉴权中间件：Bearer token 校验，GIN_ENV=dev 时跳过。
 // 挂在 contract.Group.Middlewares 上（如 app/routes/routes.go 的 users 组）。
 func Auth(c *gin.Context) {

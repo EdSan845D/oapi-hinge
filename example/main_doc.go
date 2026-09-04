@@ -8,31 +8,15 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/EdSan845D/oapi-hinge/example/app/eps"
-	"github.com/EdSan845D/oapi-hinge/hinge"
+	"github.com/EdSan845D/oapi-hinge/example/apigen"
 	"github.com/EdSan845D/oapi-hinge/openapi"
 
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// collect 拼接全部 Enterpoint 的端点表。
-func collect(epss ...hinge.Enterpoint) []hinge.Endpoint {
-	var out []hinge.Endpoint
-	for _, ep := range epss {
-		out = append(out, ep.Endpoints()...)
-	}
-	return out
-}
-
 func main() {
 	out := flag.String("out", "openapi.yaml", "openapi 文档输出路径（.yaml/.yml -> YAML，.json -> JSON）")
 	flag.Parse()
-
-	all := collect(
-		eps.SystemEp{},
-		eps.UserEp{Store: eps.NewUserStore()},
-		eps.FileEp{},
-	)
 
 	info := &openapi3.Info{
 		Title:       "OAPI-hinge API",
@@ -49,7 +33,7 @@ func main() {
 	}
 	if err := openapi.Generate(
 		*out,
-		all,
+		apigen.AllSpecs(),
 		openapi.OptionWithDocInfo(info),
 		openapi.OptionWithServer(servers),
 		openapi.OptionWithSecurity(security),

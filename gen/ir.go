@@ -35,9 +35,9 @@ type EndpointIR struct {
 	QName string
 	QSet  *fieldSet
 
-	HasB    bool
-	BName   string
-	BSet    *fieldSet
+	HasB     bool
+	BName    string
+	BSet     *fieldSet
 	BodyKind string // json / raw / multipart（HasB 时有效）
 
 	InTransformQ    bool
@@ -193,6 +193,10 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 		}
 	}
 	for _, md := range pkg.methodsOf(owner) {
+		// var routeMeta *RouteMeta
+		// if len(md.Recv.List) != 0 {
+		// 	md.Recv.List[0].Type
+		// }
 		kv, docLines := annotations(md.Doc)
 		route := ""
 		ma := map[string]string{}

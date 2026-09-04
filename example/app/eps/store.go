@@ -24,6 +24,7 @@ type User struct {
 	Name string `json:"name"`
 	// 邮箱，用于登录与通知
 	Email     string    `json:"email"`
+	Extra     any       `json:"extra,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -97,14 +98,31 @@ func (s *UserStore) Delete(id string) bool {
 	return false
 }
 
+func (s *UserStore) Update(u User) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, existing := range s.users {
+		if existing.ID == u.ID {
+			s.users[i] = u
+			return true
+		}
+	}
+	return false
+}
+
 // ---- 入参 / 出参类型（Q/B/R：签名即契约）----
 
-// ListUsersReq 用户列表（分页）
-type ListUsersReq struct {
+// 分页参数
+type PageQuery struct {
 	// 页码
 	Page int `query:"page" default:"1"`
 	// 每页条数
 	Size int `query:"size" default:"10"`
+}
+
+// ListUsersReq 用户列表（分页）
+type ListUsersReq struct {
+	PageQuery
 	// 只看该时间之后创建的用户
 	Since time.Time `query:"since"`
 }

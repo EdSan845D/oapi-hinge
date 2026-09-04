@@ -16,7 +16,6 @@ import (
 //   - <out>/specs_gen.go        端点描述变量（hinge.Endpoint）
 //   - <out>/binders_gen.go      类型化绑定器（按 Q/B 类型去重；请求期零反射）
 //   - <out>/register_<t>_gen.go 各框架注册函数（gin/echo/http）+ RegisterAll
-//   - <pkgDir>/hinge_gen_table.go  Enterpoint 守卫 + Endpoints() 对应关系表
 
 // Run 生成入口：解析 → IR → 发射（写盘；check=true 时只校验产物是否最新）。
 func Run(rootDir string, cfg Config, check bool) error {
@@ -139,13 +138,6 @@ func Emit(cfg Config, eps []*EndpointIR) (map[string]string, error) {
 		pkgList = append(pkgList, p)
 	}
 	sort.Slice(pkgList, func(i, j int) bool { return pkgList[i].Dir < pkgList[j].Dir })
-	for _, pkg := range pkgList {
-		tbl, err := emitTable(pkg, byPkg[pkg])
-		if err != nil {
-			return nil, err
-		}
-		files[pkg.Dir+"/hinge_gen_table.go"] = tbl
-	}
 	return files, nil
 }
 
@@ -157,11 +149,14 @@ func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 	for _, ep := range eps {
 		pkgAlias(is, taken, ep.Pkg.ImportPath, ep.Pkg.Name)
 	}
+	specNames := make([]string, 0)
 	// 两遍组装：先渲染端点块（渲染会向 is 补充 import），最后统一落头部
 	var body strings.Builder
 	for _, ep := range eps {
 		ownerAlias := taken[ep.Pkg.ImportPath]
-		body.WriteString(fmt.Sprintf("var spec%s%s = hinge.Endpoint{\n", ep.Owner, ep.Handler))
+		specName := fmt.Sprintf("Spec%s%s", ep.Owner, ep.Handler)
+		specNames = append(specNames, specName)
+		body.WriteString(fmt.Sprintf("var %s = hinge.Endpoint{\n", specName))
 		fmt.Fprintf(&body, "\tOwner:   %q,\n", ep.Owner)
 		fmt.Fprintf(&body, "\tHandler: %q,\n", ep.Handler)
 		fmt.Fprintf(&body, "\tMethod:  %q,\n", ep.Method)
@@ -215,8 +210,16 @@ func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 
 	var b strings.Builder
 	b.WriteString(genHeader(cfg))
-	b.WriteString("package " + cfg.Pkg + "\n\n")
+	fmt.Fprintf(&b, "package %s\n\n", cfg.Pkg)
 	b.WriteString(is.block())
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf(`
+func AllSpecs() []hinge.Endpoint {
+	return []hinge.Endpoint{
+		%s
+	}
+}
+`, strings.Join(specNames, ",\n\t\t")+","))
 	b.WriteString("\n")
 	b.WriteString(body.String())
 	return b.String(), nil
@@ -224,10 +227,10 @@ func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 
 // binderPlan 绑定器发射计划（按 类型+角色 去重）。
 type binderPlan struct {
-	key   string // role|pkgPath|typeName
-	role  string // "Q" / "B"
-	ep    *EndpointIR
-	name  string
+	key  string // role|pkgPath|typeName
+	role string // "Q" / "B"
+	ep   *EndpointIR
+	name string
 }
 
 func emitBinders(cfg Config, eps []*EndpointIR) (string, error) {
@@ -244,7 +247,7 @@ func emitBinders(cfg Config, eps []*EndpointIR) (string, error) {
 		if p, ok := byName[key]; ok {
 			return p
 		}
-		base := "bind" + role + typeName
+		base := "Bind" + role + typeName
 		name := base
 		for n := 2; ; n++ {
 			if _, dup := byName[name]; !dup {
@@ -289,8 +292,8 @@ func emitBinders(cfg Config, eps []*EndpointIR) (string, error) {
 	var bodies strings.Builder
 
 	if hasRaw {
-		bodies.WriteString(`// bindRawBody 原始字节体绑定：整包透传（webhook 验签 / 自定义编码）。
-func bindRawBody(ctx context.Context, r hinge.RequestReader) (any, error) {
+		bodies.WriteString(`// BindRawBody 原始字节体绑定：整包透传（webhook 验签 / 自定义编码）。
+func BindRawBody(ctx context.Context, r hinge.RequestReader) (any, error) {
 	data, err := r.Body()
 	if err != nil {
 		return nil, err
@@ -445,6 +448,7 @@ func zeroCmp(f Field) string {
 
 // emitRequiredChecks 必填检查（对齐 v0.1 checkRequired：绑定/default 之后判断）。
 func emitRequiredChecks(b *strings.Builder, fs *fieldSet) {
+	isNeedErrorCheck := false
 	for _, f := range fs.Fields {
 		if !f.Required {
 			continue
@@ -454,6 +458,10 @@ func emitRequiredChecks(b *strings.Builder, fs *fieldSet) {
 			in = "body"
 		}
 		fmt.Fprintf(b, "\tif %s {\n\t\tadd(%q, %q, \"is required\")\n\t}\n", zeroCmp(f), f.Source, in)
+		isNeedErrorCheck = true
+	}
+	if isNeedErrorCheck {
+		b.WriteString("\tif len(be.Fields) > 0 {\n\t\treturn v, be\n\t}\n")
 	}
 }
 
@@ -504,9 +512,8 @@ func emitQBinder(b *strings.Builder, ep *EndpointIR, is *importSet, taken map[st
 	b.WriteString("\tif len(be.Fields) > 0 {\n\t\treturn v, be\n\t}\n")
 	emitInTransform(b, ep.InTransformQ, ep.InTransformQPtr)
 	emitRequiredChecks(b, ep.QSet)
-	b.WriteString("\tif len(be.Fields) > 0 {\n\t\treturn v, be\n\t}\n")
 	emitValidate(b, ep.ValidateQ, ep.ValidateQPtr)
-	b.WriteString("\tif len(be.Fields) > 0 {\n\t\treturn v, be\n\t}\n\treturn v, nil\n")
+	b.WriteString("\treturn v, nil\n")
 	return nil
 }
 
@@ -534,21 +541,20 @@ func emitBBinder(b *strings.Builder, ep *EndpointIR, is *importSet, taken map[st
 		}
 		b.WriteString("\t}\n")
 		emitRequiredChecks(b, ep.BSet)
-		b.WriteString("\tif len(be.Fields) > 0 {\n\t\treturn v, be\n\t}\n")
 		emitValidate(b, ep.ValidateB, ep.ValidateBPtr)
-		b.WriteString("\tif len(be.Fields) > 0 {\n\t\treturn v, be\n\t}\n\treturn v, nil\n")
+		b.WriteString("\treturn v, nil\n")
 	case "multipart":
 		fmt.Fprintf(b, "\tbe := &hinge.BindError{}\n\tadd := be.AddField\n")
 		if len(requiredFields(ep.BSet)) == 0 {
 			b.WriteString("\t_ = add\n")
 		}
-	b.WriteString("\tfm, err := r.MultipartForm()\n\tif err != nil {\n\t\treturn v, err\n\t}\n")
-	for _, a := range ep.BSet.Allocs {
-		rd2 := &renderer{pkg: ep.Pkg, ownerAlias: ownerAlias, src: a.SrcFile, is: is}
-		t, err := rd2.expr(ast.NewIdent(a.TypeName))
-		if err != nil {
-			return err
-		}
+		b.WriteString("\tfm, err := r.MultipartForm()\n\tif err != nil {\n\t\treturn v, err\n\t}\n")
+		for _, a := range ep.BSet.Allocs {
+			rd2 := &renderer{pkg: ep.Pkg, ownerAlias: ownerAlias, src: a.SrcFile, is: is}
+			t, err := rd2.expr(ast.NewIdent(a.TypeName))
+			if err != nil {
+				return err
+			}
 			fmt.Fprintf(b, "\tif %s == nil {\n\t\t%s = new(%s)\n\t}\n", a.Access, a.Access, t)
 		}
 		for _, f := range ep.BSet.Fields {
@@ -575,7 +581,6 @@ func emitBBinder(b *strings.Builder, ep *EndpointIR, is *importSet, taken map[st
 			fmt.Fprintf(b, "\tif err := %s.InTransform(ctx); err != nil {\n\t\treturn v, err\n\t}\n", recv)
 		}
 		emitRequiredChecks(b, ep.BSet)
-		b.WriteString("\tif len(be.Fields) > 0 {\n\t\treturn v, be\n\t}\n")
 		emitValidate(b, ep.ValidateB, ep.ValidateBPtr)
 		b.WriteString("\treturn v, nil\n")
 	default:
@@ -655,6 +660,7 @@ func frameworkPath(target, p string) string {
 // emitRegister 各框架注册函数 + RegisterAll 聚合器。
 func emitRegister(cfg Config, eps []*EndpointIR, target string) (string, error) {
 	var adapterPkg, libPkg, routerType string
+	// TODO targe 可自定义配置
 	switch target {
 	case "gin":
 		adapterPkg, libPkg, routerType = "servergin", "github.com/gin-gonic/gin", "gin.IRouter"
@@ -699,10 +705,27 @@ func emitRegister(cfg Config, eps []*EndpointIR, target string) (string, error) 
 	}
 
 	for _, owner := range ownerOrder {
+		isPkgOwner := strings.HasPrefix(owner, PKGFlag)
 		list := owners[owner]
 		ep0 := list[0]
 		fmt.Fprintf(&b, "// Register%s%s 把 %s 的全部端点挂到 %s。\n", owner, title, owner, target)
-		fmt.Fprintf(&b, "func Register%s%s(r %s, k *hinge.Kernel, ep %s.%s) {\n", owner, title, routerType, taken[ep0.Pkg.ImportPath], owner)
+		if isPkgOwner {
+			fmt.Fprintf(&b, "func Register%s%s(r %s, k *hinge.Kernel) {\n", owner, title, routerType)
+		} else {
+			fmt.Fprintf(&b, "func Register%s%s(r %s, k *hinge.Kernel, ep %s.%s) {\n", owner, title, routerType, taken[ep0.Pkg.ImportPath], owner)
+		}
+		return_call := func(ep *EndpointIR) func(qExpr, bExpr string) string {
+			return func(qExpr, bExpr string) string {
+				pCaller := "ep"
+				if isPkgOwner {
+					pCaller = strings.TrimPrefix(owner, PKGFlag)
+				}
+				if ep.TwoArg {
+					return fmt.Sprintf("return %s.%s(ctx, %s)", pCaller, ep.Handler, qExpr)
+				}
+				return fmt.Sprintf("return %s.%s(ctx, %s, %s)", pCaller, ep.Handler, qExpr, bExpr)
+			}
+		}
 		for _, ep := range list {
 			args := ep.qBinder
 			if args == "" {
@@ -718,8 +741,9 @@ func emitRegister(cfg Config, eps []*EndpointIR, target string) (string, error) 
 			} else {
 				args = "nil, nil"
 			}
-			closure := emitClosure(ep, taken)
-			call := fmt.Sprintf("%s.Handle(k, spec%s%s, %s, %s)", adapterPkg, ep.Owner, ep.Handler, args, closure)
+
+			closure := emitClosure(ep, taken, return_call(ep))
+			call := fmt.Sprintf("%s.Handle(k, Spec%s%s, %s, %s)", adapterPkg, ep.Owner, ep.Handler, args, closure)
 			switch target {
 			case "http":
 				fmt.Fprintf(&b, "\tr.HandleFunc(%q, %s)\n", ep.Method+" "+ep.FullPath, call)
@@ -775,6 +799,9 @@ func emitAll(cfg Config, eps []*EndpointIR) (string, error) {
 	b.WriteString("// All 聚合全部 Enterpoint 实例（字段名 = 结构体名）。\n")
 	b.WriteString("type All struct {\n")
 	for _, owner := range ownerOrder {
+		if strings.HasPrefix(owner, PKGFlag) {
+			continue
+		}
 		ep0 := owners[owner][0]
 		fmt.Fprintf(&b, "\t%s %s.%s\n", owner, taken[ep0.Pkg.ImportPath], owner)
 	}
@@ -783,6 +810,10 @@ func emitAll(cfg Config, eps []*EndpointIR) (string, error) {
 		fmt.Fprintf(&b, "// RegisterAll%s 一次装配全部端点（%s）。\n", f.title, f.adapter)
 		fmt.Fprintf(&b, "func RegisterAll%s(r %s, k *hinge.Kernel, all All) {\n", f.title, f.routerType)
 		for _, owner := range ownerOrder {
+			if strings.HasPrefix(owner, PKGFlag) {
+				fmt.Fprintf(&b, "\tRegister%s%s(r, k)\n", owner, f.title)
+				continue
+			}
 			fmt.Fprintf(&b, "\tRegister%s%s(r, k, all.%s)\n", owner, f.title, owner)
 		}
 		b.WriteString("}\n\n")
@@ -791,14 +822,8 @@ func emitAll(cfg Config, eps []*EndpointIR) (string, error) {
 }
 
 // emitClosure 端点方法适配闭包：强类型断言直调（请求期零反射）。
-func emitClosure(ep *EndpointIR, taken map[string]string) string {
+func emitClosure(ep *EndpointIR, taken map[string]string, call func(qExpr, bExpr string) string) string {
 	ownerAlias := taken[ep.Pkg.ImportPath]
-	call := func(qExpr, bExpr string) string {
-		if ep.TwoArg {
-			return fmt.Sprintf("return ep.%s(ctx, %s)", ep.Handler, qExpr)
-		}
-		return fmt.Sprintf("return ep.%s(ctx, %s, %s)", ep.Handler, qExpr, bExpr)
-	}
 	qAny := ""
 	if ep.HasQ {
 		qAny = "q.(" + ownerAlias + "." + ep.QName + ")"
@@ -823,93 +848,6 @@ func emitClosure(ep *EndpointIR, taken map[string]string) string {
 		qAny = "q"
 	}
 	return "func(ctx context.Context, q, b any) (any, error) {\n\t\t\t" + call(qAny, bAny) + "\n\t\t}"
-}
-
-// emitTable Enterpoint 守卫 + Endpoints() 对应关系表（业务包内，本地类型免限定）。
-func emitTable(pkg *Package, eps []*EndpointIR) (string, error) {
-	is := newImportSet()
-	is.add(hingeImportPath, "")
-	var body strings.Builder
-
-	owners := map[string]bool{}
-	var ownerOrder []string
-	for _, ep := range eps {
-		if !owners[ep.Owner] {
-			owners[ep.Owner] = true
-			ownerOrder = append(ownerOrder, ep.Owner)
-		}
-	}
-	sort.Strings(ownerOrder)
-	for _, owner := range ownerOrder {
-		fmt.Fprintf(&body, "var _ hinge.Enterpoint = %s{}\n\n", owner)
-		fmt.Fprintf(&body, "// Enterpoint 标记实现（hinge gen 生成）。\nfunc (%s) Enterpoint() {}\n\n", owner)
-		fmt.Fprintf(&body, "// Endpoints 路径↔函数对应关系表（openapi 文档与一致性测试的消费源）。\nfunc (%s) Endpoints() []hinge.Endpoint {\n\treturn []hinge.Endpoint{\n", owner)
-		for _, ep := range eps {
-			if ep.Owner != owner {
-				continue
-			}
-			rd := &renderer{pkg: ep.Pkg, table: true, src: ep.RSrcFile, is: is}
-			rExpr, err := rd.expr(ep.RExpr)
-			if err != nil {
-				return "", fmt.Errorf("%s.%s R 类型: %w", ep.Owner, ep.Handler, err)
-			}
-			body.WriteString("\t\t{\n")
-			fmt.Fprintf(&body, "\t\t\tOwner:   %q,\n", ep.Owner)
-			fmt.Fprintf(&body, "\t\t\tHandler: %q,\n", ep.Handler)
-			fmt.Fprintf(&body, "\t\t\tMethod:  %q,\n", ep.Method)
-			fmt.Fprintf(&body, "\t\t\tPath:    %q,\n", ep.FullPath)
-			fmt.Fprintf(&body, "\t\t\tSummary: %q,\n", ep.Summary)
-			if ep.Description != "" {
-				fmt.Fprintf(&body, "\t\t\tDescription: %q,\n", ep.Description)
-			}
-			if len(ep.Tags) > 0 {
-				fmt.Fprintf(&body, "\t\t\tTags: []string{%s},\n", quoteList(ep.Tags))
-			}
-			if ep.Status != 0 {
-				fmt.Fprintf(&body, "\t\t\tStatus: %d,\n", ep.Status)
-			}
-			if ep.Deprecated {
-				body.WriteString("\t\t\tDeprecated: true,\n")
-			}
-			if ep.Envelope != "" {
-				fmt.Fprintf(&body, "\t\t\tEnvelope: %q,\n", ep.Envelope)
-			}
-			if ep.Auth != "" {
-				fmt.Fprintf(&body, "\t\t\tAuth: %q,\n", ep.Auth)
-			}
-			if ep.Limit != "" {
-				fmt.Fprintf(&body, "\t\t\tLimit: %q,\n", ep.Limit)
-			}
-			if ep.TimeoutStr != "" {
-				fmt.Fprintf(&body, "\t\t\tTimeout: hinge.MustDuration(%q),\n", ep.TimeoutStr)
-			}
-			if len(ep.Middleware) > 0 {
-				fmt.Fprintf(&body, "\t\t\tMiddleware: []string{%s},\n", quoteList(ep.Middleware))
-			}
-			if ep.HasQ {
-				fmt.Fprintf(&body, "\t\t\tQType: hinge.Type[%s](),\n", ep.QName)
-			}
-			if ep.HasB {
-				bType := ep.BName
-				if ep.BodyKind == "raw" {
-					bType = "hinge.RawBody"
-				}
-				fmt.Fprintf(&body, "\t\t\tBType: hinge.Type[%s](),\n", bType)
-			}
-			fmt.Fprintf(&body, "\t\t\tRType: hinge.Type[%s](),\n", rExpr)
-			body.WriteString("\t\t},\n")
-		}
-		body.WriteString("\t}\n}\n\n")
-	}
-
-	var b strings.Builder
-	b.WriteString("// Code generated by hinge gen. DO NOT EDIT.\n")
-	b.WriteString("// Enterpoint 守卫与端点表：路径↔函数对应关系的唯一检视入口。\n\n")
-	b.WriteString("package " + pkg.Name + "\n\n")
-	b.WriteString(is.block())
-	b.WriteString("\n")
-	b.WriteString(body.String())
-	return b.String(), nil
 }
 
 // sliceDefSrc 切片 default 值的源表达式：string 元素不拆逗号（v0.1 SetSliceValue 首分支），其余按逗号展开。

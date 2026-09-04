@@ -21,6 +21,7 @@ type All struct {
 // RegisterAllGin 一次装配全部端点（servergin）。
 func RegisterAllGin(r gin.IRouter, k *hinge.Kernel, all All) {
 	RegisterFileEpGin(r, k, all.FileEp)
+	RegisterPKG_epsGin(r, k)
 	RegisterSystemEpGin(r, k, all.SystemEp)
 	RegisterUserEpGin(r, k, all.UserEp)
 }
@@ -28,6 +29,7 @@ func RegisterAllGin(r gin.IRouter, k *hinge.Kernel, all All) {
 // RegisterAllEcho 一次装配全部端点（serverecho）。
 func RegisterAllEcho(r echo.Router, k *hinge.Kernel, all All) {
 	RegisterFileEpEcho(r, k, all.FileEp)
+	RegisterPKG_epsEcho(r, k)
 	RegisterSystemEpEcho(r, k, all.SystemEp)
 	RegisterUserEpEcho(r, k, all.UserEp)
 }
@@ -35,6 +37,7 @@ func RegisterAllEcho(r echo.Router, k *hinge.Kernel, all All) {
 // RegisterAllHTTP 一次装配全部端点（serverhttp）。
 func RegisterAllHTTP(r *http.ServeMux, k *hinge.Kernel, all All) {
 	RegisterFileEpHTTP(r, k, all.FileEp)
+	RegisterPKG_epsHTTP(r, k)
 	RegisterSystemEpHTTP(r, k, all.SystemEp)
 	RegisterUserEpHTTP(r, k, all.UserEp)
 }

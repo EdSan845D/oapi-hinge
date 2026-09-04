@@ -13,34 +13,44 @@ import (
 )
 // RegisterFileEpHTTP 把 FileEp 的全部端点挂到 http。
 func RegisterFileEpHTTP(r *http.ServeMux, k *hinge.Kernel, ep eps.FileEp) {
-	r.HandleFunc("GET /files/{name}", serverhttp.Handle(k, specFileEpDownloadSample, bindQDownloadSampleReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.HandleFunc("GET /files/{name}", serverhttp.Handle(k, SpecFileEpDownloadSample, BindQDownloadSampleReq, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.DownloadSample(ctx, q.(eps.DownloadSampleReq))
+		}))
+}
+
+// RegisterPKG_epsHTTP 把 PKG_eps 的全部端点挂到 http。
+func RegisterPKG_epsHTTP(r *http.ServeMux, k *hinge.Kernel) {
+	r.HandleFunc("GET /", serverhttp.Handle(k, SpecPKG_epsIndex, nil, nil, func(ctx context.Context, q, b any) (any, error) {
+			return eps.Index(ctx, q)
 		}))
 }
 
 // RegisterSystemEpHTTP 把 SystemEp 的全部端点挂到 http。
 func RegisterSystemEpHTTP(r *http.ServeMux, k *hinge.Kernel, ep eps.SystemEp) {
-	r.HandleFunc("GET /health", serverhttp.Handle(k, specSystemEpHealth, nil, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.HandleFunc("GET /health", serverhttp.Handle(k, SpecSystemEpHealth, nil, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.Health(ctx, q)
 		}))
 }
 
 // RegisterUserEpHTTP 把 UserEp 的全部端点挂到 http。
 func RegisterUserEpHTTP(r *http.ServeMux, k *hinge.Kernel, ep eps.UserEp) {
-	r.HandleFunc("PATCH /users/{id}/password", serverhttp.Handle(k, specUserEpChangePassword, bindQChangePasswordReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.HandleFunc("PATCH /users/{id}/password", serverhttp.Handle(k, SpecUserEpChangePassword, BindQChangePasswordReq, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.ChangePassword(ctx, q.(eps.ChangePasswordReq))
 		}))
-	r.HandleFunc("POST /users", serverhttp.Handle(k, specUserEpCreateUser, nil, bindBCreateUserReq, func(ctx context.Context, q, b any) (any, error) {
+	r.HandleFunc("POST /users", serverhttp.Handle(k, SpecUserEpCreateUser, nil, BindBCreateUserReq, func(ctx context.Context, q, b any) (any, error) {
 			return ep.CreateUser(ctx, q, b.(eps.CreateUserReq))
 		}))
-	r.HandleFunc("DELETE /users/{id}", serverhttp.Handle(k, specUserEpDeleteUser, bindQDeleteUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.HandleFunc("DELETE /users/{id}", serverhttp.Handle(k, SpecUserEpDeleteUser, BindQDeleteUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.DeleteUser(ctx, q.(eps.DeleteUserReq))
 		}))
-	r.HandleFunc("GET /users/{id}", serverhttp.Handle(k, specUserEpGetUser, bindQGetUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.HandleFunc("GET /users/{id}", serverhttp.Handle(k, SpecUserEpGetUser, BindQGetUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.GetUser(ctx, q.(eps.GetUserReq))
 		}))
-	r.HandleFunc("GET /users", serverhttp.Handle(k, specUserEpListUsers, bindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.HandleFunc("GET /users", serverhttp.Handle(k, SpecUserEpListUsers, BindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.ListUsers(ctx, q.(eps.ListUsersReq))
+		}))
+	r.HandleFunc("PUT /users/{id}/extra", serverhttp.Handle(k, SpecUserEpUpdateExtra, BindQGetUserReq, BindBExtraBody, func(ctx context.Context, q, b any) (any, error) {
+			return ep.UpdateExtra(ctx, q.(eps.GetUserReq), b.(eps.ExtraBody))
 		}))
 }
 

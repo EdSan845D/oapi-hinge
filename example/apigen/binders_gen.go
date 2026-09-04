@@ -11,7 +11,7 @@ import (
 	"github.com/EdSan845D/oapi-hinge/hinge"
 	"time"
 )
-func bindBCreateUserReq(ctx context.Context, r hinge.RequestReader) (any, error) {
+func BindBCreateUserReq(ctx context.Context, r hinge.RequestReader) (any, error) {
 	var v eps.CreateUserReq
 	be := &hinge.BindError{}
 	add := be.AddField
@@ -42,13 +42,30 @@ func bindBCreateUserReq(ctx context.Context, r hinge.RequestReader) (any, error)
 	if err := v.Validate(); err != nil {
 		return v, fmt.Errorf("validate failed: %w", err)
 	}
-	if len(be.Fields) > 0 {
-		return v, be
+	return v, nil
+}
+
+func BindBExtraBody(ctx context.Context, r hinge.RequestReader) (any, error) {
+	var v eps.ExtraBody
+	be := &hinge.BindError{}
+	add := be.AddField
+	_ = add
+	data, err := r.Body()
+	if err != nil {
+		return v, err
+	}
+	if len(data) > 0 {
+		if err := hinge.DecodeJSON(data, &v); err != nil {
+			if be2 := hinge.AsBindError(err); be2 != nil {
+				return v, be2
+			}
+			return v, err
+		}
 	}
 	return v, nil
 }
 
-func bindQChangePasswordReq(ctx context.Context, r hinge.RequestReader) (any, error) {
+func BindQChangePasswordReq(ctx context.Context, r hinge.RequestReader) (any, error) {
 	var v eps.ChangePasswordReq
 	be := &hinge.BindError{}
 	add := be.AddField
@@ -80,13 +97,10 @@ func bindQChangePasswordReq(ctx context.Context, r hinge.RequestReader) (any, er
 	if len(be.Fields) > 0 {
 		return v, be
 	}
-	if len(be.Fields) > 0 {
-		return v, be
-	}
 	return v, nil
 }
 
-func bindQDeleteUserReq(ctx context.Context, r hinge.RequestReader) (any, error) {
+func BindQDeleteUserReq(ctx context.Context, r hinge.RequestReader) (any, error) {
 	var v eps.DeleteUserReq
 	be := &hinge.BindError{}
 	add := be.AddField
@@ -101,16 +115,10 @@ func bindQDeleteUserReq(ctx context.Context, r hinge.RequestReader) (any, error)
 	if len(be.Fields) > 0 {
 		return v, be
 	}
-	if len(be.Fields) > 0 {
-		return v, be
-	}
-	if len(be.Fields) > 0 {
-		return v, be
-	}
 	return v, nil
 }
 
-func bindQDownloadSampleReq(ctx context.Context, r hinge.RequestReader) (any, error) {
+func BindQDownloadSampleReq(ctx context.Context, r hinge.RequestReader) (any, error) {
 	var v eps.DownloadSampleReq
 	be := &hinge.BindError{}
 	add := be.AddField
@@ -125,16 +133,10 @@ func bindQDownloadSampleReq(ctx context.Context, r hinge.RequestReader) (any, er
 	if len(be.Fields) > 0 {
 		return v, be
 	}
-	if len(be.Fields) > 0 {
-		return v, be
-	}
-	if len(be.Fields) > 0 {
-		return v, be
-	}
 	return v, nil
 }
 
-func bindQGetUserReq(ctx context.Context, r hinge.RequestReader) (any, error) {
+func BindQGetUserReq(ctx context.Context, r hinge.RequestReader) (any, error) {
 	var v eps.GetUserReq
 	be := &hinge.BindError{}
 	add := be.AddField
@@ -149,16 +151,10 @@ func bindQGetUserReq(ctx context.Context, r hinge.RequestReader) (any, error) {
 	if len(be.Fields) > 0 {
 		return v, be
 	}
-	if len(be.Fields) > 0 {
-		return v, be
-	}
-	if len(be.Fields) > 0 {
-		return v, be
-	}
 	return v, nil
 }
 
-func bindQListUsersReq(ctx context.Context, r hinge.RequestReader) (any, error) {
+func BindQListUsersReq(ctx context.Context, r hinge.RequestReader) (any, error) {
 	var v eps.ListUsersReq
 	be := &hinge.BindError{}
 	add := be.AddField
@@ -167,15 +163,15 @@ func bindQListUsersReq(ctx context.Context, r hinge.RequestReader) (any, error) 
 		if err != nil {
 			add("page", "query", err.Error())
 		} else {
-		v.Page = x
+		v.PageQuery.Page = x
 		}
 	}
-	if v.Page == 0 {
+	if v.PageQuery.Page == 0 {
 		x, err := hinge.Parse[int]("1", "page")
 		if err != nil {
 			add("page", "query", err.Error())
 		} else {
-		v.Page = x
+		v.PageQuery.Page = x
 		}
 	}
 	if vals, ok := r.QueryValues("size"); ok && len(vals) > 0 && vals[0] != "" {
@@ -183,15 +179,15 @@ func bindQListUsersReq(ctx context.Context, r hinge.RequestReader) (any, error) 
 		if err != nil {
 			add("size", "query", err.Error())
 		} else {
-		v.Size = x
+		v.PageQuery.Size = x
 		}
 	}
-	if v.Size == 0 {
+	if v.PageQuery.Size == 0 {
 		x, err := hinge.Parse[int]("10", "size")
 		if err != nil {
 			add("size", "query", err.Error())
 		} else {
-		v.Size = x
+		v.PageQuery.Size = x
 		}
 	}
 	if vals, ok := r.QueryValues("since"); ok && len(vals) > 0 && vals[0] != "" {
@@ -201,12 +197,6 @@ func bindQListUsersReq(ctx context.Context, r hinge.RequestReader) (any, error) 
 		} else {
 		v.Since = x
 		}
-	}
-	if len(be.Fields) > 0 {
-		return v, be
-	}
-	if len(be.Fields) > 0 {
-		return v, be
 	}
 	if len(be.Fields) > 0 {
 		return v, be

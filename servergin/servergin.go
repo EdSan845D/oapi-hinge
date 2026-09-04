@@ -34,6 +34,9 @@ func NewKernel() *hinge.Kernel {
 //
 // 路径风格转换（{id} → :id）由 hinge gen 发射注册代码时完成。
 func Handle(k *hinge.Kernel, ep hinge.Endpoint, bindQ, bindB hinge.Binder, h hinge.HandlerFunc) gin.HandlerFunc {
+	if len(ep.Middleware) != 0 {
+		// 抽离出gin.Middleware 的闭包，避免每次请求都生成闭包
+	}
 	inner := k.Handle(ep, bindQ, bindB, h)
 	return func(c *gin.Context) {
 		inner(&Reader{C: c}, &Sink{C: c})

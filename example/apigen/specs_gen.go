@@ -8,84 +8,120 @@ import (
 	eps "github.com/EdSan845D/oapi-hinge/example/app/eps"
 	"github.com/EdSan845D/oapi-hinge/hinge"
 )
-var specFileEpDownloadSample = hinge.Endpoint{
+
+func AllSpecs() []hinge.Endpoint {
+	return []hinge.Endpoint{
+		SpecFileEpDownloadSample,
+		SpecPKG_epsIndex,
+		SpecSystemEpHealth,
+		SpecUserEpChangePassword,
+		SpecUserEpCreateUser,
+		SpecUserEpDeleteUser,
+		SpecUserEpGetUser,
+		SpecUserEpListUsers,
+		SpecUserEpUpdateExtra,
+	}
+}
+
+var SpecFileEpDownloadSample = hinge.Endpoint{
 	Owner:   "FileEp",
 	Handler: "DownloadSample",
 	Method:  "GET",
 	Path:    "/files/{name}",
 	Summary: "下载示例文件（FileStream 二进制流响应）",
-	Tags: []string{"文件"},
-	QType: hinge.Type[eps.DownloadSampleReq](),
-	RType: hinge.Type[*hinge.FileStream](),
+	Tags:    []string{"文件"},
+	QType:   hinge.Type[eps.DownloadSampleReq](),
+	RType:   hinge.Type[*hinge.FileStream](),
 }
 
-var specSystemEpHealth = hinge.Endpoint{
+var SpecPKG_epsIndex = hinge.Endpoint{
+	Owner:   "PKG_eps",
+	Handler: "Index",
+	Method:  "GET",
+	Path:    "/",
+	Summary: "Index",
+	RType:   hinge.Type[string](),
+}
+
+var SpecSystemEpHealth = hinge.Endpoint{
 	Owner:   "SystemEp",
 	Handler: "Health",
 	Method:  "GET",
 	Path:    "/health",
 	Summary: "健康检查",
-	RType: hinge.Type[map[string]string](),
+	RType:   hinge.Type[map[string]string](),
 }
 
-var specUserEpChangePassword = hinge.Endpoint{
+var SpecUserEpChangePassword = hinge.Endpoint{
 	Owner:   "UserEp",
 	Handler: "ChangePassword",
 	Method:  "PATCH",
 	Path:    "/users/{id}/password",
 	Summary: "修改密码（出参脱敏演示：InTransform 规范化 + validate 标签 + OutTransform）",
-	Tags: []string{"用户"},
-	Auth: "BearerAuth",
-	QType: hinge.Type[eps.ChangePasswordReq](),
-	RType: hinge.Type[eps.MaskedUser](),
+	Tags:    []string{"用户"},
+	Auth:    "BearerAuth",
+	QType:   hinge.Type[eps.ChangePasswordReq](),
+	RType:   hinge.Type[eps.MaskedUser](),
 }
 
-var specUserEpCreateUser = hinge.Endpoint{
+var SpecUserEpCreateUser = hinge.Endpoint{
 	Owner:   "UserEp",
 	Handler: "CreateUser",
 	Method:  "POST",
 	Path:    "/users",
 	Summary: "创建用户",
-	Tags: []string{"用户"},
-	Status: 201,
-	Auth: "BearerAuth",
-	BType: hinge.Type[eps.CreateUserReq](),
-	RType: hinge.Type[eps.User](),
+	Tags:    []string{"用户"},
+	Status:  201,
+	Auth:    "BearerAuth",
+	BType:   hinge.Type[eps.CreateUserReq](),
+	RType:   hinge.Type[eps.User](),
 }
 
-var specUserEpDeleteUser = hinge.Endpoint{
+var SpecUserEpDeleteUser = hinge.Endpoint{
 	Owner:   "UserEp",
 	Handler: "DeleteUser",
 	Method:  "DELETE",
 	Path:    "/users/{id}",
 	Summary: "删除用户（Empty 响应：data 为 null）",
-	Tags: []string{"用户"},
-	Auth: "BearerAuth",
-	QType: hinge.Type[eps.DeleteUserReq](),
-	RType: hinge.Type[hinge.Empty](),
+	Tags:    []string{"用户"},
+	Auth:    "BearerAuth",
+	QType:   hinge.Type[eps.DeleteUserReq](),
+	RType:   hinge.Type[hinge.Empty](),
 }
 
-var specUserEpGetUser = hinge.Endpoint{
+var SpecUserEpGetUser = hinge.Endpoint{
 	Owner:   "UserEp",
 	Handler: "GetUser",
 	Method:  "GET",
 	Path:    "/users/{id}",
 	Summary: "用户详情",
-	Tags: []string{"用户"},
-	Auth: "BearerAuth",
-	QType: hinge.Type[eps.GetUserReq](),
-	RType: hinge.Type[eps.User](),
+	Tags:    []string{"用户"},
+	Auth:    "BearerAuth",
+	QType:   hinge.Type[eps.GetUserReq](),
+	RType:   hinge.Type[eps.User](),
 }
 
-var specUserEpListUsers = hinge.Endpoint{
+var SpecUserEpListUsers = hinge.Endpoint{
 	Owner:   "UserEp",
 	Handler: "ListUsers",
 	Method:  "GET",
 	Path:    "/users",
 	Summary: "用户列表（分页）",
-	Tags: []string{"用户"},
-	Auth: "BearerAuth",
-	QType: hinge.Type[eps.ListUsersReq](),
-	RType: hinge.Type[hinge.Paged[eps.User]](),
+	Tags:    []string{"用户"},
+	Auth:    "BearerAuth",
+	QType:   hinge.Type[eps.ListUsersReq](),
+	RType:   hinge.Type[hinge.Paged[eps.User]](),
 }
 
+var SpecUserEpUpdateExtra = hinge.Endpoint{
+	Owner:   "UserEp",
+	Handler: "UpdateExtra",
+	Method:  "PUT",
+	Path:    "/users/{id}/extra",
+	Summary: "修改用户扩展信息（演示 any 类型的请求体绑定）",
+	Tags:    []string{"用户"},
+	Auth:    "BearerAuth",
+	QType:   hinge.Type[eps.GetUserReq](),
+	BType:   hinge.Type[eps.ExtraBody](),
+	RType:   hinge.Type[eps.User](),
+}
