@@ -7,6 +7,7 @@ package apigen
 import (
 	"context"
 	eps "github.com/EdSan845D/oapi-hinge/example/app/eps"
+	middleware "github.com/EdSan845D/oapi-hinge/example/app/middleware"
 	"github.com/EdSan845D/oapi-hinge/hinge"
 	"github.com/EdSan845D/oapi-hinge/serverhttp"
 	"net/http"
@@ -29,7 +30,7 @@ func RegisterPKG_epsHTTP(r *http.ServeMux, k *hinge.Kernel) {
 func RegisterSystemEpHTTP(r *http.ServeMux, k *hinge.Kernel, ep eps.SystemEp) {
 	r.HandleFunc("GET /health", serverhttp.Handle(k, SpecSystemEpHealth, nil, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.Health(ctx, q)
-		}))
+		}), serverhttp.AsInterceptors(SpecSystemEpHealth, []any{middleware.Auth})...)
 }
 
 // RegisterUserEpHTTP 把 UserEp 的全部端点挂到 http。

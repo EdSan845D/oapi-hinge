@@ -29,9 +29,9 @@ var SpecFileEpDownloadSample = hinge.Endpoint{
 	Method:  "GET",
 	Path:    "/files/{name}",
 	Summary: "下载示例文件（FileStream 二进制流响应）",
-	Tags:    []string{"文件"},
-	QType:   hinge.Type[eps.DownloadSampleReq](),
-	RType:   hinge.Type[*hinge.FileStream](),
+	Tags: []string{"文件"},
+	QType: hinge.Type[eps.DownloadSampleReq](),
+	RType: hinge.Type[*hinge.FileStream](),
 }
 
 var SpecPKG_epsIndex = hinge.Endpoint{
@@ -40,7 +40,7 @@ var SpecPKG_epsIndex = hinge.Endpoint{
 	Method:  "GET",
 	Path:    "/",
 	Summary: "Index",
-	RType:   hinge.Type[string](),
+	RType: hinge.Type[string](),
 }
 
 var SpecSystemEpHealth = hinge.Endpoint{
@@ -49,7 +49,7 @@ var SpecSystemEpHealth = hinge.Endpoint{
 	Method:  "GET",
 	Path:    "/health",
 	Summary: "健康检查",
-	RType:   hinge.Type[map[string]string](),
+	RType: hinge.Type[map[string]string](),
 }
 
 var SpecUserEpChangePassword = hinge.Endpoint{
@@ -58,10 +58,10 @@ var SpecUserEpChangePassword = hinge.Endpoint{
 	Method:  "PATCH",
 	Path:    "/users/{id}/password",
 	Summary: "修改密码（出参脱敏演示：InTransform 规范化 + validate 标签 + OutTransform）",
-	Tags:    []string{"用户"},
-	Auth:    "BearerAuth",
-	QType:   hinge.Type[eps.ChangePasswordReq](),
-	RType:   hinge.Type[eps.MaskedUser](),
+	Tags: []string{"用户"},
+	Auth: "BearerAuth",
+	QType: hinge.Type[eps.ChangePasswordReq](),
+	RType: hinge.Type[eps.MaskedUser](),
 }
 
 var SpecUserEpCreateUser = hinge.Endpoint{
@@ -70,11 +70,11 @@ var SpecUserEpCreateUser = hinge.Endpoint{
 	Method:  "POST",
 	Path:    "/users",
 	Summary: "创建用户",
-	Tags:    []string{"用户"},
-	Status:  201,
-	Auth:    "BearerAuth",
-	BType:   hinge.Type[eps.CreateUserReq](),
-	RType:   hinge.Type[eps.User](),
+	Tags: []string{"用户"},
+	Status: 201,
+	Auth: "BearerAuth",
+	BType: hinge.Type[eps.CreateUserReq](),
+	RType: hinge.Type[eps.User](),
 }
 
 var SpecUserEpDeleteUser = hinge.Endpoint{
@@ -83,10 +83,10 @@ var SpecUserEpDeleteUser = hinge.Endpoint{
 	Method:  "DELETE",
 	Path:    "/users/{id}",
 	Summary: "删除用户（Empty 响应：data 为 null）",
-	Tags:    []string{"用户"},
-	Auth:    "BearerAuth",
-	QType:   hinge.Type[eps.DeleteUserReq](),
-	RType:   hinge.Type[hinge.Empty](),
+	Tags: []string{"用户"},
+	Auth: "BearerAuth",
+	QType: hinge.Type[eps.DeleteUserReq](),
+	RType: hinge.Type[hinge.Empty](),
 }
 
 var SpecUserEpGetUser = hinge.Endpoint{
@@ -95,10 +95,10 @@ var SpecUserEpGetUser = hinge.Endpoint{
 	Method:  "GET",
 	Path:    "/users/{id}",
 	Summary: "用户详情",
-	Tags:    []string{"用户"},
-	Auth:    "BearerAuth",
-	QType:   hinge.Type[eps.GetUserReq](),
-	RType:   hinge.Type[eps.User](),
+	Tags: []string{"用户"},
+	Auth: "BearerAuth",
+	QType: hinge.Type[eps.GetUserReq](),
+	RType: hinge.Type[eps.User](),
 }
 
 var SpecUserEpListUsers = hinge.Endpoint{
@@ -107,10 +107,10 @@ var SpecUserEpListUsers = hinge.Endpoint{
 	Method:  "GET",
 	Path:    "/users",
 	Summary: "用户列表（分页）",
-	Tags:    []string{"用户"},
-	Auth:    "BearerAuth",
-	QType:   hinge.Type[eps.ListUsersReq](),
-	RType:   hinge.Type[hinge.Paged[eps.User]](),
+	Tags: []string{"用户"},
+	Auth: "BearerAuth",
+	QType: hinge.Type[eps.ListUsersReq](),
+	RType: hinge.Type[hinge.Paged[eps.User]](),
 }
 
 var SpecUserEpUpdateExtra = hinge.Endpoint{
@@ -119,9 +119,10 @@ var SpecUserEpUpdateExtra = hinge.Endpoint{
 	Method:  "PUT",
 	Path:    "/users/{id}/extra",
 	Summary: "修改用户扩展信息（演示 any 类型的请求体绑定）",
-	Tags:    []string{"用户"},
-	Auth:    "BearerAuth",
-	QType:   hinge.Type[eps.GetUserReq](),
-	BType:   hinge.Type[eps.ExtraBody](),
-	RType:   hinge.Type[eps.User](),
+	Tags: []string{"用户"},
+	Auth: "BearerAuth",
+	QType: hinge.Type[eps.GetUserReq](),
+	BType: hinge.Type[eps.ExtraBody](),
+	RType: hinge.Type[eps.User](),
 }
+

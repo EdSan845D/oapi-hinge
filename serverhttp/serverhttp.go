@@ -1,4 +1,4 @@
-// Package serverhttp 标准库适配器：把 hinge 内核挂到 net/http
+﻿// Package serverhttp 标准库适配器：把 hinge 内核挂到 net/http
 // （Go 1.22+ 方法 + 通配符路由模式，"GET /users/{id}"）。
 // 可移植性试金石：只依赖 hinge 与标准库，证明内核真正框架无关——
 // gin / echo 适配器（servergin / serverecho）与本包形态完全对称。
@@ -31,8 +31,8 @@ func NewKernel() *hinge.Kernel {
 // Handle 把内核端点适配为 http.HandlerFunc。路由注册由生成代码完成：
 //
 //	mux.HandleFunc("GET /users/{id}", serverhttp.Handle(k, ep, bindQ, bindB, h))
-func Handle(k *hinge.Kernel, ep hinge.Endpoint, bindQ, bindB hinge.Binder, h hinge.HandlerFunc) http.HandlerFunc {
-	inner := k.Handle(ep, bindQ, bindB, h)
+func Handle(k *hinge.Kernel, ep hinge.Endpoint, bindQ, bindB hinge.Binder, h hinge.HandlerFunc, mws ...any) http.HandlerFunc {
+	inner := k.HandleWith(ep, AsInterceptors(ep, mws), bindQ, bindB, h)
 	return func(w http.ResponseWriter, r *http.Request) {
 		inner(&Reader{R: r}, &Sink{W: w, R: r})
 	}

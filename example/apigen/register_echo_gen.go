@@ -6,51 +6,53 @@ package apigen
 
 import (
 	"context"
+
 	eps "github.com/EdSan845D/oapi-hinge/example/app/eps"
+	middleware "github.com/EdSan845D/oapi-hinge/example/app/middleware"
 	"github.com/EdSan845D/oapi-hinge/hinge"
 	"github.com/EdSan845D/oapi-hinge/serverecho"
 	"github.com/labstack/echo/v4"
 )
+
 // RegisterFileEpEcho 把 FileEp 的全部端点挂到 echo。
 func RegisterFileEpEcho(r echo.Router, k *hinge.Kernel, ep eps.FileEp) {
 	r.Add("GET", "/files/:name", serverecho.Handle(k, SpecFileEpDownloadSample, BindQDownloadSampleReq, nil, func(ctx context.Context, q, b any) (any, error) {
-			return ep.DownloadSample(ctx, q.(eps.DownloadSampleReq))
-		}))
+		return ep.DownloadSample(ctx, q.(eps.DownloadSampleReq))
+	}))
 }
 
 // RegisterPKG_epsEcho 把 PKG_eps 的全部端点挂到 echo。
 func RegisterPKG_epsEcho(r echo.Router, k *hinge.Kernel) {
 	r.Add("GET", "/", serverecho.Handle(k, SpecPKG_epsIndex, nil, nil, func(ctx context.Context, q, b any) (any, error) {
-			return eps.Index(ctx, q)
-		}))
+		return eps.Index(ctx, q)
+	}))
 }
 
 // RegisterSystemEpEcho 把 SystemEp 的全部端点挂到 echo。
-func RegisterSystemEpEcho(r echo.Router, k *hinge.Kernel, ep eps.SystemEp) {
+func RegisterSystemEpEcho(r echo.Group, k *hinge.Kernel, ep eps.SystemEp) {
 	r.Add("GET", "/health", serverecho.Handle(k, SpecSystemEpHealth, nil, nil, func(ctx context.Context, q, b any) (any, error) {
-			return ep.Health(ctx, q)
-		}))
+		return ep.Health(ctx, q)
+	}), serverecho.AsEchoChain(SpecSystemEpHealth, []any{middleware.Auth})...)
 }
 
 // RegisterUserEpEcho 把 UserEp 的全部端点挂到 echo。
 func RegisterUserEpEcho(r echo.Router, k *hinge.Kernel, ep eps.UserEp) {
 	r.Add("PATCH", "/users/:id/password", serverecho.Handle(k, SpecUserEpChangePassword, BindQChangePasswordReq, nil, func(ctx context.Context, q, b any) (any, error) {
-			return ep.ChangePassword(ctx, q.(eps.ChangePasswordReq))
-		}))
+		return ep.ChangePassword(ctx, q.(eps.ChangePasswordReq))
+	}))
 	r.Add("POST", "/users", serverecho.Handle(k, SpecUserEpCreateUser, nil, BindBCreateUserReq, func(ctx context.Context, q, b any) (any, error) {
-			return ep.CreateUser(ctx, q, b.(eps.CreateUserReq))
-		}))
+		return ep.CreateUser(ctx, q, b.(eps.CreateUserReq))
+	}))
 	r.Add("DELETE", "/users/:id", serverecho.Handle(k, SpecUserEpDeleteUser, BindQDeleteUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
-			return ep.DeleteUser(ctx, q.(eps.DeleteUserReq))
-		}))
+		return ep.DeleteUser(ctx, q.(eps.DeleteUserReq))
+	}))
 	r.Add("GET", "/users/:id", serverecho.Handle(k, SpecUserEpGetUser, BindQGetUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
-			return ep.GetUser(ctx, q.(eps.GetUserReq))
-		}))
+		return ep.GetUser(ctx, q.(eps.GetUserReq))
+	}))
 	r.Add("GET", "/users", serverecho.Handle(k, SpecUserEpListUsers, BindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
-			return ep.ListUsers(ctx, q.(eps.ListUsersReq))
-		}))
+		return ep.ListUsers(ctx, q.(eps.ListUsersReq))
+	}))
 	r.Add("PUT", "/users/:id/extra", serverecho.Handle(k, SpecUserEpUpdateExtra, BindQGetUserReq, BindBExtraBody, func(ctx context.Context, q, b any) (any, error) {
-			return ep.UpdateExtra(ctx, q.(eps.GetUserReq), b.(eps.ExtraBody))
-		}))
+		return ep.UpdateExtra(ctx, q.(eps.GetUserReq), b.(eps.ExtraBody))
+	}))
 }
-

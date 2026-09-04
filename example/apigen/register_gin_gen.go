@@ -7,6 +7,7 @@ package apigen
 import (
 	"context"
 	eps "github.com/EdSan845D/oapi-hinge/example/app/eps"
+	middleware "github.com/EdSan845D/oapi-hinge/example/app/middleware"
 	"github.com/EdSan845D/oapi-hinge/hinge"
 	"github.com/EdSan845D/oapi-hinge/servergin"
 	"github.com/gin-gonic/gin"
@@ -27,9 +28,9 @@ func RegisterPKG_epsGin(r gin.IRouter, k *hinge.Kernel) {
 
 // RegisterSystemEpGin 把 SystemEp 的全部端点挂到 gin。
 func RegisterSystemEpGin(r gin.IRouter, k *hinge.Kernel, ep eps.SystemEp) {
-	r.GET("/health", servergin.Handle(k, SpecSystemEpHealth, nil, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.GET("/health", append(servergin.AsGinChain(SpecSystemEpHealth, []any{middleware.Auth}), servergin.Handle(k, SpecSystemEpHealth, nil, nil, func(ctx context.Context, q, b any) (any, error) {
 			return ep.Health(ctx, q)
-		}))
+		}))...)
 }
 
 // RegisterUserEpGin 把 UserEp 的全部端点挂到 gin。

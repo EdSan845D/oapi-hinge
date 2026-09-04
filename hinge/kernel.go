@@ -109,6 +109,12 @@ var errHandled = errors.New("hinge: response already written")
 //
 // bindQ / bindB 为生成的绑定器（无入参时传 nil）；h 为生成的闭包适配形态。
 func (k *Kernel) Handle(ep Endpoint, bindQ, bindB Binder, h HandlerFunc) func(RequestReader, Sink) {
+	return k.HandleWith(ep, nil, bindQ, bindB, h)
+}
+
+// HandleWith 同 Handle，但允许装配方注入额外拦截器（如 stdlib 中间件桥接结果）。
+// extra 在 //oapi:middleware 名字链之前执行（路由层语义）。
+func (k *Kernel) HandleWith(ep Endpoint, extra []Interceptor, bindQ, bindB Binder, h HandlerFunc) func(RequestReader, Sink) {
 	env := k.envelopeFor(ep)
 	success := ep.Status
 	if success == 0 {
@@ -123,7 +129,8 @@ func (k *Kernel) Handle(ep Endpoint, bindQ, bindB Binder, h HandlerFunc) func(Re
 	if ep.Auth != "" {
 		names = append(names, ep.Auth)
 	}
-	chain := make([]Interceptor, 0, len(names))
+	chain := make([]Interceptor, 0, len(extra)+len(names))
+	chain = append(chain, extra...)
 	for _, n := range names {
 		chain = append(chain, MustInterceptor(n))
 	}

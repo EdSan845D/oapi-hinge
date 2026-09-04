@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -19,12 +20,15 @@ import (
 
 // Run 生成入口：解析 → IR → 发射（写盘；check=true 时只校验产物是否最新）。
 func Run(rootDir string, cfg Config, check bool) error {
+	if cfg.Pkg == "" {
+		cfg.Pkg = filepath.Base(filepath.FromSlash(cfg.Out))
+	}
 	fset := token.NewFileSet()
 	pkgs, err := collectDirs(fset, rootDir, cfg.Module, cfg.Scan)
 	if err != nil {
 		return err
 	}
-	eps, err := buildIR(pkgs)
+	eps, err := buildIR(pkgs, cfg.EntryPoints)
 	if err != nil {
 		return err
 	}
@@ -687,9 +691,16 @@ func emitRegister(cfg Config, eps []*EndpointIR, target string) (string, error) 
 		owners[ep.Owner] = append(owners[ep.Owner], ep)
 		pkgAlias(is, taken, ep.Pkg.ImportPath, ep.Pkg.Name)
 	}
+	// Midllwares 源码引用的 import 预登记（owner 级）
+	for _, owner := range ownerOrder {
+		for _, imp := range owners[owner][0].RouteMWImports {
+			is.add(imp, path.Base(imp))
+		}
+	}
 	sort.Strings(ownerOrder)
 
 	title := map[string]string{"gin": "Gin", "echo": "Echo", "http": "HTTP"}[target]
+	sort.Strings(ownerOrder)
 	var b strings.Builder
 	b.WriteString(genHeader(cfg))
 	b.WriteString("package " + cfg.Pkg + "\n\n")
@@ -743,15 +754,33 @@ func emitRegister(cfg Config, eps []*EndpointIR, target string) (string, error) 
 			}
 
 			closure := emitClosure(ep, taken, return_call(ep))
-			call := fmt.Sprintf("%s.Handle(k, Spec%s%s, %s, %s)", adapterPkg, ep.Owner, ep.Handler, args, closure)
+			specRef := fmt.Sprintf("Spec%s%s", ep.Owner, ep.Handler)
+			handle := fmt.Sprintf("%s.Handle(k, %s, %s, %s)", adapterPkg, specRef, args, closure)
+			mwsExpr := ""
+			if len(ep.RouteMWs) > 0 {
+				mwsExpr = fmt.Sprintf("[]any{%s}", strings.Join(ep.RouteMWs, ", "))
+			}
 			switch target {
 			case "http":
-				fmt.Fprintf(&b, "\tr.HandleFunc(%q, %s)\n", ep.Method+" "+ep.FullPath, call)
+				if mwsExpr != "" {
+					fmt.Fprintf(&b, "\tr.HandleFunc(%q, %s, serverhttp.AsInterceptors(%s, %s)...)\n", ep.Method+" "+ep.FullPath, handle, specRef, mwsExpr)
+				} else {
+					fmt.Fprintf(&b, "\tr.HandleFunc(%q, %s)\n", ep.Method+" "+ep.FullPath, handle)
+				}
 			case "echo":
-				// echo.Router 接口只有 Add（无 verb 方法）
-				fmt.Fprintf(&b, "\tr.Add(%q, %q, %s)\n", ep.Method, frameworkPath(target, ep.FullPath), call)
+				// echo.Router 接口只有 Add（无 verb 方法）；Midllwares → 路由中间件链
+				if mwsExpr != "" {
+					fmt.Fprintf(&b, "\tr.Add(%q, %q, %s, serverecho.AsEchoChain(%s, %s)...)\n", ep.Method, frameworkPath(target, ep.FullPath), handle, specRef, mwsExpr)
+				} else {
+					fmt.Fprintf(&b, "\tr.Add(%q, %q, %s)\n", ep.Method, frameworkPath(target, ep.FullPath), handle)
+				}
 			default:
-				fmt.Fprintf(&b, "\tr.%s(%q, %s)\n", verbOf(ep.Method), frameworkPath(target, ep.FullPath), call)
+				// Midllwares → 路由链（gin 原生与 Interceptor 混排，顺序保真），内核包装器在链尾
+				if mwsExpr != "" {
+					fmt.Fprintf(&b, "\tr.%s(%q, append(servergin.AsGinChain(%s, %s), %s)...)\n", verbOf(ep.Method), frameworkPath(target, ep.FullPath), specRef, mwsExpr, handle)
+				} else {
+					fmt.Fprintf(&b, "\tr.%s(%q, %s)\n", verbOf(ep.Method), frameworkPath(target, ep.FullPath), handle)
+				}
 			}
 		}
 		b.WriteString("}\n\n")

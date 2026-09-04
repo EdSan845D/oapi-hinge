@@ -1,4 +1,4 @@
-package gen
+﻿package gen
 
 import (
 	"fmt"
@@ -39,6 +39,11 @@ type EndpointIR struct {
 	BName    string
 	BSet     *fieldSet
 	BodyKind string // json / raw / multipart（HasB 时有效）
+
+	// RouteMWs 组级中间件源码引用（EntryPointConfig.Midllwares 运行时值反射取名而来）；
+	// RouteMWImports 为对应 import 路径。
+	RouteMWs       []string
+	RouteMWImports []string
 
 	InTransformQ    bool
 	InTransformQPtr bool
@@ -88,7 +93,7 @@ func (b *irBuilder) errf(format string, args ...any) {
 }
 
 // buildIR 从扫描包构建全部端点 IR（含完整校验）。
-func buildIR(packages []*Package) ([]*EndpointIR, error) {
+func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR, error) {
 	b := &irBuilder{packages: packages}
 	for _, pkg := range packages {
 		b.buildPackage(pkg)
@@ -102,7 +107,31 @@ func buildIR(packages []*Package) ([]*EndpointIR, error) {
 		}
 		ownerPkg[ep.Owner] = ep.Pkg.ImportPath
 	}
-	// 全局查重：method+path
+	// EntryPointConfig.Midllwares → 组级中间件源码引用（owner 全端点继承）：
+	// gen.Run 与 generate.go 同进程，运行时值反射取名后发射为源码引用
+	if len(entryPoints) > 0 {
+		byOwner := map[string]EntryPointConfig{}
+		for _, ec := range entryPoints {
+			byOwner[string(ec.Name)] = ec
+		}
+		for _, ep := range b.eps {
+			ec, ok := byOwner[ep.Owner]
+			if !ok {
+				continue
+			}
+			for i, mw := range ec.Midllwares {
+				ref, imp, err := middlewareRef(mw)
+				if err != nil {
+					b.errf("Enterpoint %s Midllwares[%d]: %v", ep.Owner, i, err)
+					continue
+				}
+				ep.RouteMWs = append(ep.RouteMWs, ref)
+				if imp != "" {
+					ep.RouteMWImports = append(ep.RouteMWImports, imp)
+				}
+			}
+		}
+	}	// 全局查重：method+path
 	seen := map[string]string{}
 	for _, ep := range b.eps {
 		key := ep.Method + " " + ep.FullPath
@@ -176,7 +205,7 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 				sa.Limit = value
 			case "timeout":
 				sa.TimeoutStr = value
-			case "middleware":
+			case "middleware", "interceptor", "intercepter":
 				if value != "" {
 					sa.Middleware = append(sa.Middleware, value)
 				}
@@ -213,7 +242,7 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 				if value != "" {
 					mTags = append(mTags, value)
 				}
-			case "middleware":
+			case "middleware", "interceptor", "intercepter":
 				if value != "" {
 					mMiddleware = append(mMiddleware, value)
 				}

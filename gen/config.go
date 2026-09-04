@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -24,6 +25,10 @@ type Config struct {
 	Pkg string `yaml:"pkg"`
 	// Targets 目标框架：gin / echo / http（可组合）。
 	Targets []string `yaml:"targets"`
+	// EntryPoints 程序化 Enterpoint 配置：generate.go 在 gen.Run 同进程注入的运行时值（不入 yaml）。
+	// Midllwares 元素为具名包级函数（框架原生中间件 / hinge.Interceptor），
+	// 生成器反射取名后发射为源码引用，运行时由各适配器 As*Chain 自动识别类型并挂载。
+	EntryPoints []EntryPointConfig `yaml:"-"`
 }
 
 var moduleRe = regexp.MustCompile(`(?m)^module\s+(\S+)\s*$`)
@@ -95,6 +100,31 @@ type EntryPointConfig struct {
 }
 
 const PKGFlag = "PKG_"
+
+// middlewareRef 把 Midllwares 元素（gen.Run 同进程的运行时值）解析为源码引用。
+// 仅支持具名包级函数：gin.HandlerFunc / echo.MiddlewareFunc /
+// func(http.Handler) http.Handler / hinge.Interceptor（本身即具名函数值）。
+// 返回（限定名引用如 m.Auth, importPath）。
+func middlewareRef(v any) (string, string, error) {
+	if v == nil {
+		return "nil", "", nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Func {
+		return "", "", fmt.Errorf("元素类型 %T 不支持（需为具名包级函数）", v)
+	}
+	full := runtime.FuncForPC(rv.Pointer()).Name()
+	full = strings.TrimSuffix(full, "-fm")
+	if strings.Contains(full, ".(") || strings.Contains(full, "..") {
+		return "", "", fmt.Errorf("方法值/闭包 %s 无法生成源码引用（请使用具名包级函数）", full)
+	}
+	dot := strings.LastIndex(full, ".")
+	if dot <= 0 {
+		return "", "", fmt.Errorf("函数名 %s 无法解析包路径", full)
+	}
+	pkgPath, fn := full[:dot], full[dot+1:]
+	return path.Base(pkgPath) + "." + fn, pkgPath, nil
+}
 
 type EntryId string
 type FuncId string
