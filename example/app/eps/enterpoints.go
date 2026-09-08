@@ -66,6 +66,7 @@ func (ep UserEp) CreateUser(ctx context.Context, _ any, b CreateUserReq) (User, 
 }
 
 // oapi:route DELETE /{id}
+// oapi:middleware middleware.ParseHeaderWithInfo
 // 删除用户（Empty 响应：data 为 null）
 func (ep UserEp) DeleteUser(ctx context.Context, q DeleteUserReq) (hinge.Empty, error) {
 	if !ep.Store.Delete(q.ID) {

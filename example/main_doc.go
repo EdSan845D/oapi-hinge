@@ -14,6 +14,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
+//go:generate go run ./app/generate.go
 func main() {
 	out := flag.String("out", "openapi.yaml", "openapi 文档输出路径（.yaml/.yml -> YAML，.json -> JSON）")
 	flag.Parse()

@@ -14,8 +14,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/EdSan845D/oapi-hinge/example/apigen"
-	"github.com/EdSan845D/oapi-hinge/example/app/eps"
 	"github.com/EdSan845D/oapi-hinge/hinge"
 	"github.com/EdSan845D/oapi-hinge/hinge/validator"
 	"github.com/EdSan845D/oapi-hinge/servergin"

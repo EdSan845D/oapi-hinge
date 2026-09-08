@@ -5,4 +5,4 @@ module: github.com/EdSan845D/oapi-hinge
 scan:
   - example/app/eps
 out: example/apigen
-targets: [gin, echo, http]
+targets: [gin]

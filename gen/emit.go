@@ -20,9 +20,7 @@ import (
 
 // Run 生成入口：解析 → IR → 发射（写盘；check=true 时只校验产物是否最新）。
 func Run(rootDir string, cfg Config, check bool) error {
-	if cfg.Pkg == "" {
-		cfg.Pkg = filepath.Base(filepath.FromSlash(cfg.Out))
-	}
+	cfg.InitDefault()
 	fset := token.NewFileSet()
 	pkgs, err := collectDirs(fset, rootDir, cfg.Module, cfg.Scan)
 	if err != nil {
@@ -600,6 +598,20 @@ func emitMultipartValueBlock(b *strings.Builder, f Field, pkg *Package, ownerAli
 	if err != nil {
 		return fmt.Errorf("字段 %s: %w", f.GoName, err)
 	}
+
+	var accessAssignmentStatement = func(f Field) {
+		b.WriteString("\t\t")
+		b.WriteString(f.Access)
+		switch f.Class {
+		case classScalar:
+			b.WriteString(" = x\n")
+		case classPtrScalar:
+			b.WriteString(" = &x\n")
+		case classSlice:
+			b.WriteString(" = xs\n")
+		}
+	}
+
 	fmt.Fprintf(b, "\tif vals, ok := fm.Value[%q]; ok && len(vals) > 0 && vals[0] != \"\" {\n", f.Source)
 	switch f.Class {
 	case classScalar, classPtrScalar:
@@ -610,14 +622,7 @@ func emitMultipartValueBlock(b *strings.Builder, f Field, pkg *Package, ownerAli
 		return fmt.Errorf("multipart 字段 %s 类型不支持", f.GoName)
 	}
 	b.WriteString("\t\tif err != nil {\n\t\t\treturn v, err\n\t\t}\n")
-	switch f.Class {
-	case classScalar:
-		b.WriteString("\t\t" + f.Access + " = x\n")
-	case classPtrScalar:
-		b.WriteString("\t\t" + f.Access + " = &x\n")
-	case classSlice:
-		b.WriteString("\t\t" + f.Access + " = xs\n")
-	}
+	accessAssignmentStatement(f)
 	b.WriteString("\t}\n")
 	if f.Def != "" {
 		fmt.Fprintf(b, "\tif %s {\n", zeroCmp(f))
@@ -628,14 +633,7 @@ func emitMultipartValueBlock(b *strings.Builder, f Field, pkg *Package, ownerAli
 			fmt.Fprintf(b, "\t\tx, err := hinge.Parse[%s](%s, %q)\n", t, strconv.Quote(f.Def), f.Source)
 		}
 		b.WriteString("\t\tif err != nil {\n\t\t\treturn v, err\n\t\t}\n")
-		switch f.Class {
-		case classScalar:
-			b.WriteString("\t\t" + f.Access + " = x\n")
-		case classPtrScalar:
-			b.WriteString("\t\t" + f.Access + " = &x\n")
-		case classSlice:
-			b.WriteString("\t\t" + f.Access + " = xs\n")
-		}
+		accessAssignmentStatement(f)
 		b.WriteString("\t}\n")
 	}
 	return nil
@@ -663,23 +661,14 @@ func frameworkPath(target, p string) string {
 
 // emitRegister 各框架注册函数 + RegisterAll 聚合器。
 func emitRegister(cfg Config, eps []*EndpointIR, target string) (string, error) {
-	var adapterPkg, libPkg, routerType string
-	// TODO targe 可自定义配置
-	switch target {
-	case "gin":
-		adapterPkg, libPkg, routerType = "servergin", "github.com/gin-gonic/gin", "gin.IRouter"
-	case "echo":
-		adapterPkg, libPkg, routerType = "serverecho", "github.com/labstack/echo/v4", "echo.Router"
-	case "http":
-		adapterPkg, libPkg, routerType = "serverhttp", "net/http", "*http.ServeMux"
-	}
+	emiter := cfg.GetEmiter(target)
 	is := newImportSet()
 	is.add("context", "")
 	is.add(hingeImportPath, "")
-	adapterPath := hingeImportPath[:strings.LastIndex(hingeImportPath, "/")] + "/" + adapterPkg
+	adapterPath := hingeImportPath[:strings.LastIndex(hingeImportPath, "/")] + "/" + emiter.Adapter
 	is.add(adapterPath, "")
-	if libPkg != "" {
-		is.add(libPkg, "")
+	if emiter.Lib != "" {
+		is.add(emiter.Lib, "")
 	}
 	taken := map[string]string{}
 	owners := map[string][]*EndpointIR{}
@@ -703,7 +692,9 @@ func emitRegister(cfg Config, eps []*EndpointIR, target string) (string, error) 
 	sort.Strings(ownerOrder)
 	var b strings.Builder
 	b.WriteString(genHeader(cfg))
-	b.WriteString("package " + cfg.Pkg + "\n\n")
+	b.WriteString("package ")
+	b.WriteString(cfg.Pkg)
+	b.WriteString("\n\n")
 	b.WriteString(is.block())
 	b.WriteString("\n")
 
@@ -721,9 +712,9 @@ func emitRegister(cfg Config, eps []*EndpointIR, target string) (string, error) 
 		ep0 := list[0]
 		fmt.Fprintf(&b, "// Register%s%s 把 %s 的全部端点挂到 %s。\n", owner, title, owner, target)
 		if isPkgOwner {
-			fmt.Fprintf(&b, "func Register%s%s(r %s, k *hinge.Kernel) {\n", owner, title, routerType)
+			fmt.Fprintf(&b, "func Register%s%s(r %s, k *hinge.Kernel) {\n", owner, title, emiter.RouterType)
 		} else {
-			fmt.Fprintf(&b, "func Register%s%s(r %s, k *hinge.Kernel, ep %s.%s) {\n", owner, title, routerType, taken[ep0.Pkg.ImportPath], owner)
+			fmt.Fprintf(&b, "func Register%s%s(r %s, k *hinge.Kernel, ep %s.%s) {\n", owner, title, emiter.RouterType, taken[ep0.Pkg.ImportPath], owner)
 		}
 		return_call := func(ep *EndpointIR) func(qExpr, bExpr string) string {
 			return func(qExpr, bExpr string) string {
@@ -755,7 +746,7 @@ func emitRegister(cfg Config, eps []*EndpointIR, target string) (string, error) 
 
 			closure := emitClosure(ep, taken, return_call(ep))
 			specRef := fmt.Sprintf("Spec%s%s", ep.Owner, ep.Handler)
-			handle := fmt.Sprintf("%s.Handle(k, %s, %s, %s)", adapterPkg, specRef, args, closure)
+			handle := fmt.Sprintf("%s.Handle(k, %s, %s, %s)", emiter.Adapter, specRef, args, closure)
 			mwsExpr := ""
 			if len(ep.RouteMWs) > 0 {
 				mwsExpr = fmt.Sprintf("[]any{%s}", strings.Join(ep.RouteMWs, ", "))
@@ -803,26 +794,17 @@ func emitAll(cfg Config, eps []*EndpointIR) (string, error) {
 		pkgAlias(is, taken, ep.Pkg.ImportPath, ep.Pkg.Name)
 	}
 	sort.Strings(ownerOrder)
-	type fw struct {
-		adapter, title, routerType, lib string
-	}
-	var fws []fw
+	var fws []EmitConfig
 	for _, target := range cfg.Targets {
-		switch target {
-		case "gin":
-			fws = append(fws, fw{"servergin", "Gin", "gin.IRouter", "github.com/gin-gonic/gin"})
-		case "echo":
-			fws = append(fws, fw{"serverecho", "Echo", "echo.Router", "github.com/labstack/echo/v4"})
-		case "http":
-			fws = append(fws, fw{"serverhttp", "HTTP", "*http.ServeMux", "net/http"})
-		}
-	}
-	for _, f := range fws {
-		is.add(f.lib, "")
+		emiter_cfg := cfg.GetEmiter(target)
+		fws = append(fws, emiter_cfg)
+		is.add(emiter_cfg.Lib, "")
 	}
 	var b strings.Builder
 	b.WriteString(genHeader(cfg))
-	b.WriteString("package " + cfg.Pkg + "\n\n")
+	b.WriteString("package ")
+	b.WriteString(cfg.Pkg)
+	b.WriteString("\n\n")
 	b.WriteString(is.block())
 	b.WriteString("\n")
 	b.WriteString("// All 聚合全部 Enterpoint 实例（字段名 = 结构体名）。\n")
@@ -836,14 +818,14 @@ func emitAll(cfg Config, eps []*EndpointIR) (string, error) {
 	}
 	b.WriteString("}\n\n")
 	for _, f := range fws {
-		fmt.Fprintf(&b, "// RegisterAll%s 一次装配全部端点（%s）。\n", f.title, f.adapter)
-		fmt.Fprintf(&b, "func RegisterAll%s(r %s, k *hinge.Kernel, all All) {\n", f.title, f.routerType)
+		fmt.Fprintf(&b, "// RegisterAll%s 一次装配全部端点（%s）。\n", f.Title, f.Adapter)
+		fmt.Fprintf(&b, "func RegisterAll%s(r %s, k *hinge.Kernel, all All) {\n", f.Title, f.RouterType)
 		for _, owner := range ownerOrder {
 			if strings.HasPrefix(owner, PKGFlag) {
-				fmt.Fprintf(&b, "\tRegister%s%s(r, k)\n", owner, f.title)
+				fmt.Fprintf(&b, "\tRegister%s%s(r, k)\n", owner, f.Title)
 				continue
 			}
-			fmt.Fprintf(&b, "\tRegister%s%s(r, k, all.%s)\n", owner, f.title, owner)
+			fmt.Fprintf(&b, "\tRegister%s%s(r, k, all.%s)\n", owner, f.Title, owner)
 		}
 		b.WriteString("}\n\n")
 	}

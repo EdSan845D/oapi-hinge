@@ -1,6 +1,4 @@
-﻿//go:generate go run generate.go
-
-package main
+﻿package main
 
 import (
 	"github.com/EdSan845D/oapi-hinge/example/app/eps"
@@ -27,14 +25,14 @@ func EntryPointsConfig() []gen.EntryPointConfig {
 }
 
 func main() {
-	dir := "../.."
+	dir := ""
 	cfg := gen.Config{
-		Module:  "github.com/EdSan845D/oapi-hinge",
-		Scan:    []string{"example/app/eps"},
-		Out:     "example/apigen",
-		Targets: []string{"gin", "echo", "http"},
+		Module:      "github.com/EdSan845D/oapi-hinge/example",
+		Scan:        []string{"./app/eps"},
+		Out:         "./apigen",
+		Targets:     []string{"gin"},
+		EntryPoints: EntryPointsConfig(),
 	}
-	cfg.EntryPoints = EntryPointsConfig()
 	if err := gen.Run(dir, cfg, false); err != nil {
 		panic(err)
 	}

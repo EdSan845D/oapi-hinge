@@ -131,7 +131,7 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 				}
 			}
 		}
-	}	// 全局查重：method+path
+	} // 全局查重：method+path
 	seen := map[string]string{}
 	for _, ep := range b.eps {
 		key := ep.Method + " " + ep.FullPath
@@ -205,7 +205,7 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 				sa.Limit = value
 			case "timeout":
 				sa.TimeoutStr = value
-			case "middleware", "interceptor", "intercepter":
+			case "middleware", "interceptor":
 				if value != "" {
 					sa.Middleware = append(sa.Middleware, value)
 				}

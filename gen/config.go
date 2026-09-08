@@ -3,11 +3,11 @@ package gen
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"runtime"
-	"path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -25,10 +25,83 @@ type Config struct {
 	Pkg string `yaml:"pkg"`
 	// Targets 目标框架：gin / echo / http（可组合）。
 	Targets []string `yaml:"targets"`
+	// Targets 目标框架中的代码生成配置, 根据Target名称匹配
+	Emitters map[string]EmitConfig `yaml:"emiters"`
 	// EntryPoints 程序化 Enterpoint 配置：generate.go 在 gen.Run 同进程注入的运行时值（不入 yaml）。
 	// Midllwares 元素为具名包级函数（框架原生中间件 / hinge.Interceptor），
 	// 生成器反射取名后发射为源码引用，运行时由各适配器 As*Chain 自动识别类型并挂载。
 	EntryPoints []EntryPointConfig `yaml:"-"`
+}
+
+// 代码生成时的配置
+type EmitConfig struct {
+	Adapter    string `yaml:"adapter"`
+	Title      string `yaml:"title"`
+	RouterType string `yaml:"router_type"`
+	Lib        string `yaml:"lib"`
+}
+
+var DEFAULT_GIN_EMITER = EmitConfig{
+	Adapter:    "servergin",
+	Title:      "Gin",
+	RouterType: "gin.IRouter",
+	Lib:        "github.com/gin-gonic/gin",
+}
+
+var DEFAULT_ECHO_EMITER = EmitConfig{
+	Adapter:    "serverecho",
+	Title:      "Echo",
+	RouterType: "echo.Group",
+	Lib:        "github.com/labstack/echo/v4",
+}
+
+var DEFAULT_HTTP_EMITER = EmitConfig{
+	Adapter:    "serverhttp",
+	Title:      "HTTP",
+	RouterType: "*http.ServeMux",
+	Lib:        "net/http",
+}
+
+func (c Config) GetEmiter(target string) EmitConfig {
+	if c.Emitters != nil {
+		emiter, ok := c.Emitters[target]
+		if ok {
+			return emiter
+		}
+	}
+	emiter, ok := defaultEmiters[target]
+	if ok {
+		return emiter
+	}
+	panic(fmt.Sprintf("target [%s] no matched emiter config, pls check the config field `emiters`", target))
+}
+
+func (c *Config) InitDefault() {
+	if c.Module == "" {
+		path, err := os.Executable()
+		modData, err := os.ReadFile(filepath.Join(filepath.Dir(path), "go.mod"))
+		if err != nil {
+			panic(fmt.Errorf("读取 go.mod: %w", err))
+		}
+		m := moduleRe.FindSubmatch(modData)
+		if m == nil {
+			panic(fmt.Errorf("go.mod 中未找到 module 声明"))
+		}
+		c.Module = string(m[1])
+	}
+	if c.Pkg == "" {
+		c.Pkg = filepath.Base(filepath.FromSlash(c.Out))
+	}
+}
+
+var defaultEmiters = map[string]EmitConfig{
+	"gin":  DEFAULT_GIN_EMITER,
+	"echo": DEFAULT_ECHO_EMITER,
+	"http": DEFAULT_HTTP_EMITER,
+}
+
+func NewDefaultEmiters() map[string]EmitConfig {
+	return defaultEmiters
 }
 
 var moduleRe = regexp.MustCompile(`(?m)^module\s+(\S+)\s*$`)
