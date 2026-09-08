@@ -9,11 +9,12 @@ import (
 	"github.com/EdSan845D/oapi-hinge/hinge"
 	"github.com/gin-gonic/gin"
 )
+
 // All 聚合全部 Enterpoint 实例（字段名 = 结构体名）。
 type All struct {
-	FileEp eps.FileEp
+	FileEp   eps.FileEp
 	SystemEp eps.SystemEp
-	UserEp eps.UserEp
+	UserEp   eps.UserEp
 }
 
 // RegisterAllGin 一次装配全部端点（servergin）。
@@ -23,4 +24,3 @@ func RegisterAllGin(r gin.IRouter, k *hinge.Kernel, all All) {
 	RegisterSystemEpGin(r, k, all.SystemEp)
 	RegisterUserEpGin(r, k, all.UserEp)
 }
-

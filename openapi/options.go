@@ -23,11 +23,15 @@ func OptionWithServer(servers *openapi3.Servers) Option {
 }
 
 // OptionWithSecurity 设置安全方案（如 BearerAuth）。
-// 端点的 oapi:auth 注解值（Endpoint.Auth）即 scheme 名：
-// 注册名为 "bearer:admin" 时，这里注册同名 scheme 即可自动关联。
+// 端点 Middleware 名命中 scheme 名 → 推导 security + 401
+// （oapi:auth / oapi:limit 为 oapi:middleware 的别名，值统一进 Middleware 名单）。
 func OptionWithSecurity(schemes openapi3.SecuritySchemes) Option {
 	return func(doc *openapi3.T) {
 		doc.Components.SecuritySchemes = schemes
+		securityNames = securityNames[:0]
+		for name := range schemes {
+			securityNames = append(securityNames, name)
+		}
 	}
 }
 

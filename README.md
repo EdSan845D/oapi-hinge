@@ -22,7 +22,7 @@
 //
 // oapi:prefix /users
 // oapi:tag 用户
-// oapi:auth BearerAuth
+// oapi:middleware BearerAuth
 type UserEp struct {
 	Store *UserStore // 字段 = 依赖容器，装配时注入
 }
@@ -60,9 +60,9 @@ func (ep UserEp) CreateUser(ctx context.Context, _ any, b CreateUserReq) (User, 
 | `oapi:route` | 方法·必填 | `"<METHOD> <相对路径>"`，路径省略 = 组根 |
 | `oapi:prefix` | 类型 | 组前缀 |
 | `oapi:tag` | 类型/方法 | OpenAPI tag |
-| `oapi:auth` / `oapi:limit` / `oapi:timeout` | 类型/方法 | 策略声明（数据），运行时经 `RegisterInterceptor` 解析，文档自动派生 |
+| `oapi:timeout` | 类型/方法 | 超时声明，文档派生 x-timeout |
 | `oapi:status` / `oapi:deprecated` / `oapi:envelope` | 方法 | 成功码 / 弃用 / 命名响应壳 |
-| `oapi:middleware` | 类型/方法 | 环绕中间件：`pkg.Func` 限定符可解析时——类型级 → 组级中间件（scoped `Group("", mws...)`），方法级 → 路由直挂（均在内核管线之前，编译期校验）；其余 → 内核拦截器注册名（RegisterInterceptor 按名解析） |
+| `oapi:middleware` | 类型/方法 | 环绕中间件（`oapi:auth` / `oapi:limit` 为其历史别名，值统一进 Middleware 名单，按声明顺序执行）：`pkg.Func` 限定符可解析时——类型级 → 组级中间件（scoped `Group("", mws...)`），方法级 → 路由直挂（编译期校验）；其余 → 内核拦截器注册名（RegisterInterceptor 按名解析）；中间件名命中文档侧 securitySchemes → 自动推导 security + 401 |
 
 ### 代码生成
 

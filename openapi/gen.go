@@ -34,11 +34,13 @@ var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
 // envelopeInstance 由 OptionWithEnvelope 注入运行时实际壳实例；
 // envelopeSchemaCustom 标记 OptionWithEnvelopeSchema 手写壳 schema（仅无法从壳实例推导时使用）；
 // envelopeSchemas 由 OptionWithEnvelopeSchemas 注册命名壳（hinge.Endpoint.Envelope 引用名）的文档 schema。
+// securityNames OptionWithSecurity 注册的 scheme 名（端点 Middleware 名命中 → security + 401）。
 var (
 	envelopeSchema       EnvelopeSchema = defaultEnvelopeSchema
 	envelopeSchemaCustom bool
 	envelopeInstance     hinge.Envelope
 	envelopeSchemas      map[string]EnvelopeSchema
+	securityNames        []string
 )
 
 // Option 文档生成选项：以函数式方式注入文档元信息
@@ -166,7 +168,18 @@ func resetEnvelopeState() {
 	envelopeSchemaCustom = false
 	envelopeInstance = nil
 	envelopeSchemas = nil
+	securityNames = nil
 	sourceComments = false
+}
+
+// isSecurityScheme 中间件名是否命中 OptionWithSecurity 注册的 securityScheme。
+func isSecurityScheme(name string) bool {
+	for _, s := range securityNames {
+		if s == name {
+			return true
+		}
+	}
+	return false
 }
 
 // specGen 一次生成（探测/正式）的上下文。
@@ -240,7 +253,7 @@ func endpointName(ep *hinge.Endpoint) string {
 //   - B：nil / interface{} 表示无 body，否则整包作为 application/json 请求体
 //   - R：Data 段 schema；hinge.FileStream 输出二进制流并声明 404，接口类型（Empty/any）输出任意 JSON 值 schema
 //   - 文档语义映射：ep.Deprecated → deprecated；ep.Status(0→200) → 成功码；
-//     ep.Auth → security + 401；ep.Limit → x-rate-limit；ep.Timeout → x-timeout；ep.Envelope → 命名壳 schema
+//     Middleware 名命中 securitySchemes → security + 401；ep.Timeout → x-timeout；ep.Envelope → 命名壳 schema
 func addOperation(g *specGen, ep *hinge.Endpoint) {
 	op := openapi3.NewOperation()
 	// Responses 先初始化：Auth 401 等响应随后写入
@@ -254,17 +267,16 @@ func addOperation(g *specGen, ep *hinge.Endpoint) {
 		g.noteTag(tg, "")
 	}
 
-	// 环绕拦截器（oapi:auth / oapi:limit / oapi:timeout 注解进 Endpoint）的文档语义
-	if ep.Auth != "" {
-		op.Security = &openapi3.SecurityRequirements{{ep.Auth: {}}}
-		op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
-			WithDescription("Unauthorized：token 缺失或无效")})
-	}
-	if ep.Limit != "" {
-		if op.Extensions == nil {
-			op.Extensions = map[string]any{}
+	// 鉴权中间件的文档语义：Middleware 名命中 OptionWithSecurity 注册的
+	// securityScheme → 推导 security + 401（oapi:auth / oapi:limit 为 oapi:middleware
+	// 的别名，值统一进 Middleware 名单）。
+	for _, name := range ep.Middleware {
+		if isSecurityScheme(name) {
+			op.Security = &openapi3.SecurityRequirements{{name: {}}}
+			op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+				WithDescription("Unauthorized：token 缺失或无效")})
+			break
 		}
-		op.Extensions["x-rate-limit"] = ep.Limit
 	}
 	if ep.Timeout > 0 {
 		if op.Extensions == nil {

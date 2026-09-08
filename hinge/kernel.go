@@ -122,15 +122,9 @@ func (k *Kernel) HandleWith(ep Endpoint, extra []Interceptor, bindQ, bindB Binde
 	if success == 0 {
 		success = http.StatusOK
 	}
-	// 拦截链顺序：Middleware → Limit → Auth（Auth 最贴近管线）
-	names := make([]string, 0, len(ep.Middleware)+2)
-	names = append(names, ep.Middleware...)
-	if ep.Limit != "" {
-		names = append(names, ep.Limit)
-	}
-	if ep.Auth != "" {
-		names = append(names, ep.Auth)
-	}
+	// 拦截链顺序 = Middleware 声明顺序（结构体级 → 方法级）；auth/limit 为
+	// oapi:middleware 的历史别名，值统一进名单（文档语义按名配对推导）
+	names := append([]string{}, ep.Middleware...)
 	chain := make([]Interceptor, 0, len(extra)+len(names))
 	chain = append(chain, extra...)
 	for _, n := range names {

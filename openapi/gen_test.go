@@ -120,7 +120,7 @@ func TestGenerateCustomEnvelopeSchema(t *testing.T) {
 	}
 }
 
-// ============ path 参数类型取自 Q + 401 只随 ep.Auth 声明 ============
+// ============ path 参数类型取自 Q + 401 只随鉴权中间件名声明 ============
 
 type docPathReq struct {
 	ID  int    `path:"id" description:"用户ID"`
@@ -158,21 +158,21 @@ func TestGeneratePathParamsFromQueryStruct(t *testing.T) {
 	if !strings.Contains(s, "用户ID") {
 		t.Fatalf("path param description missing:\n%s", s)
 	}
-	// ③ 公开接口不再硬编码 401（401 只随 ep.Auth 按需声明）
+	// ③ 公开接口不再硬编码 401（401 只随鉴权中间件名按需声明）
 	if strings.Contains(s, "401") {
 		t.Fatalf("global 401 should be gone:\n%s", s)
 	}
 }
 
-// ============ ep.Auth → security + 401；ep.Limit/Timeout → 扩展字段 ============
+// ============ Middleware 名命中 securitySchemes → security + 401 ============
 
 func TestGenerateAuthAndExtensions(t *testing.T) {
 	eps := []hinge.Endpoint{
 		{
 			Owner: "t", Handler: "Admin",
 			Method: "GET", Path: "/doc/admin", Summary: "受保护接口",
-			Auth: "BearerAuth", Limit: "120/min",
-			RType: hinge.Type[map[string]string](),
+			Middleware: []string{"BearerAuth"},
+			RType:      hinge.Type[map[string]string](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
@@ -193,8 +193,9 @@ func TestGenerateAuthAndExtensions(t *testing.T) {
 	if !strings.Contains(s, `"401":`) {
 		t.Fatalf("401 response missing for auth endpoint:\n%s", s)
 	}
-	if !strings.Contains(s, "x-rate-limit") {
-		t.Fatalf("x-rate-limit extension missing:\n%s", s)
+	// 未注册同名 scheme 的中间件名不再推导 security
+	if strings.Contains(s, "x-rate-limit") {
+		t.Fatalf("x-rate-limit should be gone:\n%s", s)
 	}
 }
 

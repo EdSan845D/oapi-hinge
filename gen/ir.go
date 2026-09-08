@@ -28,8 +28,6 @@ type EndpointIR struct {
 	Status      int // 0 → 200
 	Deprecated  bool
 	Envelope    string
-	Auth        string
-	Limit       string
 	TimeoutStr  string // oapi:timeout 原值（发射 hinge.MustDuration("<原值>")）
 	Middleware  []string
 
@@ -86,8 +84,6 @@ var (
 type structAnn struct {
 	Prefix     string
 	Tags       []string
-	Auth       string
-	Limit      string
 	TimeoutStr string
 	Middleware []string
 }
@@ -326,10 +322,13 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 				if value != "" {
 					sa.Tags = append(sa.Tags, value)
 				}
-			case "auth":
-				sa.Auth = value
-			case "limit":
-				sa.Limit = value
+			case "auth", "limit":
+				// oapi:auth / oapi:limit 为 oapi:middleware 的历史别名：
+				// 值 = 内核拦截器注册名，统一进 Middleware 名单（声明顺序保序）；
+				// 文档语义由 Middleware 名命中 securitySchemes 推导。
+				if value != "" {
+					sa.Middleware = append(sa.Middleware, value)
+				}
 			case "timeout":
 				sa.TimeoutStr = value
 			case "middleware", "interceptor":
@@ -373,10 +372,11 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 				if value != "" {
 					mMiddleware = append(mMiddleware, value)
 				}
-			case "auth":
-				ma["auth"] = value
-			case "limit":
-				ma["limit"] = value
+			case "auth", "limit":
+				// 同 struct 级：oapi:auth / oapi:limit 为 oapi:middleware 的别名
+				if value != "" {
+					mMiddleware = append(mMiddleware, value)
+				}
 			case "timeout":
 				ma["timeout"] = value
 			case "status":
@@ -400,8 +400,6 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 			Tags:       append(append([]string{}, sa.Tags...), mTags...),
 			Deprecated: deprecated,
 			Envelope:   ma["envelope"],
-			Auth:       firstNonEmpty(ma["auth"], sa.Auth),
-			Limit:      firstNonEmpty(ma["limit"], sa.Limit),
 			TimeoutStr: firstNonEmpty(ma["timeout"], sa.TimeoutStr),
 		}
 		// 注解 middleware 名单拆档：dotted 且限定符可解析 → 源码引用；

@@ -57,6 +57,12 @@ func Run(rootDir string, cfg Config, check bool) error {
 		return nil
 	}
 	for rel, content := range files {
+		// 全部产物统一 gofmt：specs/binders/all 为逐行拼接，字段删除后对齐宽度会漂移
+		if strings.HasSuffix(rel, ".go") {
+			if formatted, ferr := format.Source([]byte(content)); ferr == nil {
+				content = string(formatted)
+			}
+		}
 		full := filepath.Join(rootDir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return err
@@ -181,12 +187,6 @@ func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 		}
 		if ep.Envelope != "" {
 			fmt.Fprintf(&body, "\tEnvelope: %q,\n", ep.Envelope)
-		}
-		if ep.Auth != "" {
-			fmt.Fprintf(&body, "\tAuth: %q,\n", ep.Auth)
-		}
-		if ep.Limit != "" {
-			fmt.Fprintf(&body, "\tLimit: %q,\n", ep.Limit)
 		}
 		if ep.TimeoutStr != "" {
 			fmt.Fprintf(&body, "\tTimeout: hinge.MustDuration(%q),\n", ep.TimeoutStr)

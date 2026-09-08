@@ -33,10 +33,9 @@ type Endpoint struct {
 	Deprecated bool
 	// Envelope 响应壳注册名（RegisterEnvelope）；空 → 内核默认壳。
 	Envelope string
-	// Auth / Limit / Middleware 环绕拦截器名（RegisterInterceptor 注册），
-	// 执行顺序：Middleware → Limit → Auth（Auth 最贴近管线）。
-	Auth       string
-	Limit      string
+	// Middleware 环绕拦截器名（RegisterInterceptor 注册），按声明顺序执行
+	//（结构体级 → 方法级）。鉴权/限流即普通中间件名：名命中文档侧
+	// securitySchemes 时推导 security + 401。
 	Middleware []string
 	// Timeout 端点超时；0 → 不限时。
 	Timeout time.Duration
@@ -91,7 +90,7 @@ var (
 )
 
 // Interceptor 环绕拦截器：包装整条请求管线（绑定之前可短路）。
-// 由 oapi:auth / oapi:limit / oapi:middleware 注解按名引用。
+// 由 oapi:middleware 注解按名引用（oapi:auth / oapi:limit 为其历史别名）。
 // 短路时自行经 Sink 写出响应并返回 nil；返回非 nil error 交给内核统一错误链。
 type Interceptor func(ctx context.Context, ep Endpoint, r RequestReader, s Sink, next func(context.Context) error) error
 
