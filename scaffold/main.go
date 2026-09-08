@@ -7,8 +7,9 @@
 //	oapi-hinge create myapp --no-tidy          # 跳过 go mod tidy
 //	oapi-hinge create myapp --force            # 覆盖已存在的目录
 //
-// 生成产物：统一 Handler 模板 + 单一路由注册表 + 原生 Gin 运行时 + 文档生成（构建期隔离）。
-// 内置示例业务（用户 CRUD + 文件下载 + 健康检查），删掉 app/handlers 下的示例即可开始写自己的业务。
+// 生成产物：Enterpoint + oapi:* 注解端点 + hinge gen 代码生成（apigen 包）
+// + 原生 Gin 运行时 + 文档生成（-tags openapi 构建期隔离）。
+// 内置示例业务（用户 CRUD + 文件下载 + 健康检查），改 app/eps 下的示例即可开始写自己的业务。
 package main
 
 import (
@@ -151,12 +152,6 @@ func scaffold(project, mod string, force bool) error {
 			return nil
 		}
 		rel := strings.TrimPrefix(path, templateRoot+"/")
-		// v0.2 起模板已迁移到 Enterpoint 范式；v0.1 残留模板不再拷出（待后续版本从 embed 中移除）
-		for _, legacy := range []string{"app/handlers/", "app/routes/", "app/middleware/"} {
-			if strings.HasPrefix(rel, legacy) {
-				return nil
-			}
-		}
 		// 模板中的 go.mod.tmpl 在生成时改名为 go.mod
 		if rel == "go.mod.tmpl" {
 			rel = "go.mod"

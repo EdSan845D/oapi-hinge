@@ -26,10 +26,10 @@ type adapterCreateBody struct {
 	Age  int    `json:"age"`
 }
 
-// ---- ① GET 路径参数 + 默认壳 {code, data, msg} ----
+// ---- ① GET 路径参数 + DefaultEnvelope 统一壳（显式 opt-in） ----
 
 func TestAdapterGetPathParamsEnvelope(t *testing.T) {
-	k := NewKernel()
+	k := NewKernel().SetEnvelope(hinge.DefaultEnvelope{})
 	e := echo.New()
 
 	bindQ := func(ctx context.Context, r hinge.RequestReader) (any, error) {
@@ -80,10 +80,60 @@ func TestAdapterGetPathParamsEnvelope(t *testing.T) {
 	}
 }
 
+// ---- ①b 默认壳 RawEnvelope：成功裸输出，失败 {"error": msg}（不加包装器） ----
+
+func TestAdapterRawEnvelopeDefault(t *testing.T) {
+	k := NewKernel() // 默认裸壳，不加包装器
+	e := echo.New()
+
+	h := func(ctx context.Context, q, b any) (any, error) {
+		if q.(*adapterUserQ).ID == "boom" {
+			return nil, hinge.NotFound("用户不存在")
+		}
+		return map[string]string{"id": q.(*adapterUserQ).ID}, nil
+	}
+	ep := hinge.Endpoint{
+		Owner: "UserEp", Handler: "GetUser",
+		Method: http.MethodGet, Path: "/users/{id}",
+		QType: hinge.Type[adapterUserQ](), RType: hinge.Type[map[string]string](),
+	}
+	e.GET("/users/:id", Handle(k, ep, func(ctx context.Context, r hinge.RequestReader) (any, error) {
+		id, _ := r.PathParam("id")
+		return &adapterUserQ{ID: id}, nil
+	}, nil, h))
+
+	// 成功：裸数据，无 code/msg 包装
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/42", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"code"`) || strings.Contains(rec.Body.String(), `"msg"`) {
+		t.Fatalf("默认裸壳不应有包装字段: body=%s", rec.Body.String())
+	}
+	var data map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil || data["id"] != "42" {
+		t.Fatalf("raw body = %s", rec.Body.String())
+	}
+
+	// 失败：{"error": msg}，与 HTTP 语义一致
+	rec2 := httptest.NewRecorder()
+	e.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/users/boom", nil))
+	if rec2.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec2.Code, rec2.Body.String())
+	}
+	var fail struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &fail); err != nil || fail.Error != "用户不存在" {
+		t.Fatalf("raw failure body = %s", rec2.Body.String())
+	}
+}
+
 // ---- ② 业务错误 contract 语义：hinge.NotFound → HTTP 404 + code=404 ----
 
 func TestAdapterBusinessErrorNotFound(t *testing.T) {
-	k := NewKernel()
+	k := NewKernel().SetEnvelope(hinge.DefaultEnvelope{})
 	e := echo.New()
 
 	h := func(ctx context.Context, q, b any) (any, error) {
@@ -123,7 +173,7 @@ func TestAdapterBusinessErrorNotFound(t *testing.T) {
 // ---- ③ POST JSON body：空缺必填字段 → bind_errors 字段级明细 ----
 
 func TestAdapterPostJSONBindErrors(t *testing.T) {
-	k := NewKernel()
+	k := NewKernel().SetEnvelope(hinge.DefaultEnvelope{})
 	e := echo.New()
 
 	bindB := func(ctx context.Context, r hinge.RequestReader) (any, error) {
@@ -213,7 +263,7 @@ func TestAdapterPostJSONBindErrors(t *testing.T) {
 // ---- ④ correlation：SetCorrelation(true) → 回写 X-Correlation-Id ----
 
 func TestAdapterCorrelation(t *testing.T) {
-	k := NewKernel().SetCorrelation(true)
+	k := NewKernel().SetCorrelation(true).SetEnvelope(hinge.DefaultEnvelope{})
 	e := echo.New()
 
 	h := func(ctx context.Context, q, b any) (any, error) {

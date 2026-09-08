@@ -15,7 +15,7 @@ import (
 // 手写绑定器模拟生成产物形态（hinge.Parse 直调，零反射）。
 
 type tGetReq struct {
-	ID  string `path:"id"`
+	ID   string `path:"id"`
 	Lang string `header:"Accept-Language"`
 }
 
@@ -67,7 +67,7 @@ func bindCreate(ctx context.Context, r hinge.RequestReader) (any, error) {
 
 func setup(t *testing.T, withCorrelation bool) *http.ServeMux {
 	t.Helper()
-	k := NewKernel()
+	k := NewKernel().SetEnvelope(hinge.DefaultEnvelope{}) // 显式统一壳：断言 {code,data,msg} 形态
 	k.SetCorrelation(withCorrelation)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/users/{id}", Handle(k, hinge.Endpoint{
@@ -201,5 +201,59 @@ func TestKernelCorrelation(t *testing.T) {
 	defer resp.Body.Close()
 	if got := resp.Header.Get("X-Correlation-Id"); got != "cid-123" {
 		t.Fatalf("correlation id = %q, want cid-123 (入站沿用)", got)
+	}
+}
+
+// 默认壳 RawEnvelope：成功裸输出业务数据，失败 {"error": msg}（不加包装器）。
+func TestKernelRawEnvelopeDefault(t *testing.T) {
+	k := NewKernel() // 默认裸壳
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/users/{id}", Handle(k, hinge.Endpoint{
+		Owner: "T", Handler: "Get", Method: "GET", Path: "/api/users/{id}", Summary: "详情",
+		QType: hinge.Type[tGetReq](), RType: hinge.Type[tUser](),
+	}, bindGet, nil, func(ctx context.Context, q, b any) (any, error) {
+		v := q.(tGetReq)
+		if v.ID == "missing" {
+			return nil, hinge.NotFound("用户不存在")
+		}
+		return tUser{ID: v.ID, Name: "alice"}, nil
+	}))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// 成功：裸数据，无 {code,data,msg} 包装
+	resp, err := http.Get(srv.URL + "/api/users/u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var raw tUser
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw.ID != "u1" || raw.Name != "alice" {
+		t.Fatalf("raw body = %+v（应无包装）", raw)
+	}
+
+	// 失败：{"error": msg}
+	resp2, err := http.Get(srv.URL + "/api/users/missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp2.StatusCode)
+	}
+	var fail struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&fail); err != nil {
+		t.Fatal(err)
+	}
+	if fail.Error != "用户不存在" {
+		t.Fatalf("raw failure = %+v", fail)
 	}
 }

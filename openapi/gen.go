@@ -464,7 +464,7 @@ func effectiveEnvelope(g *specGen, ep *hinge.Endpoint) (hinge.Envelope, Envelope
 	if envelopeSchemaCustom {
 		return nil, envelopeSchema
 	}
-	return hinge.DefaultEnvelope{}, nil
+	return hinge.RawEnvelope{}, nil
 }
 
 // okResponse 成功响应：壳形态由实际生效的壳方案推导（文档与运行时同构）。

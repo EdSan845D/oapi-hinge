@@ -51,8 +51,9 @@ func main() {
 		return next(ctx)
 	})
 
-	// 扩展点 3（可选）：替换默认响应壳 / 绑定失败状态码 / 关联 ID 等
-	// k.SetEnvelope(hinge.RawEnvelope{})
+	// 扩展点 3（可选）：默认裸输出（RawEnvelope，不加包装器）；
+	// 需要统一 {code,data,msg} 包装时显式开启 DefaultEnvelope
+	// k.SetEnvelope(hinge.DefaultEnvelope{})
 	// k.SetBindErrorStatus(http.StatusBadRequest)
 
 	// 装配：DI + 一行注册（gin / echo / http 各自的 RegisterAll 已生成）

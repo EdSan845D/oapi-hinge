@@ -38,7 +38,8 @@ const (
 	CodeError = 7 // 业务错误（默认）
 )
 
-// DefaultEnvelope 默认响应壳：{code, data, msg}。
+// DefaultEnvelope 统一包装壳：{code, data, msg}（opt-in：内核默认裸壳，
+// 需要时显式 k.SetEnvelope(DefaultEnvelope{})）。
 // SuccessMsg 自定义成功文案；空则使用默认 "操作成功"。
 type DefaultEnvelope struct {
 	SuccessMsg string
@@ -56,7 +57,7 @@ func (DefaultEnvelope) Failure(status int, code int, msg string) any {
 	return Reply[any]{Code: code, Data: nil, Msg: msg}
 }
 
-// RawEnvelope 裸响应壳：成功直接输出业务数据（RESTful 风格），
+// RawEnvelope 裸响应壳（内核默认）：成功直接输出业务数据（RESTful 风格），
 // 失败输出 {"error": msg}（与 HTTP 语义一致，不做业务码包装）。
 type RawEnvelope struct{}
 

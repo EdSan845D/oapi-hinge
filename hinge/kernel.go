@@ -1,4 +1,4 @@
-﻿package hinge
+package hinge
 
 import (
 	"context"
@@ -32,17 +32,19 @@ type Kernel struct {
 // ValidatorFunc 自定义校验器签名。q/b 为解析后的请求值（可能为 nil）。
 type ValidatorFunc func(ctx context.Context, ep Endpoint, q, b any) error
 
-// NewKernel 创建内核：默认壳 {code, data, msg}，默认错误映射，绑定失败 200。
+// NewKernel 创建内核：默认壳 RawEnvelope（裸输出，不加包装器），默认错误映射，绑定失败 200。
+// 需要统一 {code, data, msg} 包装时显式 SetEnvelope(DefaultEnvelope{})；
+// 或经 RegisterEnvelope(name, env) + oapi:envelope <name> 按端点切换命名壳。
 func NewKernel() *Kernel {
 	return &Kernel{
-		envelope:   DefaultEnvelope{},
+		envelope:   RawEnvelope{},
 		bindStatus: http.StatusOK,
 		mapError:   DefaultErrorMapper,
 	}
 }
 
-// SetEnvelope 设置默认响应壳；nil 恢复默认壳。路由级覆盖见 Endpoint.Envelope
-//（oapi:envelope 注解 + RegisterEnvelope 命名注册）。
+// SetEnvelope 设置默认响应壳；nil 恢复默认壳（RawEnvelope 裸输出）。路由级覆盖见 Endpoint.Envelope
+// （oapi:envelope 注解 + RegisterEnvelope 命名注册）。
 func (k *Kernel) SetEnvelope(env Envelope) *Kernel {
 	if env != nil {
 		k.envelope = env
@@ -187,6 +189,7 @@ func (k *Kernel) envelopeFor(ep Endpoint) Envelope {
 	}
 	return envelopes[ep.Envelope]
 }
+
 // serve 单请求管线：绑定 → 校验 → 调用 → 出参转换 → 状态码决策 → 壳包装 → 写出。
 func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink, env Envelope, success int, bindQ, bindB Binder, h HandlerFunc) {
 	var qv, bv any

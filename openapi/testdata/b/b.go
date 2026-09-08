@@ -4,7 +4,7 @@ package b
 import (
 	"context"
 
-	"github.com/EdSan845D/oapi-hinge/contract"
+	"github.com/EdSan845D/oapi-hinge/hinge"
 )
 
 // User 与 a.User 同名：探测裸名 "User" 冲突，应升级为 "b_User"
@@ -16,6 +16,6 @@ type User struct {
 }
 
 // Health 与 a.Health 同名：operationID 裸名 "Health" 冲突
-func Health(ctx context.Context, _ contract.NoReq, _ any) (User, error) {
+func Health(ctx context.Context, _ hinge.NoReq, _ any) (User, error) {
 	return User{ID: "b1", Title: "from-b"}, nil
 }
