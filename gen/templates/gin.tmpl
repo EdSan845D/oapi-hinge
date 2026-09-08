@@ -1,0 +1,16 @@
+{{.Header}}package {{.Pkg}}
+
+{{.ImportBlock}}
+{{- range .Owners}}
+// Register{{.Name}}{{$.Target.Title}} 把 {{.Name}} 的全部端点挂到 {{$.Target.Title}}。
+func Register{{.Name}}{{$.Target.Title}}(i {{$.Target.RouterType}}, k *hinge.Kernel{{if not .IsPkg}}, ep {{.OwnerAlias}}.{{.Name}}{{end}}) {
+{{- if .HasGroup}}
+	r := i.Group("", {{.GroupArgs}})
+{{- else}}
+	r := i
+{{- end}}
+{{- range .Eps}}
+	r.{{.Verb}}("{{.Path}}", {{.Args}})
+{{- end}}
+}
+{{end}}

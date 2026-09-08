@@ -1,8 +1,10 @@
-﻿package gen
+package gen
 
 import (
 	"fmt"
 	"go/ast"
+	"os"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -31,6 +33,14 @@ type EndpointIR struct {
 	TimeoutStr  string // oapi:timeout 原值（发射 hinge.MustDuration("<原值>")）
 	Middleware  []string
 
+	// AnnoMWs 方法级 oapi:middleware 注解解析出的源码引用：发射为路由级直挂参数，
+	// 位于内核包装器之前，编译期类型校验；不进入内核拦截器注册表。
+	AnnoMWs []MWRef
+	// GroupMWs 结构体级 oapi:middleware 注解解析出的源码引用：发射为组级中间件
+	//（scoped Group("", mws...)，仅作用于本 Enterpoint 的路由，不污染传入路由）。
+	// 组级没有端点上下文，引用须为框架原生中间件；Interceptor 请用内核注册名。
+	GroupMWs []MWRef
+
 	HasQ  bool
 	QName string
 	QSet  *fieldSet
@@ -40,9 +50,10 @@ type EndpointIR struct {
 	BSet     *fieldSet
 	BodyKind string // json / raw / multipart（HasB 时有效）
 
-	// RouteMWs 组级中间件源码引用（EntryPointConfig.Midllwares 运行时值反射取名而来）；
-	// RouteMWImports 为对应 import 路径。
-	RouteMWs       []string
+	// RouteMWs EntryPointConfig.Midllwares 运行时值反射出的源码引用（owner 全端点继承）；
+	// Interceptor 值需要端点上下文，发射为每路由显式包装（InterceptAsGin 等），
+	// 其余（框架原生）并入组级。RouteMWImports 为对应 import 路径。
+	RouteMWs       []RouteMWRef
 	RouteMWImports []string
 
 	InTransformQ    bool
@@ -81,20 +92,118 @@ type structAnn struct {
 	Middleware []string
 }
 
+// MWRef 路由级源码引用中间件（oapi:middleware "pkg.Func" 形态）。
+// Qualifier 为发射时使用的包别名（沿用注解限定符；完整路径形态取基名），
+// 发射时经 pkgAlias 重映射防冲突；Import 为解析出的完整 import 路径。
+type MWRef struct {
+	Qualifier string
+	Name      string
+	Import    string
+}
+
+// RouteMWRef EntryPointConfig.Midllwares 运行时值反射出的源码引用。
+// gen.Run 与 generate.go 同进程，运行时值的类型可精确判定：
+// Interceptor 值发射为每路由显式包装；其余为框架原生中间件，并入组级。
+type RouteMWRef struct {
+	Ref         string // 限定名引用，如 middleware.Auth
+	Import      string // 完整 import 路径
+	Interceptor bool   // 运行时值可赋值给 hinge.Interceptor
+}
+
+// splitMWRefs 把注解收集到的 middleware 名单拆成两档：
+//   - "pkg.Func" 且限定符可解析（端点包 import 表 → 被扫描包名 → 完整
+//     import 路径形态）→ 路由级源码引用（框架原生中间件语义，生成期
+//     直挂路由链，编译期类型校验）；
+//   - 其余（无点、限定符未解析、或本身即内核注册名）→ 保留原值，运行时
+//     经 RegisterInterceptor/MustInterceptor 按名解析（框架无关）。
+//
+// 路由级引用不进入 Endpoint.Middleware：内核装配期 MustInterceptor 只认
+// 注册名，gin/echo 原生函数注册不进来，留在名单会 panic 且造成双重执行。
+func splitMWRefs(pkg *Package, scanned map[string]string, names []string) ([]string, []MWRef) {
+	kernel := make([]string, 0, len(names))
+	var refs []MWRef
+	for _, name := range names {
+		if ref, ok := resolveMWRef(pkg, scanned, name); ok {
+			refs = append(refs, ref)
+			continue
+		}
+		if dot := strings.LastIndex(name, "."); dot > 0 && dot < len(name)-1 {
+			fmt.Fprintf(os.Stderr, "hinge gen: 注：oapi:middleware %q 未解析为路由级源码引用（限定符不在端点包 import 表/被扫描包名中，也非完整 import 路径形态），按内核拦截器注册名处理\n", name)
+		}
+		kernel = append(kernel, name)
+	}
+	return kernel, refs
+}
+
+// resolveMWRef 把注解值解析为路由级源码引用。依次尝试：
+//  1. 端点包自身 import 表（显式别名 / 包基名）；
+//  2. 被扫描包的包名（中间件包加入 scan 即可用短名引用；同名多包记 "" 表歧义，不解析）；
+//  3. 完整 import 路径形态（限定符含 "/"，别名取路径基名）。
+func resolveMWRef(pkg *Package, scanned map[string]string, name string) (MWRef, bool) {
+	dot := strings.LastIndex(name, ".")
+	if dot <= 0 || dot >= len(name)-1 {
+		return MWRef{}, false
+	}
+	qualifier, fn := name[:dot], name[dot+1:]
+	if imp, ok := pkg.importPathOfAny(qualifier); ok {
+		return MWRef{Qualifier: qualifier, Name: fn, Import: imp}, true
+	}
+	if imp, ok := scanned[qualifier]; ok && imp != "" {
+		return MWRef{Qualifier: qualifier, Name: fn, Import: imp}, true
+	}
+	if strings.Contains(qualifier, "/") {
+		return MWRef{Qualifier: path.Base(qualifier), Name: fn, Import: qualifier}, true
+	}
+	return MWRef{}, false
+}
+
 // irBuilder IR 构建上下文（错误聚合，全部解析完统一报告）。
 type irBuilder struct {
 	packages []*Package
-	eps      []*EndpointIR
-	errs     []string
+	// scanned 被扫描包的 包名 → import 路径（唯一才登记；同名多包记 "" 表歧义），
+	// 供 oapi:middleware 路由级引用解析限定符。
+	scanned map[string]string
+	eps     []*EndpointIR
+	errs    []string
+}
+
+// scanQualifiers 汇总被扫描包的包名 → import 路径。同名多包视为歧义（""），
+// 不作为 oapi:middleware 限定符解析来源。
+func scanQualifiers(packages []*Package) map[string]string {
+	m := map[string]string{}
+	for _, p := range packages {
+		if prev, dup := m[p.Name]; dup {
+			if prev != p.ImportPath {
+				m[p.Name] = ""
+			}
+			continue
+		}
+		m[p.Name] = p.ImportPath
+	}
+	return m
 }
 
 func (b *irBuilder) errf(format string, args ...any) {
 	b.errs = append(b.errs, fmt.Sprintf(format, args...))
 }
 
+// verifyMWRef 中间件源码引用的存在性校验：引用目标在扫描包内时核对包级函数名。
+func (b *irBuilder) verifyMWRef(byImport map[string]*Package, ep *EndpointIR, ref MWRef) {
+	p, ok := byImport[ref.Import]
+	if !ok {
+		return // 非扫描包（自身 import / 完整路径解析）：交给编译器
+	}
+	for _, md := range p.methods[PKGFlag+p.Name] {
+		if md.Name.Name == ref.Name {
+			return
+		}
+	}
+	b.errf("%s.%s：oapi:middleware %s.%s 在包 %s 中不存在（包级函数）", ep.Owner, ep.Handler, ref.Qualifier, ref.Name, ref.Import)
+}
+
 // buildIR 从扫描包构建全部端点 IR（含完整校验）。
 func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR, error) {
-	b := &irBuilder{packages: packages}
+	b := &irBuilder{packages: packages, scanned: scanQualifiers(packages)}
 	for _, pkg := range packages {
 		b.buildPackage(pkg)
 	}
@@ -120,18 +229,36 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 				continue
 			}
 			for i, mw := range ec.Midllwares {
-				ref, imp, err := middlewareRef(mw)
+				ref, imp, isIC, err := middlewareRef(mw)
 				if err != nil {
 					b.errf("Enterpoint %s Midllwares[%d]: %v", ep.Owner, i, err)
 					continue
 				}
-				ep.RouteMWs = append(ep.RouteMWs, ref)
+				if ref == "nil" {
+					continue // nil 值不发射
+				}
+				ep.RouteMWs = append(ep.RouteMWs, RouteMWRef{Ref: ref, Import: imp, Interceptor: isIC})
 				if imp != "" {
 					ep.RouteMWImports = append(ep.RouteMWImports, imp)
 				}
 			}
 		}
-	} // 全局查重：method+path
+	}
+	// 路由级/组级引用的存在性校验：引用目标在扫描包内时核对包级函数名
+	//（签名兼容性交给编译器；这里只防手误拼错函数名）。
+	byImport := map[string]*Package{}
+	for _, p := range packages {
+		byImport[p.ImportPath] = p
+	}
+	for _, ep := range b.eps {
+		for _, ref := range ep.AnnoMWs {
+			b.verifyMWRef(byImport, ep, ref)
+		}
+		for _, ref := range ep.GroupMWs {
+			b.verifyMWRef(byImport, ep, ref)
+		}
+	}
+	// 全局查重：method+path
 	seen := map[string]string{}
 	for _, ep := range b.eps {
 		key := ep.Method + " " + ep.FullPath
@@ -276,8 +403,15 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 			Auth:       firstNonEmpty(ma["auth"], sa.Auth),
 			Limit:      firstNonEmpty(ma["limit"], sa.Limit),
 			TimeoutStr: firstNonEmpty(ma["timeout"], sa.TimeoutStr),
-			Middleware: append(append([]string{}, sa.Middleware...), mMiddleware...),
 		}
+		// 注解 middleware 名单拆档：dotted 且限定符可解析 → 源码引用；
+		// 其余保留为内核拦截器注册名。结构体级 → 组级（scoped Group），
+		// 方法级 → 路由级直挂。
+		saKernel, saRefs := splitMWRefs(pkg, b.scanned, sa.Middleware)
+		mKernel, mRefs := splitMWRefs(pkg, b.scanned, mMiddleware)
+		ep.Middleware = append(saKernel, mKernel...)
+		ep.AnnoMWs = mRefs
+		ep.GroupMWs = saRefs
 		if len(docLines) > 1 {
 			ep.Description = strings.Join(docLines[1:], "\n")
 		}

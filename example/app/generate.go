@@ -28,7 +28,7 @@ func main() {
 	dir := ""
 	cfg := gen.Config{
 		Module:      "github.com/EdSan845D/oapi-hinge/example",
-		Scan:        []string{"./app/eps"},
+		Scan:        []string{"./app/eps", "./app/middleware"},
 		Out:         "./apigen",
 		Targets:     []string{"gin"},
 		EntryPoints: EntryPointsConfig(),

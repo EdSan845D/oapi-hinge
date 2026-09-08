@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/EdSan845D/oapi-hinge/hinge"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -39,6 +41,11 @@ type EmitConfig struct {
 	Title      string `yaml:"title"`
 	RouterType string `yaml:"router_type"`
 	Lib        string `yaml:"lib"`
+	// PathStyle 路径参数风格：colon（:id，gin/echo）| brace（{id}，http/chi）。空 = colon。
+	PathStyle string `yaml:"path_style"`
+	// Template 注册文件模板：空 → 内置（templates/<target>.tmpl，仅 gin/echo/http）；
+	// 非空 → 模板文件路径（相对模块根或绝对路径），新框架在此接入。
+	Template string `yaml:"template"`
 }
 
 var DEFAULT_GIN_EMITER = EmitConfig{
@@ -51,7 +58,7 @@ var DEFAULT_GIN_EMITER = EmitConfig{
 var DEFAULT_ECHO_EMITER = EmitConfig{
 	Adapter:    "serverecho",
 	Title:      "Echo",
-	RouterType: "echo.Group",
+	RouterType: "*echo.Group",
 	Lib:        "github.com/labstack/echo/v4",
 }
 
@@ -60,6 +67,7 @@ var DEFAULT_HTTP_EMITER = EmitConfig{
 	Title:      "HTTP",
 	RouterType: "*http.ServeMux",
 	Lib:        "net/http",
+	PathStyle:  "brace",
 }
 
 func (c Config) GetEmiter(target string) EmitConfig {
@@ -140,10 +148,14 @@ func LoadConfig(rootDir, path string) (Config, error) {
 		cfg.Targets = []string{"gin", "echo", "http"}
 	}
 	for _, t := range cfg.Targets {
-		switch t {
-		case "gin", "echo", "http":
-		default:
-			return cfg, fmt.Errorf("未知 target %q（支持 gin/echo/http）", t)
+		if _, builtin := defaultEmiters[t]; builtin {
+			continue
+		}
+		// 自定义框架：允许任意 target 名，但必须提供 emitter 配置（adapter 必填，
+		// template 指向注册模板；内置模板仅覆盖 gin/echo/http）。
+		em, ok := cfg.Emitters[t]
+		if !ok || em.Adapter == "" {
+			return cfg, fmt.Errorf("未知 target %q（内置 gin/echo/http；自定义 target 需在 emiters 中提供含 adapter 的配置）", t)
 		}
 	}
 	return cfg, nil
@@ -177,26 +189,30 @@ const PKGFlag = "PKG_"
 // middlewareRef 把 Midllwares 元素（gen.Run 同进程的运行时值）解析为源码引用。
 // 仅支持具名包级函数：gin.HandlerFunc / echo.MiddlewareFunc /
 // func(http.Handler) http.Handler / hinge.Interceptor（本身即具名函数值）。
-// 返回（限定名引用如 m.Auth, importPath）。
-func middlewareRef(v any) (string, string, error) {
+// 返回（限定名引用如 m.Auth, importPath, 是否 hinge.Interceptor）。
+// gen.Run 与调用方同进程，运行时类型可精确判定，无需源码级签名分析。
+func middlewareRef(v any) (string, string, bool, error) {
 	if v == nil {
-		return "nil", "", nil
+		return "nil", "", false, nil
 	}
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Func {
-		return "", "", fmt.Errorf("元素类型 %T 不支持（需为具名包级函数）", v)
+		return "", "", false, fmt.Errorf("元素类型 %T 不支持（需为具名包级函数）", v)
 	}
 	full := runtime.FuncForPC(rv.Pointer()).Name()
 	full = strings.TrimSuffix(full, "-fm")
 	if strings.Contains(full, ".(") || strings.Contains(full, "..") {
-		return "", "", fmt.Errorf("方法值/闭包 %s 无法生成源码引用（请使用具名包级函数）", full)
+		return "", "", false, fmt.Errorf("方法值/闭包 %s 无法生成源码引用（请使用具名包级函数）", full)
 	}
 	dot := strings.LastIndex(full, ".")
 	if dot <= 0 {
-		return "", "", fmt.Errorf("函数名 %s 无法解析包路径", full)
+		return "", "", false, fmt.Errorf("函数名 %s 无法解析包路径", full)
 	}
 	pkgPath, fn := full[:dot], full[dot+1:]
-	return path.Base(pkgPath) + "." + fn, pkgPath, nil
+	// 可赋值给 hinge.Interceptor（定义的函数类型）：需要端点上下文，
+	// 发射为每路由显式包装；其余按框架原生中间件处理。
+	interceptor := rv.Type().AssignableTo(reflect.TypeOf(hinge.Interceptor(nil)))
+	return path.Base(pkgPath) + "." + fn, pkgPath, interceptor, nil
 }
 
 type EntryId string

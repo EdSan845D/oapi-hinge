@@ -37,7 +37,7 @@ func (ep SystemEp) Health(ctx context.Context, _ any) (map[string]string, error)
 //
 // oapi:prefix /users
 // oapi:tag 用户
-// oapi:auth BearerAuth
+// oapi:middleware middleware.Auth
 type UserEp struct {
 	Store *UserStore
 }
