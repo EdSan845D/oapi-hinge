@@ -1,8 +1,11 @@
+//go:build openapi
+
 package openapi
 
 import (
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -25,6 +28,10 @@ type DocHook = func(op *openapi3.Operation)
 
 // mwHooks 中间件文档钩子注册表。
 var mwHooks = map[string]DocHook{}
+
+// mwHookUsed 已被至少一个端点 MWRefs 消费的钩子键：Generate 结束时未消费的
+// 键 = 注册名与 MWRefs 失配（函数改名/移动），钩子静默失效，输出警告（P0-2）。
+var mwHookUsed = map[string]bool{}
 
 // RegisterMiddlewareDoc 注册中间件文档钩子。fn 传中间件函数引用，
 // 反射取全限定名做键（与生成侧 MWRefs 对齐，调用方无需手写名字字符串）；
@@ -67,7 +74,20 @@ func funcRefName(fn any) string {
 func applyMiddlewareHooks(op *openapi3.Operation, refs []string) {
 	for _, ref := range refs {
 		if h, ok := mwHooks[ref]; ok {
+			mwHookUsed[ref] = true
 			h(op)
 		}
 	}
+}
+
+// unmatchedMiddlewareHooks 注册了但未被任何端点 MWRefs 消费的钩子键（排序）。
+func unmatchedMiddlewareHooks() []string {
+	var out []string
+	for name := range mwHooks {
+		if !mwHookUsed[name] {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

@@ -67,9 +67,14 @@ func (ep UserEp) CreateUser(ctx context.Context, _ any, b CreateUserReq) (User, 
 ### 代码生成
 
 ```bash
-go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen        # 生成
+go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen        # 生成（纯注解项目）
 go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen -check # CI 门禁：产物过期即失败
 ```
+
+> **程序化 EntryPoints 项目（generate.go 注入）**：CLI 生成会丢失 EntryPointConfig
+>（组级中间件 / FuncDecls 覆写），已被禁止——产物头部带
+> `entrypoints: programmatic` 标记，CLI 检测到即报错引导。生成与门禁走项目内入口：
+> `go run ./app` 与 `go run ./app -check`（参考 example/app/generate.go）。
 
 产物（按 `hinge.gen.yaml` 的 targets 按需生成）：
 

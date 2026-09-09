@@ -9,9 +9,11 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/EdSan845D/oapi-hinge/gen"
 )
@@ -31,9 +33,32 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	// CLI 禁止程序化 EntryPoints 场景：产物头部带 entrypoints: programmatic 标记
+	// 说明该仓库用 generate.go 同进程注入 EntryPointConfig（组级中间件/FuncDecls
+	// 覆写），CLI 生成会丢失这些配置导致产物漂移。检测基于产物自描述，确定性。
+	if err := rejectProgrammaticArtifacts(*dir, cfg); err != nil {
+		fail(err)
+	}
 	if err := gen.Run(*dir, cfg, *check); err != nil {
 		fail(err)
 	}
+}
+
+// rejectProgrammaticArtifacts 检测产物头部标记：发现 entrypoints: programmatic
+// 即拒绝 CLI 生成/-check，引导到项目内的程序化生成入口。无产物（首次生成）放行。
+func rejectProgrammaticArtifacts(dir string, cfg gen.Config) error {
+	specPath := filepath.Join(dir, filepath.FromSlash(cfg.Out), "specs_gen.go")
+	data, err := os.ReadFile(specPath)
+	if err != nil {
+		return nil // 无产物：首次生成，放行
+	}
+	if bytes.Contains(data, []byte("// entrypoints: programmatic")) {
+		return fmt.Errorf("检测到程序化 EntryPoint 产物（%s 头部标记 entrypoints: programmatic）\n"+
+			"  CLI 生成会丢失 EntryPointConfig（组级中间件 / FuncDecls 覆写），已被禁止。\n"+
+			"  请使用项目内的程序化生成入口重新生成与 -check（generate.go 中 gen.Run 的调用方，\n"+
+			"  参考 example/app/generate.go 的 -check flag）。", specPath)
+	}
+	return nil
 }
 
 func fail(err error) {

@@ -274,6 +274,24 @@ func TestGenerateMiddlewareDocHook(t *testing.T) {
 	}
 }
 
+// 未消费钩子警告：注册了但没有任何端点 MWRefs 引用 → buildDoc warnings（P0-2）
+func TestUnmatchedMiddlewareHookWarning(t *testing.T) {
+	RegisterMiddlewareDoc(demoUnmatchedMW, func(op *openapi3.Operation) {})
+	// demoSessionMW 已在 TestGenerateMiddlewareDocHook 注册并被消费；
+	// demoUnmatchedMW 从未被任何端点 MWRefs 引用，断言警告出现
+	_, warnings, err := buildDoc([]hinge.Endpoint{
+		{Owner: "t", Handler: "Plain", Method: "GET", Path: "/doc/plain", Summary: "无中间件", RType: hinge.Type[map[string]string]()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "demoUnmatchedMW") {
+		t.Fatalf("unmatched hook warning missing:\n%s", joined)
+	}
+}
+
+func demoUnmatchedMW() {}
 func TestRegisterMiddlewareDocPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {

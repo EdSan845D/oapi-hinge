@@ -294,10 +294,20 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 		for _, ec := range entryPoints {
 			byOwner[string(ec.Name)] = ec
 		}
+		// FuncDecls 消费跟踪：未命中任何端点的键 = 拼写/重构失配，覆写会静默失效，
+		// 块尾统一警告（P0-2）。
+		usedFuncDecls := map[FuncId]bool{}
 		for _, ep := range b.eps {
 			ec, ok := byOwner[ep.Owner]
 			if !ok {
 				continue
+			}
+			if rm, ok := ec.FuncDecls[FuncId(funcIdOf(ep))]; ok {
+				usedFuncDecls[FuncId(funcIdOf(ep))] = true
+				if changed := applyRouteMeta(ep, rm); len(changed) > 0 {
+					fmt.Fprintf(os.Stderr, "hinge gen: 注：%s.%s 被 EntryPointConfig.FuncDecls 覆写：%s\n",
+						ep.Owner, ep.Handler, strings.Join(changed, ", "))
+				}
 			}
 			for i, mw := range ec.Midllwares {
 				ref, imp, isIC, err := middlewareRef(mw)
@@ -313,12 +323,12 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 					ep.RouteMWImports = append(ep.RouteMWImports, imp)
 				}
 			}
-			// FuncDecls → 字段级程序化覆写：命中即合并并向 stderr 输出提示，
-			// 保证「代码定义的覆写」在生成日志中可见。
-			if rm, ok := ec.FuncDecls[FuncId(funcIdOf(ep))]; ok {
-				if changed := applyRouteMeta(ep, rm); len(changed) > 0 {
-					fmt.Fprintf(os.Stderr, "hinge gen: 注：%s.%s 被 EntryPointConfig.FuncDecls 覆写：%s\n",
-						ep.Owner, ep.Handler, strings.Join(changed, ", "))
+		}
+		// 未命中的 FuncDecls 键警告：失配时覆写静默失效，必须可见
+		for _, ec := range entryPoints {
+			for key := range ec.FuncDecls {
+				if !usedFuncDecls[key] {
+					fmt.Fprintf(os.Stderr, "hinge gen: 警告：FuncDecls 键 %q 未命中任何端点（函数改名/移动后可能失配），覆写未生效\n", key)
 				}
 			}
 		}

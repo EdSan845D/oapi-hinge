@@ -41,6 +41,14 @@ jobs:
       - name: Test (openapi tag)
         run: go test -tags openapi ./...
 
+      # example 独立模块：程序化 EntryPoints 生成 + 门禁（CLI 已禁止该场景，见 P0-1）
+      - name: Example (programmatic entrypoint)
+        run: |
+          cd example
+          go build ./...
+          go run ./app -check
+          go build -tags openapi ./...
+
       # 脚手架可用性冒烟：生成项目并编译（不跑 tidy，依赖版本以 tag 发布后为准）
       - name: Scaffold smoke
         run: |

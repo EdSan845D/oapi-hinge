@@ -13,7 +13,7 @@ import (
 // ============ RawBody / multipart 的 requestBody 推导（v0.2 端点表构造）============
 
 type genUploadReq struct {
-	Title string                `form:"title" binding:"required"`
+	Title string              `form:"title" binding:"required"`
 	Files []*hinge.FileHeader `form:"files"`
 }
 

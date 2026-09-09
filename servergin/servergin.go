@@ -108,6 +108,11 @@ func (s *Sink) WriteStream(f *hinge.FileStream) { writeStreamFile(s.C, f) }
 // writeStreamFile 输出二进制流（自 v0.1 servergin/mount.go 平移：ServeContent 条件请求 / DataFromReader / 分块回退）。
 // 注：与旧版 mount.go 的 serveFile 并存（旧文件待分支上 git rm），故此处另取其名。
 func writeStreamFile(c *gin.Context, f *hinge.FileStream) {
+	if f.Reader == nil {
+		// 无 Reader 的 FileStream 无法输出：防 panic（内核 serve 不校验 Reader）
+		c.String(http.StatusInternalServerError, "invalid file stream: nil reader")
+		return
+	}
 	contentType := f.ContentType
 	if contentType == "" {
 		contentType = "application/octet-stream"

@@ -1,4 +1,4 @@
-﻿// Package serverhttp 标准库适配器：把 hinge 内核挂到 net/http
+// Package serverhttp 标准库适配器：把 hinge 内核挂到 net/http
 // （Go 1.22+ 方法 + 通配符路由模式，"GET /users/{id}"）。
 // 可移植性试金石：只依赖 hinge 与标准库，证明内核真正框架无关——
 // gin / echo 适配器（servergin / serverecho）与本包形态完全对称。
@@ -110,6 +110,11 @@ func (s *Sink) WriteStream(f *hinge.FileStream) { serveFile(s.W, s.R, f) }
 // http.ServeContent：自动支持 Range/206、If-None-Match / If-Modified-Since、
 // If-Range 条件请求与 416；其余情况回退全量输出。
 func serveFile(w http.ResponseWriter, r *http.Request, f *hinge.FileStream) {
+	if f.Reader == nil {
+		// 无 Reader 的 FileStream 无法输出：防 panic（内核 serve 不校验 Reader）
+		http.Error(w, "invalid file stream: nil reader", http.StatusInternalServerError)
+		return
+	}
 	contentType := f.ContentType
 	if contentType == "" {
 		contentType = "application/octet-stream"
