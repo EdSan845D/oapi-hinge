@@ -153,6 +153,81 @@ func resolveMWRef(pkg *Package, scanned map[string]string, name string) (MWRef, 
 	return MWRef{}, false
 }
 
+// DocMWRefs 文档侧中间件引用名单：内核注册名原样 + 源码引用全限定形态
+// （importPath.FuncName，与反射派生的函数名一致，供 openapi 钩子配对）。
+// 顺序：EntryPointConfig 注入 → 结构体级 → 方法级 → 内核注册名，去重保序。
+func (ep *EndpointIR) DocMWRefs() []string {
+	out := make([]string, 0, len(ep.RouteMWs)+len(ep.GroupMWs)+len(ep.AnnoMWs)+len(ep.Middleware))
+	seen := map[string]bool{}
+	add := func(s string) {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	for _, r := range ep.RouteMWs {
+		if r.Import != "" {
+			if dot := strings.LastIndex(r.Ref, "."); dot > 0 {
+				add(r.Import + r.Ref[dot:])
+				continue
+			}
+		}
+		add(r.Ref)
+	}
+	for _, r := range ep.GroupMWs {
+		add(r.Import + "." + r.Name)
+	}
+	for _, name := range ep.Middleware {
+		add(name)
+	}
+	for _, r := range ep.AnnoMWs {
+		add(r.Import + "." + r.Name)
+	}
+	return out
+}
+
+// funcIdOf 端点对应的 FuncIdentity 键形态：包级所有者 = "pkg.Handler"，
+// 结构体所有者 = "pkg.Owner.Handler"（与 runtime.FuncForPC 派生的
+// FuncIdentity 字符串对齐，如 "eps.SystemEp.Health"）。
+func funcIdOf(ep *EndpointIR) string {
+	if strings.HasPrefix(ep.Owner, PKGFlag) {
+		return ep.Pkg.Name + "." + ep.Handler
+	}
+	return ep.Pkg.Name + "." + ep.Owner + "." + ep.Handler
+}
+
+// applyRouteMeta 把 FuncDecls.RouteMeta 按字段级语义合并进端点 IR：
+// 非零/非 nil 字段才覆盖注解值（零值保持注解不变）；Method/Path 为预留字段，
+// 路由以注解为唯一事实源，不参与覆写。返回被覆写字段的可读描述列表。
+func applyRouteMeta(ep *EndpointIR, rm RouteMeta) []string {
+	var changed []string
+	if rm.Summary != "" {
+		ep.Summary = rm.Summary
+		changed = append(changed, "summary")
+	}
+	if rm.Description != "" {
+		ep.Description = rm.Description
+		changed = append(changed, "description")
+	}
+	if len(rm.Tags) > 0 {
+		ep.Tags = append([]string{}, rm.Tags...)
+		changed = append(changed, "tags")
+	}
+	if rm.DefaultStatusCode != 0 {
+		ep.Status = rm.DefaultStatusCode
+		changed = append(changed, fmt.Sprintf("status=%d", rm.DefaultStatusCode))
+	}
+	if rm.Envelope != "" {
+		ep.Envelope = rm.Envelope
+		changed = append(changed, "envelope="+rm.Envelope)
+	}
+	if rm.Deprecated != nil {
+		ep.Deprecated = *rm.Deprecated
+		changed = append(changed, fmt.Sprintf("deprecated=%v", *rm.Deprecated))
+	}
+	return changed
+}
+
 // irBuilder IR 构建上下文（错误聚合，全部解析完统一报告）。
 type irBuilder struct {
 	packages []*Package
@@ -236,6 +311,14 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 				ep.RouteMWs = append(ep.RouteMWs, RouteMWRef{Ref: ref, Import: imp, Interceptor: isIC})
 				if imp != "" {
 					ep.RouteMWImports = append(ep.RouteMWImports, imp)
+				}
+			}
+			// FuncDecls → 字段级程序化覆写：命中即合并并向 stderr 输出提示，
+			// 保证「代码定义的覆写」在生成日志中可见。
+			if rm, ok := ec.FuncDecls[FuncId(funcIdOf(ep))]; ok {
+				if changed := applyRouteMeta(ep, rm); len(changed) > 0 {
+					fmt.Fprintf(os.Stderr, "hinge gen: 注：%s.%s 被 EntryPointConfig.FuncDecls 覆写：%s\n",
+						ep.Owner, ep.Handler, strings.Join(changed, ", "))
 				}
 			}
 		}

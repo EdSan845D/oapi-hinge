@@ -37,6 +37,11 @@ type Endpoint struct {
 	//（结构体级 → 方法级）。鉴权/限流即普通中间件名：名命中文档侧
 	// securitySchemes 时推导 security + 401。
 	Middleware []string
+	// MWRefs 文档侧中间件引用名单（hinge gen 生成，运行时不消费）：
+	// 源码引用为 "import路径.FuncName" 全限定形态（与反射派生的函数名一致，
+	// 如 "github.com/x/app/middleware.Auth"），内核拦截器注册名为原名。
+	// openapi 生成器据此配对 RegisterMiddlewareDoc 文档钩子。
+	MWRefs []string
 	// Timeout 端点超时；0 → 不限时。
 	Timeout time.Duration
 	// QType / BType / RType 类型信息：openapi 文档生成消费；

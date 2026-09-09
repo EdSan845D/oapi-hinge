@@ -83,6 +83,32 @@ go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen -check # CI 门禁：产物
 
 生成期即做诊断：路径冲突、path 参数与 Q 字段一致性、策略未声明、multipart 字段缺 form 标签、双前缀笔误等。
 
+### 程序化覆写：EntryPointConfig
+
+gen.Run 同进程可注入程序化配置（generate.go），注解为主、代码为辅：
+
+```go
+gen.Config{
+	// ...
+	EntryPoints: []gen.EntryPointConfig{
+		{
+			Name:       "SystemEp",
+			Midllwares: []any{middleware.Auth}, // 组级中间件（运行时值，自动分档发射）
+			FuncDecls: map[gen.FuncId]gen.RouteMeta{
+				gen.FuncIdentity(eps.SystemEp.Health): {
+					Summary:     "健康检查（代码覆写示例）", // 字段级覆写：非零字段才覆盖注解值
+					Deprecated:  gen.Ptr(true),           // 三态：nil 不动 / true 置位 / false 清除
+				},
+			},
+		},
+	},
+}
+```
+
+FuncDecls 支持覆写 Summary / Description / Tags / DefaultStatusCode / Envelope / Deprecated（*bool 三态），
+零值字段保持注解不变；命中端点在生成日志输出覆写提示（如 `注：SystemEp.Health 被 EntryPointConfig.FuncDecls 覆写：summary, deprecated=true`），
+保证代码定义的覆写可见。路由（Method/Path）以注解为唯一事实源，不参与覆写。
+
 ### 装配：DI + 一行注册
 
 ```go
@@ -136,13 +162,39 @@ func collect(epss ...hinge.Enterpoint) []hinge.Endpoint {
 
 `Endpoints()` 表即「路径↔函数对应关系」的唯一检视入口，conformance 测试与文档都从它派生。
 
+### 中间件文档钩子
+
+中间件对文档的影响（security、header 参数、错误响应等）通过函数引用注册钩子自定义。
+生成器把每个端点的中间件引用发射为 `Endpoint.MWRefs`（全限定名，与反射派生函数名一致），
+文档生成时按引用配对调用钩子：
+
+```go
+//go:build openapi
+// main_doc.go
+openapi.RegisterMiddlewareDoc(middleware.Auth, func(op *openapi3.Operation) {
+	op.Security = &openapi3.SecurityRequirements{{"BearerAuth": {}}}
+	op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+		WithDescription("Unauthorized：缺少或无效的 Bearer token")})
+})
+openapi.RegisterMiddlewareDoc(middleware.ParseHeaderWithInfo, func(op *openapi3.Operation) {
+	op.AddParameter(&openapi3.Parameter{Name: "X-SessionId", In: "header", Required: true,
+		Description: "会话 ID", Schema: &openapi3.SchemaRef{Value: openapi3.NewStringSchema()}})
+	op.Responses.Set("403", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+		WithDescription("Forbidden：缺少 X-SessionId 请求头")})
+})
+```
+
+无需手写中间件名字符串；未注册钩子的中间件不影响文档。内核拦截器注册名（无点形态）
+另有内置推导：名字命中 `OptionWithSecurity` 注册的 scheme 时自动加 security + 401。
+
 ## 可插拔能力
 
 - **响应壳**：默认裸输出（RawEnvelope，不加包装器）；`k.SetEnvelope(hinge.DefaultEnvelope{})` 开启 `{code, data, msg}` 统一包装；`hinge.RegisterEnvelope(name, env)` + `oapi:envelope <name>` 路由级切换；文档侧 `OptionWithEnvelope` 从壳实例同构推导；
 - **错误携带状态码**：`hinge.NotFound/BadRequest/...` 或实现 `StatusCoder`；默认 HTTP 200 + code=7，`k.SetBindErrorStatus(400)` 切 RESTful；
 - **入参转换 / 出参加工**：`InTransform(ctx) error` / `OutTransform(ctx) error` 接口由生成绑定器与内核自动调用（零反射）；
 - **校验器**：生成绑定器内置 required 检查 + `Validate()` 直调；`validator.Playground()` 接入完整规则（可选依赖）；
-- **拦截器**：`RegisterInterceptor(name, fn)`，注解按名引用；短路时自行经 Sink 写出并返回 nil，返回错误走统一错误链。
+- **拦截器**：`RegisterInterceptor(name, fn)`，注解按名引用；短路时自行经 Sink 写出并返回 nil，返回错误走统一错误链；
+- **中间件文档钩子**：`openapi.RegisterMiddlewareDoc(fn, hook)`（openapi tag），按函数引用为引用了该中间件的端点定制 security/参数/响应，见「中间件文档钩子」。
 
 ## 从 v0.1 迁移（破坏性变更）
 

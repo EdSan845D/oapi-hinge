@@ -194,6 +194,9 @@ func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 		if len(ep.Middleware) > 0 {
 			fmt.Fprintf(&body, "\tMiddleware: []string{%s},\n", quoteList(ep.Middleware))
 		}
+		if refs := ep.DocMWRefs(); len(refs) > 0 {
+			fmt.Fprintf(&body, "\tMWRefs: []string{%s},\n", quoteList(refs))
+		}
 		if ep.HasQ {
 			fmt.Fprintf(&body, "\tQType: hinge.Type[%s.%s](),\n", ownerAlias, ep.QName)
 		}

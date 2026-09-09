@@ -104,3 +104,46 @@ func TestScanQualifiers(t *testing.T) {
 		t.Fatalf("ambiguous qualifier should be empty: %v", m)
 	}
 }
+
+// ---- FuncDecls 字段级覆写：applyRouteMeta / funcIdOf ----
+
+func TestApplyRouteMeta(t *testing.T) {
+	ep := &EndpointIR{
+		Summary:    "注解摘要",
+		Tags:       []string{"注解tag"},
+		Status:     200,
+		Envelope:   "env1",
+		Deprecated: true,
+	}
+	// 零值字段跳过；显式字段覆盖；Deprecated 三态（清除）
+	changed := applyRouteMeta(ep, RouteMeta{
+		Summary:           "代码摘要",
+		DefaultStatusCode: 201,
+		Deprecated:        Ptr(false),
+	})
+	if ep.Summary != "代码摘要" || ep.Status != 201 || ep.Deprecated {
+		t.Fatalf("override mismatch: %+v", ep)
+	}
+	if ep.Description != "" || len(ep.Tags) != 1 || ep.Envelope != "env1" {
+		t.Fatalf("zero-value fields must keep annotation values: %+v", ep)
+	}
+	if len(changed) != 3 || changed[0] != "summary" || changed[1] != "status=201" || changed[2] != "deprecated=false" {
+		t.Fatalf("changed list mismatch: %v", changed)
+	}
+	// Deprecated 置位
+	applyRouteMeta(ep, RouteMeta{Deprecated: Ptr(true)})
+	if !ep.Deprecated {
+		t.Fatal("deprecated should be set")
+	}
+}
+
+func TestFuncIdOf(t *testing.T) {
+	ep := &EndpointIR{Pkg: &Package{Name: "eps"}, Owner: "UserEp", Handler: "DeleteUser"}
+	if got := funcIdOf(ep); got != "eps.UserEp.DeleteUser" {
+		t.Fatalf("funcIdOf = %q", got)
+	}
+	pkgEp := &EndpointIR{Pkg: &Package{Name: "eps"}, Owner: "PKG_eps", Handler: "Index"}
+	if got := funcIdOf(pkgEp); got != "eps.Index" {
+		t.Fatalf("pkg funcIdOf = %q", got)
+	}
+}

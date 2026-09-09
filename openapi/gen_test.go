@@ -226,3 +226,59 @@ func TestGenerateSliceQueryParam(t *testing.T) {
 		t.Fatalf("slice param schema not array:\n%s", s)
 	}
 }
+
+// ---- 中间件文档钩子：MWRefs 全限定引用配对（RegisterMiddlewareDoc）----
+
+// 钩子配对用的样例中间件（反射名 = 本包全限定名，与 MWRefs 条目同构）
+func demoSessionMW() {}
+
+func TestGenerateMiddlewareDocHook(t *testing.T) {
+	const demoRef = "github.com/EdSan845D/oapi-hinge/openapi.demoSessionMW"
+	eps := []hinge.Endpoint{
+		{
+			Owner: "t", Handler: "Del",
+			Method: "DELETE", Path: "/doc/users/{id}", Summary: "删除",
+			RType:  hinge.Type[map[string]string](),
+			MWRefs: []string{demoRef},
+		},
+		{
+			Owner: "t", Handler: "Get",
+			Method: "GET", Path: "/doc/users/{id}", Summary: "详情（无该中间件）",
+			RType: hinge.Type[map[string]string](),
+		},
+	}
+	RegisterMiddlewareDoc(demoSessionMW, func(op *openapi3.Operation) {
+		op.Responses.Set("403", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+			WithDescription("Forbidden：缺少 X-SessionId 请求头")})
+	})
+	out := t.TempDir() + "/spec.yaml"
+	if err := Generate(out, eps); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "403") || !strings.Contains(s, "X-SessionId") {
+		t.Fatalf("middleware doc hook not applied:\n%s", s)
+	}
+	// 钩子仅作用于引用了该中间件的端点：按 operation 分块校验
+	for _, block := range strings.Split(s, "operationId:") {
+		if strings.Contains(block, "t_Del") && !strings.Contains(block, "403") {
+			t.Fatalf("403 missing on hooked operation:\n%s", block)
+		}
+		if strings.Contains(block, "t_Get") && strings.Contains(block, "403") {
+			t.Fatalf("403 should not leak to unhooked operation:\n%s", block)
+		}
+	}
+}
+
+func TestRegisterMiddlewareDocPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic on duplicate registration")
+		}
+	}()
+	RegisterMiddlewareDoc(demoSessionMW, func(op *openapi3.Operation) {}) // 重复注册
+}

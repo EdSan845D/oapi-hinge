@@ -278,6 +278,9 @@ func addOperation(g *specGen, ep *hinge.Endpoint) {
 			break
 		}
 	}
+	// 中间件文档钩子：按 MWRefs 全限定引用配对（RegisterMiddlewareDoc 注册），
+	// 后于内置推导执行（同名钩子可覆盖内置 security/响应）。
+	applyMiddlewareHooks(op, ep.MWRefs)
 	if ep.Timeout > 0 {
 		if op.Extensions == nil {
 			op.Extensions = map[string]any{}

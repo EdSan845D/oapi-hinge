@@ -165,15 +165,23 @@ type EntryPoint interface {
 	EntryPointConfig() EntryPointConfig
 }
 
+// Ptr 返回 v 的指针：RouteMeta.Deprecated 三态覆写用
+// （nil = 不覆盖 / Ptr(true) = 置位 / Ptr(false) = 清除）。
+func Ptr[T any](v T) *T { return new(v) }
+
 type RouteMeta struct {
-	Method            string
-	Path              string
+	// Method / Path 程序化路由覆写：预留字段，暂未消费——路由以注解为唯一事实源。
+	Method string
+	Path   string
+	// 以下为字段级覆写（FuncDecls 命中端点后，非零值才覆盖注解值，零值保持注解不变）：
 	Summary           string
 	Description       string
 	Tags              []string
 	DefaultStatusCode int
-	Deprecated        bool
 	Envelope          string
+	// Deprecated 三态覆写：nil = 不覆盖；Ptr(true) = 置弃用标记；Ptr(false) = 清除
+	//（注解 oapi:deprecated 只能置位无法撤销）。
+	Deprecated *bool
 }
 
 type EntryPointConfig struct {
@@ -181,7 +189,10 @@ type EntryPointConfig struct {
 	Prefix     string
 	Tags       []string
 	Midllwares []any
-	FuncDecls  map[FuncId]RouteMeta
+	// FuncDecls 字段级程序化覆写：键为 FuncIdentity(fn) 派生的函数标识
+	//（如 "eps.SystemEp.Health"），值为按字段合并的覆写元数据（非零字段才生效）。
+	// 命中的端点在生成期输出覆写提示，保证代码定义的覆写可见。
+	FuncDecls map[FuncId]RouteMeta
 }
 
 const PKGFlag = "PKG_"
