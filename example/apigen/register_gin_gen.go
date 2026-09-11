@@ -60,3 +60,11 @@ func RegisterUserEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.UserEp) {
 		return ep.UpdateExtra(ctx, q.(eps.GetUserReq), b.(eps.ExtraBody))
 	}))
 }
+
+// RegisterAllGin 一次装配全部端点（Gin）。
+func RegisterAllGin(i gin.IRouter, k *hinge.Kernel, all All) {
+	RegisterFileEpGin(i, k, all.FileEp)
+	RegisterPKG_epsGin(i, k)
+	RegisterSystemEpGin(i, k, all.SystemEp)
+	RegisterUserEpGin(i, k, all.UserEp)
+}

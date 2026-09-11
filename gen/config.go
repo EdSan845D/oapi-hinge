@@ -37,37 +37,12 @@ type Config struct {
 
 // 代码生成时的配置
 type EmitConfig struct {
-	Adapter    string `yaml:"adapter"`
-	Title      string `yaml:"title"`
-	RouterType string `yaml:"router_type"`
-	Lib        string `yaml:"lib"`
+	Title string `yaml:"title"`
 	// PathStyle 路径参数风格：colon（:id，gin/echo）| brace（{id}，http/chi）。空 = colon。
 	PathStyle string `yaml:"path_style"`
 	// Template 注册文件模板：空 → 内置（templates/<target>.tmpl，仅 gin/echo/http）；
 	// 非空 → 模板文件路径（相对模块根或绝对路径），新框架在此接入。
 	Template string `yaml:"template"`
-}
-
-var DEFAULT_GIN_EMITER = EmitConfig{
-	Adapter:    "servergin",
-	Title:      "Gin",
-	RouterType: "gin.IRouter",
-	Lib:        "github.com/gin-gonic/gin",
-}
-
-var DEFAULT_ECHO_EMITER = EmitConfig{
-	Adapter:    "serverecho",
-	Title:      "Echo",
-	RouterType: "*echo.Group",
-	Lib:        "github.com/labstack/echo/v4",
-}
-
-var DEFAULT_HTTP_EMITER = EmitConfig{
-	Adapter:    "serverhttp",
-	Title:      "HTTP",
-	RouterType: "*http.ServeMux",
-	Lib:        "net/http",
-	PathStyle:  "brace",
 }
 
 func (c Config) GetEmiter(target string) EmitConfig {
@@ -77,7 +52,18 @@ func (c Config) GetEmiter(target string) EmitConfig {
 			return emiter
 		}
 	}
-	emiter, ok := defaultEmiters[target]
+	emiter, ok := map[string]EmitConfig{
+		"gin": {
+			Title: "Gin",
+		},
+		"echo": {
+			Title: "Echo",
+		},
+		"http": {
+			Title:     "HTTP",
+			PathStyle: "brace",
+		},
+	}[target]
 	if ok {
 		return emiter
 	}
@@ -100,16 +86,6 @@ func (c *Config) InitDefault() {
 	if c.Pkg == "" {
 		c.Pkg = filepath.Base(filepath.FromSlash(c.Out))
 	}
-}
-
-var defaultEmiters = map[string]EmitConfig{
-	"gin":  DEFAULT_GIN_EMITER,
-	"echo": DEFAULT_ECHO_EMITER,
-	"http": DEFAULT_HTTP_EMITER,
-}
-
-func NewDefaultEmiters() map[string]EmitConfig {
-	return defaultEmiters
 }
 
 var moduleRe = regexp.MustCompile(`(?m)^module\s+(\S+)\s*$`)
@@ -145,18 +121,7 @@ func LoadConfig(rootDir, path string) (Config, error) {
 		cfg.Pkg = filepath.Base(cfg.Out)
 	}
 	if len(cfg.Targets) == 0 {
-		cfg.Targets = []string{"gin", "echo", "http"}
-	}
-	for _, t := range cfg.Targets {
-		if _, builtin := defaultEmiters[t]; builtin {
-			continue
-		}
-		// 自定义框架：允许任意 target 名，但必须提供 emitter 配置（adapter 必填，
-		// template 指向注册模板；内置模板仅覆盖 gin/echo/http）。
-		em, ok := cfg.Emitters[t]
-		if !ok || em.Adapter == "" {
-			return cfg, fmt.Errorf("未知 target %q（内置 gin/echo/http；自定义 target 需在 emiters 中提供含 adapter 的配置）", t)
-		}
+		return cfg, fmt.Errorf("至少选择一种框架和匹配的模板，内置有gin,echo,http")
 	}
 	return cfg, nil
 }

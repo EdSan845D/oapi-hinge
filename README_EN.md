@@ -53,7 +53,7 @@ go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen        # generate
 go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen -check # CI gate
 ```
 
-Outputs per `hinge.gen.yaml`: endpoint specs, deduplicated typed binders, per-framework registration functions (`RegisterAllGin` / `RegisterAllEcho` / `RegisterAllHTTP`), and the `Endpoints()` mapping table. Diagnostics at generation time: route conflicts, path-param consistency, unregistered policies, multipart tag mistakes.
+Outputs per `hinge.gen.yaml`: endpoint specs plus the `All` aggregator (`specs_gen.go`), deduplicated typed binders, per-framework registration functions plus `RegisterAllGin` / `RegisterAllEcho` / `RegisterAllHTTP` (`register_<t>_gen.go`), and the `Endpoints()` mapping table. Diagnostics at generation time: route conflicts, path-param consistency, unregistered policies, multipart tag mistakes.
 
 ### Wiring: DI + one line
 

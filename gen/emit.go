@@ -17,9 +17,9 @@ import (
 )
 
 // 发射器：IR → 生成文件。
-//   - <out>/specs_gen.go        端点描述变量（hinge.Endpoint）
+//   - <out>/specs_gen.go        端点描述变量（hinge.Endpoint）+ All 聚合器
 //   - <out>/binders_gen.go      类型化绑定器（按 Q/B 类型去重；请求期零反射）
-//   - <out>/register_<t>_gen.go 各框架注册函数（gin/echo/http）+ RegisterAll
+//   - <out>/register_<t>_gen.go 各框架注册函数（gin/echo/http）+ RegisterAll<Target>
 
 // Run 生成入口：解析 → IR → 发射（写盘；check=true 时只校验产物是否最新）。
 func Run(rootDir string, cfg Config, check bool) error {
@@ -134,11 +134,6 @@ func Emit(rootDir string, cfg Config, eps []*EndpointIR) (map[string]string, err
 		}
 		files[fmt.Sprintf("%s/register_%s_gen.go", cfg.Out, target)] = reg
 	}
-	all, err := emitAll(cfg, eps)
-	if err != nil {
-		return nil, err
-	}
-	files[cfg.Out+"/all_gen.go"] = all
 
 	// 表文件：每个扫描包一个（包含该包全部 Enterpoint）
 	byPkg := map[*Package][]*EndpointIR{}
@@ -241,6 +236,27 @@ func AllSpecs() []hinge.Endpoint {
 }
 `, strings.Join(specNames, ",\n\t\t")+","))
 	b.WriteString("\n")
+	// All 聚合器：Enterpoint 实例集合（字段名 = 结构体名；包级所有者无实例，跳过）。
+	// 各框架 RegisterAll<Target>（见 register_<target>_gen.go）消费本类型。
+	ownerAliasOf := map[string]string{}
+	var allOwners []string
+	for _, ep := range eps {
+		if strings.HasPrefix(ep.Owner, PKGFlag) {
+			continue
+		}
+		if _, seen := ownerAliasOf[ep.Owner]; seen {
+			continue
+		}
+		ownerAliasOf[ep.Owner] = taken[ep.Pkg.ImportPath]
+		allOwners = append(allOwners, ep.Owner)
+	}
+	sort.Strings(allOwners)
+	b.WriteString("// All 聚合全部 Enterpoint 实例（字段名 = 结构体名）。\n")
+	b.WriteString("type All struct {\n")
+	for _, owner := range allOwners {
+		fmt.Fprintf(&b, "\t%s %s.%s\n", owner, ownerAliasOf[owner], owner)
+	}
+	b.WriteString("}\n\n")
 	b.WriteString(body.String())
 	return b.String(), nil
 }
@@ -682,21 +698,19 @@ func frameworkPath(emiter EmitConfig, p string) string {
 
 // ---- 注册文件发射：数据模型 + 模板渲染 ----
 //
-// 语义（参数组装、拦截器包装、链序）在 Go 侧统一实现；模板只负责文件形态
-//（函数签名、组声明、路由调用行）。接入新框架：提供 EmitConfig（adapter/
-// router_type/lib/path_style/template）+ 一份注册模板，无需改发射器。
+// 语义（参数组装、链序）在 Go 侧统一实现；模板负责文件形态（函数签名、组声明、
+// 路由调用行、端点闭包直调）与 RegisterAll<Target>。接入新框架：提供 EmitConfig
+//（title/path_style/template）+ 一份注册模板，无需改发射器；模板直接消费端点 IR。
 
-// epData 一条路由的发射数据。
+// epData 一条路由的发射数据：内嵌端点 IR（模板可直接访问 Method / Handler /
+// QName / BName / TwoArg / FullPath / RExpr 等全量字段），叠加按 target 派生的
+// 发射态字段（路径风格、中间件实参、描述变量名、绑定器实参）。
 type epData struct {
-	Method  string // 原始 HTTP 方法（echo/http 用）
-	Path    string // 目标框架路径风格
-	Args    string // 路由调用剩余参数（含 handle），按 target 语义组装
-	Spec    string
-	Binder  string
-	TwoArgs bool
-	QName   string
-	BName   string
-	Handler string
+	*EndpointIR        // 端点 IR：Method / Handler / QName / BName / TwoArg / FullPath ...
+	Path        string // 目标框架路径风格
+	Args        string // 路由调用剩余中间件参数（按 target 语义组装）
+	Spec        string // 端点描述变量名（Spec<Owner><Handler>）
+	Binder      string // 绑定器实参串（bindQ, bindB）
 }
 
 // ownerData 一个 Enterpoint 的注册函数数据。
@@ -789,7 +803,6 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 			}
 
 			specRef := GenSpecName(ep)
-			// handle := fmt.Sprintf("%s.Handle(k, %s, %s, %s)", emiter.Adapter, specRef, bindArgs, closure)
 			// 方法级注解引用：路由级直挂（组级之后、内核包装器之前）。
 			annoRefs := make([]string, 0, len(ep.AnnoMWs))
 			for _, ref := range ep.AnnoMWs {
@@ -798,13 +811,8 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 			// EntryPointConfig 中的 Interceptor 值：需要端点上下文（错误链），
 			// 每路由显式包装，不走运行时类型识别。
 			icWrapped := make([]string, 0, len(ep.RouteMWs))
-			for _, rmw := range ep.RouteMWs {
-				if rmw.Interceptor {
-					icWrapped = append(icWrapped, wrapInterceptor(emiter.Adapter, specRef, rmw.Ref))
-				}
-			}
 
-			ed := &epData{Method: ep.Method, Path: frameworkPath(emiter, ep.FullPath), Spec: specRef, Binder: bindArgs, QName: ep.QName, BName: ep.BName, TwoArgs: ep.TwoArg, Handler: ep.Handler}
+			ed := &epData{EndpointIR: ep, Path: frameworkPath(emiter, ep.FullPath), Spec: specRef, Binder: bindArgs}
 			switch target {
 			case "http":
 				// stdlib 无路由链：全部引用折叠进 Handle 变参（内核拦截链，
@@ -838,36 +846,9 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 	return renderRegister(rootDir, emiter, target, data)
 }
 
-// returnCall 端点方法直调表达式（包级所有者直调包函数，结构体所有者经接收者）。
-func returnCall(owner string, isPkgOwner bool, ep *EndpointIR) func(qExpr, bExpr string) string {
-	return func(qExpr, bExpr string) string {
-		pCaller := "ep"
-		if isPkgOwner {
-			pCaller = strings.TrimPrefix(owner, PKGFlag)
-		}
-		if ep.TwoArg {
-			return fmt.Sprintf("return %s.%s(ctx, %s)", pCaller, ep.Handler, qExpr)
-		}
-		return fmt.Sprintf("return %s.%s(ctx, %s, %s)", pCaller, ep.Handler, qExpr, bExpr)
-	}
-}
-
 // mwSourceRef 中间件源码引用表达式（限定符经 pkgAlias 重映射防别名冲突）。
 func mwSourceRef(is *importSet, taken map[string]string, ref MWRef) string {
 	return pkgAlias(is, taken, ref.Import, ref.Qualifier) + "." + ref.Name
-}
-
-// wrapInterceptor Interceptor 值的每路由显式包装（需要端点上下文做错误链写出）。
-// serverhttp 无路由链：调用方把原始引用折叠进 Handle 变参，不经此处。
-func wrapInterceptor(adapter, specRef, ref string) string {
-	switch adapter {
-	case "servergin":
-		return fmt.Sprintf("servergin.InterceptAsGin(%s, %s)", specRef, ref)
-	case "serverecho":
-		return fmt.Sprintf("serverecho.InterceptAsEcho(%s, %s)", specRef, ref)
-	default:
-		return ref // 自定义适配器：原样引用，桥接形态由适配器自行决定
-	}
 }
 
 // renderRegister 加载模板（内置或 EmitConfig.Template）渲染并 gofmt 规范化。
@@ -904,88 +885,6 @@ func renderRegister(rootDir string, emiter EmitConfig, target string, data *regi
 	}
 	fmt.Fprintf(os.Stderr, "hinge gen: 注册模板输出未通过 gofmt，按原始文本写入\n")
 	return out.String(), nil
-}
-
-// emitAll All 聚合器（单一文件，避免跨 target 重复声明）。
-func emitAll(cfg Config, eps []*EndpointIR) (string, error) {
-	is := newImportSet()
-	is.add(hingeImportPath, "")
-	taken := map[string]string{}
-	owners := map[string][]*EndpointIR{}
-	var ownerOrder []string
-	for _, ep := range eps {
-		if _, ok := owners[ep.Owner]; !ok {
-			ownerOrder = append(ownerOrder, ep.Owner)
-		}
-		owners[ep.Owner] = append(owners[ep.Owner], ep)
-		pkgAlias(is, taken, ep.Pkg.ImportPath, ep.Pkg.Name)
-	}
-	sort.Strings(ownerOrder)
-	var fws []EmitConfig
-	for _, target := range cfg.Targets {
-		emiter_cfg := cfg.GetEmiter(target)
-		fws = append(fws, emiter_cfg)
-		is.add(emiter_cfg.Lib, "")
-	}
-	var b strings.Builder
-	b.WriteString(genHeader(cfg))
-	b.WriteString("package ")
-	b.WriteString(cfg.Pkg)
-	b.WriteString("\n\n")
-	b.WriteString(is.block())
-	b.WriteString("\n")
-	b.WriteString("// All 聚合全部 Enterpoint 实例（字段名 = 结构体名）。\n")
-	b.WriteString("type All struct {\n")
-	for _, owner := range ownerOrder {
-		if strings.HasPrefix(owner, PKGFlag) {
-			continue
-		}
-		ep0 := owners[owner][0]
-		fmt.Fprintf(&b, "\t%s %s.%s\n", owner, taken[ep0.Pkg.ImportPath], owner)
-	}
-	b.WriteString("}\n\n")
-	for _, f := range fws {
-		fmt.Fprintf(&b, "// RegisterAll%s 一次装配全部端点（%s）。\n", f.Title, f.Adapter)
-		fmt.Fprintf(&b, "func RegisterAll%s(r %s, k *hinge.Kernel, all All) {\n", f.Title, f.RouterType)
-		for _, owner := range ownerOrder {
-			if strings.HasPrefix(owner, PKGFlag) {
-				fmt.Fprintf(&b, "\tRegister%s%s(r, k)\n", owner, f.Title)
-				continue
-			}
-			fmt.Fprintf(&b, "\tRegister%s%s(r, k, all.%s)\n", owner, f.Title, owner)
-		}
-		b.WriteString("}\n\n")
-	}
-	return b.String(), nil
-}
-
-// emitClosure 端点方法适配闭包：强类型断言直调（请求期零反射）。
-func emitClosure(ep *EndpointIR, taken map[string]string, call func(qExpr, bExpr string) string) string {
-	ownerAlias := taken[ep.Pkg.ImportPath]
-	qAny := ""
-	if ep.HasQ {
-		qAny = "q.(" + ownerAlias + "." + ep.QName + ")"
-	} else if !ep.TwoArg {
-		qAny = "q" // Q 占位（any），直接透传
-	}
-	if ep.TwoArg {
-		if qAny == "" {
-			qAny = "q"
-		}
-		return "func(ctx context.Context, q, b any) (any, error) {\n\t\t\t" + call(qAny, "") + "\n\t\t}"
-	}
-	bAny := "b"
-	if ep.HasB {
-		if ep.BodyKind == "raw" {
-			bAny = "b.(hinge.RawBody)"
-		} else {
-			bAny = "b.(" + ownerAlias + "." + ep.BName + ")"
-		}
-	}
-	if qAny == "" {
-		qAny = "q"
-	}
-	return "func(ctx context.Context, q, b any) (any, error) {\n\t\t\t" + call(qAny, bAny) + "\n\t\t}"
 }
 
 // sliceDefSrc 切片 default 值的源表达式：string 元素不拆逗号（v0.1 SetSliceValue 首分支），其余按逗号展开。

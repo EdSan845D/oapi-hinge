@@ -19,9 +19,15 @@ func Register{{.Name}}{{$.Target.Title}}(i gin.IRouter, k *hinge.Kernel{{if not 
 {{- $ownerAlias := .OwnerAlias}}
 {{- range .Eps}}
 	r.{{.Method}}("{{.Path}}"{{if ne .Args ""}}, {{.Args}}{{end}}, servergin.Handle(k, {{.Spec}}, {{.Binder}}, func(ctx context.Context, q, b any) (any, error) {
-		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{if not .TwoArgs}}, b.({{$ownerAlias}}.{{.BName}}){{end}})
+		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{if not .TwoArg}}, b.({{$ownerAlias}}.{{.BName}}){{end}})
 	}))
 {{- end}}
 }
 
 {{end -}}
+// RegisterAll{{.Target.Title}} 一次装配全部端点（{{.Target.Title}}）。
+func RegisterAll{{.Target.Title}}(i gin.IRouter, k *hinge.Kernel, all All) {
+{{- range .Owners}}
+	Register{{.Name}}{{$.Target.Title}}(i, k{{if not .IsPkg}}, all.{{.Name}}{{end}})
+{{- end}}
+}

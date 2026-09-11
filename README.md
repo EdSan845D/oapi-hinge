@@ -80,10 +80,9 @@ go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen -check # CI 门禁：产物
 
 | 文件 | 内容 |
 |---|---|
-| `apigen/specs_gen.go` | 端点描述变量（hinge.Endpoint） |
+| `apigen/specs_gen.go` | 端点描述变量（hinge.Endpoint）+ `All` 聚合器 |
 | `apigen/binders_gen.go` | 类型化绑定器（按 Q/B 类型去重，请求期零反射） |
-| `apigen/register_<t>_gen.go` | 各框架注册函数（模板发射；`emiters.<t>.template` 可换自定义模板接入新框架） |
-| `apigen/all_gen.go` | `All` 聚合器 + `RegisterAll<Gin/Echo/HTTP>` |
+| `apigen/register_<t>_gen.go` | 各框架注册函数 + `RegisterAll<Target>`（模板发射；`emiters.<t>.template` 可换自定义模板接入新框架） |
 | `<包>/hinge_gen_table.go` | `Enterpoint()` 守卫 + `Endpoints()` 路径↔函数对应表 |
 
 生成期即做诊断：路径冲突、path 参数与 Q 字段一致性、策略未声明、multipart 字段缺 form 标签、双前缀笔误等。

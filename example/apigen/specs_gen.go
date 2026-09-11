@@ -24,6 +24,13 @@ func AllSpecs() []hinge.Endpoint {
 	}
 }
 
+// All 聚合全部 Enterpoint 实例（字段名 = 结构体名）。
+type All struct {
+	FileEp   eps.FileEp
+	SystemEp eps.SystemEp
+	UserEp   eps.UserEp
+}
+
 var SpecFileEpDownloadSample = hinge.Endpoint{
 	Owner:   "FileEp",
 	Handler: "DownloadSample",
