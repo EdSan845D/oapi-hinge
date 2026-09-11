@@ -160,6 +160,10 @@ func Emit(rootDir string, cfg Config, eps []*EndpointIR) (map[string]string, err
 	return files, nil
 }
 
+func GenSpecName(ep *EndpointIR) string {
+	return fmt.Sprintf("Spec%s%s", ep.Owner, ep.Handler)
+}
+
 // emitSpecs 端点描述变量（注册函数与表共用同一套事实的 apigen 侧副本）。
 func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 	is := newImportSet()
@@ -173,9 +177,9 @@ func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 	var body strings.Builder
 	for _, ep := range eps {
 		ownerAlias := taken[ep.Pkg.ImportPath]
-		specName := fmt.Sprintf("Spec%s%s", ep.Owner, ep.Handler)
+		specName := GenSpecName(ep)
 		specNames = append(specNames, specName)
-		body.WriteString(fmt.Sprintf("var %s = hinge.Endpoint{\n", specName))
+		fmt.Fprintf(&body, "var %s = hinge.Endpoint{\n", specName)
 		fmt.Fprintf(&body, "\tOwner:   %q,\n", ep.Owner)
 		fmt.Fprintf(&body, "\tHandler: %q,\n", ep.Handler)
 		fmt.Fprintf(&body, "\tMethod:  %q,\n", ep.Method)
@@ -684,10 +688,15 @@ func frameworkPath(emiter EmitConfig, p string) string {
 
 // epData 一条路由的发射数据。
 type epData struct {
-	Method string // 原始 HTTP 方法（echo/http 用）
-	Verb   string // gin 形态方法名（非标准方法 → Any）
-	Path   string // 目标框架路径风格
-	Args   string // 路由调用剩余参数（含 handle），按 target 语义组装
+	Method  string // 原始 HTTP 方法（echo/http 用）
+	Path    string // 目标框架路径风格
+	Args    string // 路由调用剩余参数（含 handle），按 target 语义组装
+	Spec    string
+	Binder  string
+	TwoArgs bool
+	QName   string
+	BName   string
+	Handler string
 }
 
 // ownerData 一个 Enterpoint 的注册函数数据。
@@ -718,11 +727,6 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 	is := newImportSet()
 	is.add("context", "")
 	is.add(hingeImportPath, "")
-	adapterPath := hingeImportPath[:strings.LastIndex(hingeImportPath, "/")] + "/" + emiter.Adapter
-	is.add(adapterPath, "")
-	if emiter.Lib != "" {
-		is.add(emiter.Lib, "")
-	}
 	taken := map[string]string{}
 	owners := map[string][]*EndpointIR{}
 	var ownerOrder []string
@@ -754,13 +758,6 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 		Header: genHeader(cfg),
 		Target: emiter,
 	}
-	verbOf := func(method string) string {
-		switch method {
-		case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
-			return method
-		}
-		return "Any"
-	}
 	for _, owner := range ownerOrder {
 		isPkgOwner := strings.HasPrefix(owner, PKGFlag)
 		list := owners[owner]
@@ -791,9 +788,8 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 				bindArgs += ", nil"
 			}
 
-			closure := emitClosure(ep, taken, returnCall(owner, isPkgOwner, ep))
-			specRef := fmt.Sprintf("Spec%s%s", ep.Owner, ep.Handler)
-			handle := fmt.Sprintf("%s.Handle(k, %s, %s, %s)", emiter.Adapter, specRef, bindArgs, closure)
+			specRef := GenSpecName(ep)
+			// handle := fmt.Sprintf("%s.Handle(k, %s, %s, %s)", emiter.Adapter, specRef, bindArgs, closure)
 			// 方法级注解引用：路由级直挂（组级之后、内核包装器之前）。
 			annoRefs := make([]string, 0, len(ep.AnnoMWs))
 			for _, ref := range ep.AnnoMWs {
@@ -808,7 +804,7 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 				}
 			}
 
-			ed := &epData{Method: ep.Method, Path: frameworkPath(emiter, ep.FullPath)}
+			ed := &epData{Method: ep.Method, Path: frameworkPath(emiter, ep.FullPath), Spec: specRef, Binder: bindArgs, QName: ep.QName, BName: ep.BName, TwoArgs: ep.TwoArg, Handler: ep.Handler}
 			switch target {
 			case "http":
 				// stdlib 无路由链：全部引用折叠进 Handle 变参（内核拦截链，
@@ -821,26 +817,24 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 					raw = append(raw, mwSourceRef(is, taken, ref))
 				}
 				raw = append(raw, annoRefs...)
-				ed.Verb = ep.Method
-				ed.Args = strings.Join(append([]string{handle}, raw...), ", ")
+				ed.Args = strings.Join(append([]string{}, raw...), ", ")
 			case "echo":
 				// echo.Add(h, m ...MiddlewareFunc)：handle 在前，中间件变参在后
 				//（先列者在外层）；链序 = 拦截器包装 → 注解引用 → 内核管线。
-				parts := append([]string{handle}, icWrapped...)
+				parts := append([]string{}, icWrapped...)
 				parts = append(parts, annoRefs...)
 				ed.Args = strings.Join(parts, ", ")
 			default:
 				// gin 同形态：路由链顺序 = 拦截器包装 → 注解引用 → 内核包装器。
 				parts := append(icWrapped, annoRefs...)
-				parts = append(parts, handle)
-				ed.Verb = verbOf(ep.Method)
+				// parts = append(parts, handle)
 				ed.Args = strings.Join(parts, ", ")
 			}
 			od.Eps = append(od.Eps, ed)
 		}
 		data.Owners = append(data.Owners, od)
 	}
-	data.ImportBlock = is.block()
+	data.ImportBlock = strings.Join(is.lines(), "\n")
 	return renderRegister(rootDir, emiter, target, data)
 }
 

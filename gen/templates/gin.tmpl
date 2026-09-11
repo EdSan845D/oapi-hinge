@@ -1,16 +1,27 @@
-{{.Header}}package {{.Pkg}}
+{{- .Header}}
+package {{.Pkg}}
 
-{{.ImportBlock}}
-{{- range .Owners}}
+import (
+	{{.ImportBlock}}
+	"github.com/gin-gonic/gin"
+	"github.com/EdSan845D/oapi-hinge/servergin"
+)
+
+{{range .Owners -}}
 // Register{{.Name}}{{$.Target.Title}} 把 {{.Name}} 的全部端点挂到 {{$.Target.Title}}。
-func Register{{.Name}}{{$.Target.Title}}(i {{$.Target.RouterType}}, k *hinge.Kernel{{if not .IsPkg}}, ep {{.OwnerAlias}}.{{.Name}}{{end}}) {
+func Register{{.Name}}{{$.Target.Title}}(i gin.IRouter, k *hinge.Kernel{{if not .IsPkg}}, ep {{.OwnerAlias}}.{{.Name}}{{end}}) {
 {{- if .HasGroup}}
 	r := i.Group("", {{.GroupArgs}})
 {{- else}}
 	r := i
 {{- end}}
+{{- $isPkg := .IsPkg}}
+{{- $ownerAlias := .OwnerAlias}}
 {{- range .Eps}}
-	r.{{.Verb}}("{{.Path}}", {{.Args}})
+	r.{{.Method}}("{{.Path}}"{{if ne .Args ""}}, {{.Args}}{{end}}, servergin.Handle(k, {{.Spec}}, {{.Binder}}, func(ctx context.Context, q, b any) (any, error) {
+		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{if not .TwoArgs}}, b.({{$ownerAlias}}.{{.BName}}){{end}})
+	}))
 {{- end}}
 }
-{{end}}
+
+{{end -}}

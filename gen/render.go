@@ -40,6 +40,10 @@ func (is *importSet) block() string {
 	if len(is.order) == 0 {
 		return ""
 	}
+	return "import (\n" + strings.Join(is.lines(), "\n") + "\n)"
+}
+
+func (is *importSet) lines() []string {
 	paths := append([]string{}, is.order...)
 	sort.Strings(paths)
 	lines := make([]string, 0, len(paths))
@@ -50,7 +54,7 @@ func (is *importSet) block() string {
 			lines = append(lines, "\t\""+p+"\"")
 		}
 	}
-	return "import (\n" + strings.Join(lines, "\n") + "\n)"
+	return lines
 }
 
 // renderer 单个源文件上下文下的表达式渲染器。
