@@ -30,7 +30,7 @@ func TestConstraintMappingQuery(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Query",
 		Method: "GET", Path: "/cq/x", Summary: "约束",
 		QType: hinge.Type[constraintQueryReq](), RType: hinge.Type[map[string]string](),
@@ -67,7 +67,7 @@ func TestConstraintMappingBody(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Body",
 		Method: "POST", Path: "/cb/x", Summary: "约束",
 		BType: hinge.Type[constraintBodyReq](), RType: hinge.Type[map[string]string](),
@@ -100,7 +100,7 @@ func TestExampleTagCoercion(t *testing.T) {
 		N int  `query:"n" example:"5"`
 		B bool `query:"b" example:"true"`
 	}
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Example",
 		Method: "GET", Path: "/ex/x", Summary: "example 转型",
 		QType: hinge.Type[req](), RType: hinge.Type[map[string]string](),
@@ -127,7 +127,7 @@ func TestTypeSchemaOverride(t *testing.T) {
 
 	RegisterTypeSchema[overriddenType](openapi3.NewFloat64Schema().WithFormat("decimal"))
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Override",
 		Method: "POST", Path: "/to/x", Summary: "覆盖",
 		BType: hinge.Type[overriddenType](), RType: hinge.Type[map[string]string](),
@@ -158,7 +158,7 @@ func TestTypeSchemaFunc(t *testing.T) {
 		return openapi3.NewStringSchema().WithPattern("^ok$")
 	})
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "OverrideFunc",
 		Method: "POST", Path: "/tf/x", Summary: "函数覆盖",
 		BType: hinge.Type[overriddenType](), RType: hinge.Type[map[string]string](),
@@ -179,7 +179,7 @@ func TestDocTags(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Demo",
 		Method: "GET", Path: "/tg/x", Summary: "演示",
 		Tags:  []string{"用户"},
@@ -200,7 +200,7 @@ func TestBuildAPI(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Demo",
 		Method: "GET", Path: "/b/x", Summary: "演示",
 		RType: hinge.Type[testdataa.User](),
@@ -233,7 +233,7 @@ func TestBodyDefaultTypeCoercion(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Defaults",
 		Method: "POST", Path: "/dt/x", Summary: "default 转型",
 		BType: hinge.Type[defaultTypesReq](), RType: hinge.Type[map[string]string](),
@@ -261,7 +261,7 @@ func TestGenericComponentNameCharset(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Paged",
 		Method: "GET", Path: "/pg/x", Summary: "泛型分页",
 		RType: hinge.Type[hinge.Paged[testdataa.User]](),

@@ -121,6 +121,12 @@ func Emit(rootDir string, cfg Config, eps []*EndpointIR) (map[string]string, err
 	}
 	files[cfg.Out+"/specs_gen.go"] = specs
 
+	docs, err := emitDocs(cfg, eps)
+	if err != nil {
+		return nil, err
+	}
+	files[cfg.Out+"/docs_gen.go"] = docs
+
 	binders, err := emitBinders(cfg, eps)
 	if err != nil {
 		return nil, err
@@ -159,67 +165,23 @@ func GenSpecName(ep *EndpointIR) string {
 	return fmt.Sprintf("Spec%s%s", ep.Owner, ep.Handler)
 }
 
-// emitSpecs 端点描述变量（注册函数与表共用同一套事实的 apigen 侧副本）。
+// emitSpecs 端点运行时描述变量（注册函数消费的唯一事实）。只发射请求管线
+// 需要的字段；文档元数据见 emitDocs（docs_gen.go，仅被 openapi build-tag
+// 入口引用，运行时二进制由链接器剥离）。
 func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 	is := newImportSet()
 	is.add(hingeImportPath, "")
-	taken := map[string]string{} // owner 包别名表（预登记，渲染器引用同名）
+	taken := map[string]string{} // owner 包别名表
 	for _, ep := range eps {
 		pkgAlias(is, taken, ep.Pkg.ImportPath, ep.Pkg.Name)
 	}
 	specNames := make([]string, 0)
-	// 两遍组装：先渲染端点块（渲染会向 is 补充 import），最后统一落头部
 	var body strings.Builder
 	for _, ep := range eps {
-		ownerAlias := taken[ep.Pkg.ImportPath]
 		specName := GenSpecName(ep)
 		specNames = append(specNames, specName)
 		fmt.Fprintf(&body, "var %s = hinge.Endpoint{\n", specName)
-		fmt.Fprintf(&body, "\tOwner:   %q,\n", ep.Owner)
-		fmt.Fprintf(&body, "\tHandler: %q,\n", ep.Handler)
-		fmt.Fprintf(&body, "\tMethod:  %q,\n", ep.Method)
-		fmt.Fprintf(&body, "\tPath:    %q,\n", ep.FullPath)
-		fmt.Fprintf(&body, "\tSummary: %q,\n", ep.Summary)
-		if ep.Description != "" {
-			fmt.Fprintf(&body, "\tDescription: %q,\n", ep.Description)
-		}
-		if len(ep.Tags) > 0 {
-			fmt.Fprintf(&body, "\tTags: []string{%s},\n", quoteList(ep.Tags))
-		}
-		if ep.Status != 0 {
-			fmt.Fprintf(&body, "\tStatus: %d,\n", ep.Status)
-		}
-		if ep.Deprecated {
-			body.WriteString("\tDeprecated: true,\n")
-		}
-		if ep.Envelope != "" {
-			fmt.Fprintf(&body, "\tEnvelope: %q,\n", ep.Envelope)
-		}
-		if ep.TimeoutStr != "" {
-			fmt.Fprintf(&body, "\tTimeout: hinge.MustDuration(%q),\n", ep.TimeoutStr)
-		}
-		if len(ep.Middleware) > 0 {
-			fmt.Fprintf(&body, "\tMiddleware: []string{%s},\n", quoteList(ep.Middleware))
-		}
-		if refs := ep.DocMWRefs(); len(refs) > 0 {
-			fmt.Fprintf(&body, "\tMWRefs: []string{%s},\n", quoteList(refs))
-		}
-		if ep.HasQ {
-			fmt.Fprintf(&body, "\tQType: hinge.Type[%s.%s](),\n", ownerAlias, ep.QName)
-		}
-		if ep.HasB {
-			bType := ownerAlias + "." + ep.BName
-			if ep.BodyKind == "raw" {
-				bType = "hinge.RawBody"
-			}
-			fmt.Fprintf(&body, "\tBType: hinge.Type[%s](),\n", bType)
-		}
-		rd := &renderer{pkg: ep.Pkg, ownerAlias: ownerAlias, src: ep.RSrcFile, is: is}
-		rExpr, err := rd.expr(ep.RExpr)
-		if err != nil {
-			return "", fmt.Errorf("%s.%s R 类型: %w", ep.Owner, ep.Handler, err)
-		}
-		fmt.Fprintf(&body, "\tRType: hinge.Type[%s](),\n", rExpr)
+		writeRuntimeSpecFields(&body, ep)
 		body.WriteString("}\n\n")
 	}
 
@@ -257,6 +219,99 @@ func AllSpecs() []hinge.Endpoint {
 		fmt.Fprintf(&b, "\t%s %s.%s\n", owner, ownerAliasOf[owner], owner)
 	}
 	b.WriteString("}\n\n")
+	b.WriteString(body.String())
+	return b.String(), nil
+}
+
+// writeRuntimeSpecFields 端点运行时字段发射（specs_gen.go 专用，字段集与
+// hinge.Endpoint 保持一致）。docs_gen.go 不再重复发射：直接引用 SpecXxx
+// 变量赋值给内嵌的 Endpoint 字段（运行时字段单一事实源）。
+func writeRuntimeSpecFields(b *strings.Builder, ep *EndpointIR) {
+	fmt.Fprintf(b, "\tOwner:   %q,\n", ep.Owner)
+	fmt.Fprintf(b, "\tHandler: %q,\n", ep.Handler)
+	fmt.Fprintf(b, "\tMethod:  %q,\n", ep.Method)
+	fmt.Fprintf(b, "\tPath:    %q,\n", ep.FullPath)
+	if ep.Status != 0 {
+		fmt.Fprintf(b, "\tStatus: %d,\n", ep.Status)
+	}
+	if ep.Envelope != "" {
+		fmt.Fprintf(b, "\tEnvelope: %q,\n", ep.Envelope)
+	}
+	if ep.TimeoutStr != "" {
+		fmt.Fprintf(b, "\tTimeout: hinge.MustDuration(%q),\n", ep.TimeoutStr)
+	}
+	if len(ep.Middleware) > 0 {
+		fmt.Fprintf(b, "\tMiddleware: []string{%s},\n", quoteList(ep.Middleware))
+	}
+}
+
+// emitDocs 文档侧端点描述（hinge.EndpointDoc）：只被 openapi 开发期文档入口
+// 引用（go run -tags openapi → openapi.Generate(AllDocSpecs())）。运行时
+// 二进制不引用本文件，链接器 deadcode 剥离 —— Summary/Description 等文档
+// 字符串与 QType/BType/RType 类型描述零运行时开销。
+// 运行时字段不重复发射：内嵌 Endpoint 字段直接引用 specs_gen.go 的
+// SpecXxx 变量（同包必然可见；跨包重名 Owner 在 IR 构建期已拒绝）。
+func emitDocs(cfg Config, eps []*EndpointIR) (string, error) {
+	is := newImportSet()
+	is.add(hingeImportPath, "")
+	taken := map[string]string{}
+	for _, ep := range eps {
+		pkgAlias(is, taken, ep.Pkg.ImportPath, ep.Pkg.Name)
+	}
+	docNames := make([]string, 0, len(eps))
+	var body strings.Builder
+	for _, ep := range eps {
+		ownerAlias := taken[ep.Pkg.ImportPath]
+		docName := "Doc" + GenSpecName(ep)
+		docNames = append(docNames, docName)
+		fmt.Fprintf(&body, "var %s = hinge.EndpointDoc{\n", docName)
+		// 运行时字段：引用运行时表变量，不重复发射（与 specs_gen.go 单源）。
+		fmt.Fprintf(&body, "\tEndpoint: %s,\n", GenSpecName(ep))
+		// ---- 文档字段 ----
+		fmt.Fprintf(&body, "\tSummary: %q,\n", ep.Summary)
+		if ep.Description != "" {
+			fmt.Fprintf(&body, "\tDescription: %q,\n", ep.Description)
+		}
+		if len(ep.Tags) > 0 {
+			fmt.Fprintf(&body, "\tTags: []string{%s},\n", quoteList(ep.Tags))
+		}
+		if ep.Deprecated {
+			body.WriteString("\tDeprecated: true,\n")
+		}
+		if refs := ep.DocMWRefs(); len(refs) > 0 {
+			fmt.Fprintf(&body, "\tMWRefs: []string{%s},\n", quoteList(refs))
+		}
+		if ep.HasQ {
+			fmt.Fprintf(&body, "\tQType: hinge.Type[%s.%s](),\n", ownerAlias, ep.QName)
+		}
+		if ep.HasB {
+			bType := ownerAlias + "." + ep.BName
+			if ep.BodyKind == "raw" {
+				bType = "hinge.RawBody"
+			}
+			fmt.Fprintf(&body, "\tBType: hinge.Type[%s](),\n", bType)
+		}
+		rd := &renderer{pkg: ep.Pkg, ownerAlias: ownerAlias, src: ep.RSrcFile, is: is}
+		rExpr, err := rd.expr(ep.RExpr)
+		if err != nil {
+			return "", fmt.Errorf("%s.%s R 类型: %w", ep.Owner, ep.Handler, err)
+		}
+		fmt.Fprintf(&body, "\tRType: hinge.Type[%s](),\n", rExpr)
+		body.WriteString("}\n\n")
+	}
+
+	var b strings.Builder
+	b.WriteString(genHeader(cfg))
+	fmt.Fprintf(&b, "package %s\n\n", cfg.Pkg)
+	b.WriteString(is.block())
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf(`
+func AllDocSpecs() []hinge.EndpointDoc {
+	return []hinge.EndpointDoc{
+		%s
+	}
+}
+`, strings.Join(docNames, ",\n\t\t")+","))
 	b.WriteString(body.String())
 	return b.String(), nil
 }

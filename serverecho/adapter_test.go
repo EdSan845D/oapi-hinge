@@ -47,8 +47,6 @@ func TestAdapterGetPathParamsEnvelope(t *testing.T) {
 		Handler: "GetUser",
 		Method:  http.MethodGet,
 		Path:    "/users/{id}",
-		QType:   hinge.Type[adapterUserQ](),
-		RType:   hinge.Type[map[string]string](),
 	}
 	e.GET("/users/:id", Handle(k, ep, bindQ, nil, h))
 
@@ -95,7 +93,6 @@ func TestAdapterRawEnvelopeDefault(t *testing.T) {
 	ep := hinge.Endpoint{
 		Owner: "UserEp", Handler: "GetUser",
 		Method: http.MethodGet, Path: "/users/{id}",
-		QType: hinge.Type[adapterUserQ](), RType: hinge.Type[map[string]string](),
 	}
 	e.GET("/users/:id", Handle(k, ep, func(ctx context.Context, r hinge.RequestReader) (any, error) {
 		id, _ := r.PathParam("id")
@@ -144,7 +141,6 @@ func TestAdapterBusinessErrorNotFound(t *testing.T) {
 		Handler: "GetUser",
 		Method:  http.MethodGet,
 		Path:    "/users/{id}",
-		RType:   hinge.Type[hinge.Empty](),
 	}
 	e.GET("/users/:id", Handle(k, ep, nil, nil, h))
 
@@ -206,8 +202,6 @@ func TestAdapterPostJSONBindErrors(t *testing.T) {
 		Handler: "CreateUser",
 		Method:  http.MethodPost,
 		Path:    "/users",
-		BType:   hinge.Type[adapterCreateBody](),
-		RType:   hinge.Type[map[string]any](),
 	}
 	e.POST("/users", Handle(k, ep, nil, bindB, h))
 
@@ -274,7 +268,6 @@ func TestAdapterCorrelation(t *testing.T) {
 		Handler: "Ping",
 		Method:  http.MethodGet,
 		Path:    "/ping",
-		RType:   hinge.Type[map[string]any](),
 	}
 	e.GET("/ping", Handle(k, ep, nil, nil, h))
 
@@ -326,7 +319,6 @@ func TestAdapterFrameworkContextInjection(t *testing.T) {
 		Handler: "Ping",
 		Method:  http.MethodGet,
 		Path:    "/ping",
-		RType:   hinge.Type[hinge.Empty](),
 	}
 	e.GET("/ping", Handle(k, ep, nil, nil, h))
 
@@ -362,7 +354,6 @@ func TestAdapterFileStream(t *testing.T) {
 		Handler: "Download",
 		Method:  http.MethodGet,
 		Path:    "/files/sample.txt",
-		RType:   hinge.Type[hinge.Empty](),
 	}
 	e.GET("/files/sample.txt", Handle(k, ep, nil, nil, h))
 

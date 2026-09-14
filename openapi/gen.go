@@ -1,6 +1,6 @@
 //go:build openapi
 
-// Package openapi 开发期 OpenAPI 文档生成器：从端点表（[]hinge.Endpoint）生成 OpenAPI 3.1 规范。
+// Package openapi 开发期 OpenAPI 文档生成器：从端点表（[]hinge.EndpointDoc）生成 OpenAPI 3.1 规范。
 // 纯 kin-openapi 实现：类型反射生成 schema（schema.go）、
 // 端点表扁平遍历生成 operation。仅 -tags openapi 构建，release 构建零开发期依赖。
 //
@@ -33,7 +33,7 @@ var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
 // 壳推导状态（dev 工具单线程；generate 重置）。
 // envelopeInstance 由 OptionWithEnvelope 注入运行时实际壳实例；
 // envelopeSchemaCustom 标记 OptionWithEnvelopeSchema 手写壳 schema（仅无法从壳实例推导时使用）；
-// envelopeSchemas 由 OptionWithEnvelopeSchemas 注册命名壳（hinge.Endpoint.Envelope 引用名）的文档 schema。
+// envelopeSchemas 由 OptionWithEnvelopeSchemas 注册命名壳（hinge.EndpointDoc.Envelope 引用名）的文档 schema。
 // securityNames OptionWithSecurity 注册的 scheme 名（端点 Middleware 名命中 → security + 401）。
 var (
 	envelopeSchema       EnvelopeSchema = defaultEnvelopeSchema
@@ -51,20 +51,20 @@ type Option = func(*openapi3.T)
 // eps 为端点表（hinge gen 产出的 Endpoints() 表或手写注册均可）；opts 注入文档元信息。
 // 警告（operationID 重复、schema 名升级、未知命名壳、缺 Summary）输出到 stderr；
 // 需要把警告当错误（CI）用 GenerateStrict。
-func Generate(out string, eps []hinge.Endpoint, opts ...Option) error {
+func Generate(out string, eps []hinge.EndpointDoc, opts ...Option) error {
 	_, err := generate(out, eps, false, opts...)
 	return err
 }
 
 // GenerateStrict 与 Generate 相同，但存在警告时返回错误（文档规范检查进 CI）。
-func GenerateStrict(out string, eps []hinge.Endpoint, opts ...Option) error {
+func GenerateStrict(out string, eps []hinge.EndpointDoc, opts ...Option) error {
 	_, err := generate(out, eps, true, opts...)
 	return err
 }
 
 // buildDoc 生成文档对象（两轮：探测收集类型 → 统一命名 → 正式构建）。
 // 警告返回给调用方（Generate 打 stderr；GenerateStrict 转 error）。
-func buildDoc(eps []hinge.Endpoint, opts ...Option) (*openapi3.T, []string, error) {
+func buildDoc(eps []hinge.EndpointDoc, opts ...Option) (*openapi3.T, []string, error) {
 	resetEnvelopeState()
 
 	// pass 1（探测）：只收集组件类型集合（含壳推导类型），产物丢弃
@@ -113,7 +113,7 @@ func buildDoc(eps []hinge.Endpoint, opts ...Option) (*openapi3.T, []string, erro
 
 // Build 生成文档对象（不落盘）：自建 /docs、推送网关等自定义消费场景。
 // 警告输出 stderr；需要警告即失败用 GenerateStrict。
-func Build(eps []hinge.Endpoint, opts ...Option) (*openapi3.T, error) {
+func Build(eps []hinge.EndpointDoc, opts ...Option) (*openapi3.T, error) {
 	doc, warnings, err := buildDoc(eps, opts...)
 	if err != nil {
 		return nil, err
@@ -125,7 +125,7 @@ func Build(eps []hinge.Endpoint, opts ...Option) (*openapi3.T, error) {
 }
 
 // generate 两轮生成：探测轮收集全部组件类型 → 统一命名 → 正式轮产出规范。
-func generate(out string, eps []hinge.Endpoint, strict bool, opts ...Option) ([]string, error) {
+func generate(out string, eps []hinge.EndpointDoc, strict bool, opts ...Option) ([]string, error) {
 	doc, warnings, err := buildDoc(eps, opts...)
 	if err != nil {
 		return warnings, err
@@ -213,7 +213,7 @@ func (g *specGen) noteTag(name, desc string) {
 }
 
 // buildSpec 扁平遍历端点表，逐个生成 operation；最后写顶层 tags 声明。
-func buildSpec(g *specGen, eps []hinge.Endpoint) {
+func buildSpec(g *specGen, eps []hinge.EndpointDoc) {
 	checkDuplicates(eps)
 	for i := range eps {
 		addOperation(g, &eps[i])
@@ -230,7 +230,7 @@ func buildSpec(g *specGen, eps []hinge.Endpoint) {
 
 // checkDuplicates 校验端点表中 method+path 无重复（文档期早期报错，
 // 避免 Paths.SetOperation 静默覆盖）
-func checkDuplicates(eps []hinge.Endpoint) {
+func checkDuplicates(eps []hinge.EndpointDoc) {
 	seen := map[string]string{} // "GET /users/{id}" -> 端点名
 	for i := range eps {
 		ep := &eps[i]
@@ -243,7 +243,7 @@ func checkDuplicates(eps []hinge.Endpoint) {
 }
 
 // endpointName 端点展示名（查重 panic / 警告定位用）
-func endpointName(ep *hinge.Endpoint) string {
+func endpointName(ep *hinge.EndpointDoc) string {
 	if ep.Owner != "" {
 		return ep.Owner + "." + ep.Handler
 	}
@@ -258,7 +258,7 @@ func endpointName(ep *hinge.Endpoint) string {
 //   - R：Data 段 schema；hinge.FileStream 输出二进制流并声明 404，接口类型（Empty/any）输出任意 JSON 值 schema
 //   - 文档语义映射：ep.Deprecated → deprecated；ep.Status(0→200) → 成功码；
 //     Middleware 名命中 securitySchemes → security + 401；ep.Timeout → x-timeout；ep.Envelope → 命名壳 schema
-func addOperation(g *specGen, ep *hinge.Endpoint) {
+func addOperation(g *specGen, ep *hinge.EndpointDoc) {
 	op := openapi3.NewOperation()
 	// Responses 先初始化：Auth 401 等响应随后写入
 	op.Responses = openapi3.NewResponses()
@@ -434,7 +434,7 @@ func dedupTags(tags []string) []string {
 
 // operationID 文档操作 ID：Owner_Handler（如 UserEp_GetUser）；
 // Owner 为空时回退 method+path 清洗（如 GET /users/{id} → get_users_id）。
-func operationID(ep *hinge.Endpoint) string {
+func operationID(ep *hinge.EndpointDoc) string {
 	if ep.Owner != "" {
 		return ep.Owner + "_" + ep.Handler
 	}
@@ -467,7 +467,7 @@ func fallbackOperationID(method, path string) string {
 //   - 默认推导链：OptionWithEnvelope 壳实例 > OptionWithEnvelopeSchema 手写壳 > 默认壳
 //
 // instance 非 nil 时从壳实例推导；否则 custom 非 nil 为手写壳 schema 函数。
-func effectiveEnvelope(g *specGen, ep *hinge.Endpoint) (hinge.Envelope, EnvelopeSchema) {
+func effectiveEnvelope(g *specGen, ep *hinge.EndpointDoc) (hinge.Envelope, EnvelopeSchema) {
 	if ep.Envelope != "" {
 		if fn, ok := envelopeSchemas[ep.Envelope]; ok {
 			return nil, fn
@@ -487,7 +487,7 @@ func effectiveEnvelope(g *specGen, ep *hinge.Endpoint) (hinge.Envelope, Envelope
 }
 
 // okResponse 成功响应：壳形态由实际生效的壳方案推导（文档与运行时同构）。
-func okResponse(g *specGen, ep *hinge.Endpoint, data *openapi3.SchemaRef) *openapi3.ResponseRef {
+func okResponse(g *specGen, ep *hinge.EndpointDoc, data *openapi3.SchemaRef) *openapi3.ResponseRef {
 	env, custom := effectiveEnvelope(g, ep)
 	var schema *openapi3.SchemaRef
 	if env == nil {

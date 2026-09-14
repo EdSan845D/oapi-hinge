@@ -13,11 +13,11 @@ import (
 	"os"
 	"strings"
 
-	"opai-hinge/apigen"
-	"opai-hinge/app/eps"
 	"github.com/EdSan845D/oapi-hinge/hinge"
 	"github.com/EdSan845D/oapi-hinge/hinge/validator"
 	"github.com/EdSan845D/oapi-hinge/servergin"
+	"opai-hinge/apigen"
+	"opai-hinge/app/eps"
 
 	"github.com/gin-gonic/gin"
 )

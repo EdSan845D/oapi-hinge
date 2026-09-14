@@ -36,10 +36,6 @@ var SpecFileEpDownloadSample = hinge.Endpoint{
 	Handler: "DownloadSample",
 	Method:  "GET",
 	Path:    "/files/{name}",
-	Summary: "下载示例文件（FileStream 二进制流响应）",
-	Tags:    []string{"文件"},
-	QType:   hinge.Type[eps.DownloadSampleReq](),
-	RType:   hinge.Type[*hinge.FileStream](),
 }
 
 var SpecPKG_epsIndex = hinge.Endpoint{
@@ -47,20 +43,13 @@ var SpecPKG_epsIndex = hinge.Endpoint{
 	Handler: "Index",
 	Method:  "GET",
 	Path:    "/",
-	Summary: "Index",
-	RType:   hinge.Type[string](),
 }
 
 var SpecSystemEpHealth = hinge.Endpoint{
-	Owner:       "SystemEp",
-	Handler:     "Health",
-	Method:      "GET",
-	Path:        "/health",
-	Summary:     "健康检查（代码覆写示例）",
-	Description: "描述由 EntryPointConfig.FuncDecls 程序化覆写：非零字段覆盖注解值，生成日志会打印覆写提示。",
-	Deprecated:  true,
-	MWRefs:      []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
-	RType:       hinge.Type[map[string]string](),
+	Owner:   "SystemEp",
+	Handler: "Health",
+	Method:  "GET",
+	Path:    "/health",
 }
 
 var SpecUserEpChangePassword = hinge.Endpoint{
@@ -68,11 +57,6 @@ var SpecUserEpChangePassword = hinge.Endpoint{
 	Handler: "ChangePassword",
 	Method:  "PATCH",
 	Path:    "/users/{id}/password",
-	Summary: "修改密码（出参脱敏演示：InTransform 规范化 + validate 标签 + OutTransform）",
-	Tags:    []string{"用户"},
-	MWRefs:  []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
-	QType:   hinge.Type[eps.ChangePasswordReq](),
-	RType:   hinge.Type[eps.MaskedUser](),
 }
 
 var SpecUserEpCreateUser = hinge.Endpoint{
@@ -80,12 +64,7 @@ var SpecUserEpCreateUser = hinge.Endpoint{
 	Handler: "CreateUser",
 	Method:  "POST",
 	Path:    "/users",
-	Summary: "创建用户",
-	Tags:    []string{"用户"},
 	Status:  201,
-	MWRefs:  []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
-	BType:   hinge.Type[eps.CreateUserReq](),
-	RType:   hinge.Type[eps.User](),
 }
 
 var SpecUserEpDeleteUser = hinge.Endpoint{
@@ -93,11 +72,6 @@ var SpecUserEpDeleteUser = hinge.Endpoint{
 	Handler: "DeleteUser",
 	Method:  "DELETE",
 	Path:    "/users/{id}",
-	Summary: "删除用户（Empty 响应：data 为 null）",
-	Tags:    []string{"用户"},
-	MWRefs:  []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth", "github.com/EdSan845D/oapi-hinge/example/app/middleware.ParseHeaderWithInfo"},
-	QType:   hinge.Type[eps.DeleteUserReq](),
-	RType:   hinge.Type[hinge.Empty](),
 }
 
 var SpecUserEpGetUser = hinge.Endpoint{
@@ -105,11 +79,6 @@ var SpecUserEpGetUser = hinge.Endpoint{
 	Handler: "GetUser",
 	Method:  "GET",
 	Path:    "/users/{id}",
-	Summary: "用户详情",
-	Tags:    []string{"用户"},
-	MWRefs:  []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
-	QType:   hinge.Type[eps.GetUserReq](),
-	RType:   hinge.Type[eps.User](),
 }
 
 var SpecUserEpListUsers = hinge.Endpoint{
@@ -117,11 +86,6 @@ var SpecUserEpListUsers = hinge.Endpoint{
 	Handler: "ListUsers",
 	Method:  "GET",
 	Path:    "/users",
-	Summary: "用户列表（分页）",
-	Tags:    []string{"用户"},
-	MWRefs:  []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
-	QType:   hinge.Type[eps.ListUsersReq](),
-	RType:   hinge.Type[hinge.Paged[eps.User]](),
 }
 
 var SpecUserEpUpdateExtra = hinge.Endpoint{
@@ -129,10 +93,4 @@ var SpecUserEpUpdateExtra = hinge.Endpoint{
 	Handler: "UpdateExtra",
 	Method:  "PUT",
 	Path:    "/users/{id}/extra",
-	Summary: "修改用户扩展信息（演示 any 类型的请求体绑定）",
-	Tags:    []string{"用户"},
-	MWRefs:  []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
-	QType:   hinge.Type[eps.GetUserReq](),
-	BType:   hinge.Type[eps.ExtraBody](),
-	RType:   hinge.Type[eps.User](),
 }

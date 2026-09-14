@@ -37,7 +37,6 @@ func TestAdapterGetPathParamsEnvelope(t *testing.T) {
 	ep := hinge.Endpoint{
 		Owner: "UserEp", Handler: "GetUser",
 		Method: http.MethodGet, Path: "/users/{id}",
-		QType: hinge.Type[ginUserQ](), RType: hinge.Type[map[string]string](),
 	}
 	r.GET("/users/:id", Handle(k, ep, bindQ, nil, h))
 
@@ -77,7 +76,6 @@ func TestAdapterRawEnvelopeDefault(t *testing.T) {
 	ep := hinge.Endpoint{
 		Owner: "UserEp", Handler: "GetUser",
 		Method: http.MethodGet, Path: "/users/{id}",
-		QType: hinge.Type[ginUserQ](), RType: hinge.Type[map[string]string](),
 	}
 	r.GET("/users/:id", Handle(k, ep, func(ctx context.Context, r hinge.RequestReader) (any, error) {
 		id, _ := r.PathParam("id")
@@ -119,7 +117,7 @@ func TestAdapterBusinessErrorNotFound(t *testing.T) {
 	h := func(ctx context.Context, q, b any) (any, error) {
 		return nil, hinge.NotFound("用户不存在")
 	}
-	ep := hinge.Endpoint{Owner: "UserEp", Handler: "GetUser", Method: http.MethodGet, Path: "/users/{id}", RType: hinge.Type[hinge.Empty]()}
+	ep := hinge.Endpoint{Owner: "UserEp", Handler: "GetUser", Method: http.MethodGet, Path: "/users/{id}"}
 	r.GET("/users/:id", Handle(k, ep, nil, nil, h))
 
 	rec := httptest.NewRecorder()
@@ -173,7 +171,6 @@ func TestAdapterPostJSONBindErrors(t *testing.T) {
 	ep := hinge.Endpoint{
 		Owner: "UserEp", Handler: "CreateUser",
 		Method: http.MethodPost, Path: "/users",
-		BType: hinge.Type[createBody](), RType: hinge.Type[map[string]any](),
 	}
 	r.POST("/users", Handle(k, ep, nil, bindB, h))
 
@@ -205,7 +202,7 @@ func TestAdapterCorrelation(t *testing.T) {
 	h := func(ctx context.Context, q, b any) (any, error) {
 		return map[string]any{"cid": hinge.CorrelationIDFrom(ctx)}, nil
 	}
-	ep := hinge.Endpoint{Owner: "MiscEp", Handler: "Ping", Method: http.MethodGet, Path: "/ping", RType: hinge.Type[map[string]any]()}
+	ep := hinge.Endpoint{Owner: "MiscEp", Handler: "Ping", Method: http.MethodGet, Path: "/ping"}
 	r.GET("/ping", Handle(k, ep, nil, nil, h))
 
 	// 入站沿用
@@ -236,7 +233,7 @@ func TestAdapterFrameworkContextInjection(t *testing.T) {
 		_, injected = hinge.Framework(ctx).(*gin.Context)
 		return map[string]any{"ok": injected}, nil
 	}
-	ep := hinge.Endpoint{Owner: "MiscEp", Handler: "Ping", Method: http.MethodGet, Path: "/ping", RType: hinge.Type[hinge.Empty]()}
+	ep := hinge.Endpoint{Owner: "MiscEp", Handler: "Ping", Method: http.MethodGet, Path: "/ping"}
 	r.GET("/ping", Handle(k, ep, nil, nil, h))
 
 	rec := httptest.NewRecorder()
@@ -257,7 +254,7 @@ func TestAdapterFileStream(t *testing.T) {
 		return &hinge.FileStream{Name: "a.txt", Size: int64(len(content)), ContentType: "text/plain",
 			Reader: strings.NewReader(content)}, nil
 	}
-	ep := hinge.Endpoint{Owner: "FileEp", Handler: "Download", Method: http.MethodGet, Path: "/file", RType: hinge.Type[hinge.Empty]()}
+	ep := hinge.Endpoint{Owner: "FileEp", Handler: "Download", Method: http.MethodGet, Path: "/file"}
 	r.GET("/file", Handle(k, ep, nil, nil, h))
 
 	rec := httptest.NewRecorder()

@@ -3,7 +3,7 @@
 // 内核与生成代码中，本文件不含任何路由注册与业务装配逻辑。
 //
 // 形态与 servergin / serverhttp 适配器对称；旧版 Server 装配器
-//（echo.go / mount.go / bind.go）保留在原地，待主线分支统一清理。
+// （echo.go / mount.go / bind.go）保留在原地，待主线分支统一清理。
 package serverecho
 
 import (

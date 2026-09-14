@@ -71,8 +71,7 @@ func setup(t *testing.T, withCorrelation bool) *http.ServeMux {
 	k.SetCorrelation(withCorrelation)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/users/{id}", Handle(k, hinge.Endpoint{
-		Owner: "T", Handler: "Get", Method: "GET", Path: "/api/users/{id}", Summary: "详情",
-		QType: hinge.Type[tGetReq](), RType: hinge.Type[tUser](),
+		Owner: "T", Handler: "Get", Method: "GET", Path: "/api/users/{id}",
 	}, bindGet, nil, func(ctx context.Context, q, b any) (any, error) {
 		v := q.(tGetReq)
 		if v.ID == "missing" {
@@ -81,8 +80,7 @@ func setup(t *testing.T, withCorrelation bool) *http.ServeMux {
 		return tUser{ID: v.ID, Name: "alice"}, nil
 	}))
 	mux.HandleFunc("POST /api/users", Handle(k, hinge.Endpoint{
-		Owner: "T", Handler: "Create", Method: "POST", Path: "/api/users", Summary: "创建",
-		BType: hinge.Type[tCreateReq](), RType: hinge.Type[tUser](),
+		Owner: "T", Handler: "Create", Method: "POST", Path: "/api/users",
 	}, nil, bindCreate, func(ctx context.Context, q, b any) (any, error) {
 		return tUser{ID: "u9", Name: b.(tCreateReq).Name}, nil
 	}))
@@ -209,8 +207,7 @@ func TestKernelRawEnvelopeDefault(t *testing.T) {
 	k := NewKernel() // 默认裸壳
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/users/{id}", Handle(k, hinge.Endpoint{
-		Owner: "T", Handler: "Get", Method: "GET", Path: "/api/users/{id}", Summary: "详情",
-		QType: hinge.Type[tGetReq](), RType: hinge.Type[tUser](),
+		Owner: "T", Handler: "Get", Method: "GET", Path: "/api/users/{id}",
 	}, bindGet, nil, func(ctx context.Context, q, b any) (any, error) {
 		v := q.(tGetReq)
 		if v.ID == "missing" {

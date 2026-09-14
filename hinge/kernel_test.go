@@ -107,7 +107,6 @@ func TestHandleWithInterceptorDeclarationOrder(t *testing.T) {
 	ep := Endpoint{
 		Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping",
 		Middleware: []string{"k-order-a", "k-order-b", "k-order-c"},
-		RType:      Type[string](),
 	}
 	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) {
 		return "pong", nil
@@ -130,7 +129,7 @@ func TestHandleWithInterceptorShortCircuit(t *testing.T) {
 		return nil // 短路：已自行写出
 	})
 	k := NewKernel()
-	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping", Middleware: []string{"k-short"}, RType: Type[string]()}
+	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping", Middleware: []string{"k-short"}}
 	handlerRan := false
 	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) {
 		handlerRan = true
@@ -153,7 +152,7 @@ func TestHandleWithInterceptorErrorGoesToErrorChain(t *testing.T) {
 		return NotFound("拦截器拒绝")
 	})
 	k := NewKernel()
-	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping", Middleware: []string{"k-err"}, RType: Type[string]()}
+	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping", Middleware: []string{"k-err"}}
 	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) { return "x", nil })
 
 	sink := &fakeSink{}
@@ -177,7 +176,7 @@ func TestHandleWithUnregisteredMiddlewarePanics(t *testing.T) {
 		}
 	}()
 	k := NewKernel()
-	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping", Middleware: []string{"k-ghost"}, RType: Type[string]()}
+	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping", Middleware: []string{"k-ghost"}}
 	k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) { return "x", nil })
 }
 
@@ -190,7 +189,7 @@ func TestHandleWithBindFailDefaultEnvelope(t *testing.T) {
 		be.AddField("name", "body", "is required")
 		return nil, be
 	}
-	ep := Endpoint{Owner: "T", Handler: "Create", Method: "POST", Path: "/users", RType: Type[string]()}
+	ep := Endpoint{Owner: "T", Handler: "Create", Method: "POST", Path: "/users"}
 	h := k.Handle(ep, bindQ, nil, func(ctx context.Context, q, b any) (any, error) { return "x", nil })
 
 	sink := &fakeSink{}
@@ -213,7 +212,7 @@ func TestHandleWithBindFailRawEnvelope(t *testing.T) {
 		be.AddField("name", "body", "is required")
 		return nil, be
 	}
-	ep := Endpoint{Owner: "T", Handler: "Create", Method: "POST", Path: "/users", RType: Type[string]()}
+	ep := Endpoint{Owner: "T", Handler: "Create", Method: "POST", Path: "/users"}
 	h := k.Handle(ep, bindQ, nil, func(ctx context.Context, q, b any) (any, error) { return "x", nil })
 
 	sink := &fakeSink{}
@@ -234,7 +233,7 @@ func TestHandleWithBindFailRawEnvelope(t *testing.T) {
 func TestHandleWithCorrelation(t *testing.T) {
 	k := NewKernel().SetCorrelation(true)
 	var seen string
-	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping", RType: Type[string]()}
+	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping"}
 	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) {
 		seen = CorrelationIDFrom(ctx)
 		return seen, nil
@@ -260,7 +259,7 @@ func TestHandleWithCorrelation(t *testing.T) {
 
 func TestHandleWithNotFoundMapping(t *testing.T) {
 	k := NewKernel()
-	ep := Endpoint{Owner: "T", Handler: "Get", Method: "GET", Path: "/users/{id}", RType: Type[string]()}
+	ep := Endpoint{Owner: "T", Handler: "Get", Method: "GET", Path: "/users/{id}"}
 	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) {
 		return nil, ErrNotFound
 	})
@@ -282,7 +281,7 @@ func TestHandleWithNotFoundMapping(t *testing.T) {
 
 func TestHandleWithFileStreamBypassesEnvelope(t *testing.T) {
 	k := NewKernel().SetEnvelope(DefaultEnvelope{}) // 即使统一壳，流也直出
-	ep := Endpoint{Owner: "T", Handler: "File", Method: "GET", Path: "/file", RType: Type[*FileStream]()}
+	ep := Endpoint{Owner: "T", Handler: "File", Method: "GET", Path: "/file"}
 	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) {
 		return &FileStream{Name: "a.txt"}, nil
 	})

@@ -15,37 +15,52 @@ import (
 	"time"
 )
 
-// Endpoint 端点描述：生成器产出的唯一事实，同时是手写逃生口的注册单元。
+// Endpoint 端点描述（运行时）：生成器产出的唯一事实，同时是手写逃生口的注册单元。
+// 只承载请求管线需要的字段；文档元数据见 EndpointDoc —— 仅 openapi 开发期入口
+// （go run -tags openapi）与生成器 docs_gen.go 消费，运行时二进制不链接，
+// 文档字符串与类型描述零运行时开销。
 type Endpoint struct {
-	// Owner 端点所属 Enterpoint 结构体名（文档 operationID / 分组展示用）。
+	// Owner 端点所属 Enterpoint 结构体名（拦截器/校验器日志与错误上下文用）。
 	Owner string
-	// Handler 端点方法名（文档 operationID 组成部分）。
+	// Handler 端点方法名。
 	Handler string
 	Method  string // HTTP 方法
 	Path    string // 完整路径（含组前缀），OpenAPI 风格 {id}
+	// Status 成功状态码；0 → 200。
+	Status int
+	// Envelope 响应壳注册名（RegisterEnvelope）；空 → 内核默认壳。
+	Envelope string
+	// Middleware 环绕拦截器名（RegisterInterceptor 注册），按声明顺序执行
+	//（结构体级 → 方法级）。鉴权/限流即普通中间件名。
+	Middleware []string
+	// Timeout 端点超时；0 → 不限时。
+	Timeout time.Duration
+}
+
+// EndpointDoc 文档侧端点描述：openapi.Generate 专用，运行时二进制不链接
+// （生成器发到 docs_gen.go，仅被 openapi build-tag 入口引用，链接器剥离）。
+// 运行时字段直接内嵌 Endpoint；生成器发射 docs_gen.go 时引用 specs_gen.go
+// 的 SpecXxx 变量整段赋值 —— 运行时字段单一事实源，不重复声明；
+// Summary / Description 等文档字段仅此存在。
+type EndpointDoc struct {
+	// Endpoint 运行时端点描述：与 Endpoints() 表同源（Owner/Handler/Method/
+	// Path/Status/Envelope/Middleware/Timeout）。生成器以 Endpoint: SpecXxx
+	// 整段赋值；手写字面量也可用提升字段名键（EndpointDoc{Method: ...}）。
+	Endpoint
+
+	// ---- 文档字段 ----
 	// Summary / Description 文档信息（生成自函数注释）。
 	Summary     string
 	Description string
 	Tags        []string
-	// Status 成功状态码；0 → 200。
-	Status int
-	// Deprecated 弃用标记（文档 + 运行时 dev 日志）。
+	// Deprecated 弃用标记（文档）。
 	Deprecated bool
-	// Envelope 响应壳注册名（RegisterEnvelope）；空 → 内核默认壳。
-	Envelope string
-	// Middleware 环绕拦截器名（RegisterInterceptor 注册），按声明顺序执行
-	//（结构体级 → 方法级）。鉴权/限流即普通中间件名：名命中文档侧
-	// securitySchemes 时推导 security + 401。
-	Middleware []string
-	// MWRefs 文档侧中间件引用名单（hinge gen 生成，运行时不消费）：
-	// 源码引用为 "import路径.FuncName" 全限定形态（与反射派生的函数名一致，
-	// 如 "github.com/x/app/middleware.Auth"），内核拦截器注册名为原名。
+	// MWRefs 文档侧中间件引用名单（hinge gen 生成）：源码引用为
+	// "import路径.FuncName" 全限定形态（与反射派生的函数名一致，如
+	// "github.com/x/app/middleware.Auth"），内核拦截器注册名为原名。
 	// openapi 生成器据此配对 RegisterMiddlewareDoc 文档钩子。
 	MWRefs []string
-	// Timeout 端点超时；0 → 不限时。
-	Timeout time.Duration
-	// QType / BType / RType 类型信息：openapi 文档生成消费；
-	// 运行时绑定走生成的 Binder，不经过这里（零反射）。
+	// QType / BType / RType 类型信息：openapi schema 生成消费。
 	QType, BType, RType reflect.Type
 }
 
@@ -65,7 +80,7 @@ type HandlerFunc func(ctx context.Context, q, b any) (any, error)
 // 绑定失败链；其他 error 走统一错误决策（StatusError 优先，BindFail 兜底）。
 type Binder func(ctx context.Context, r RequestReader) (any, error)
 
-// Type 返回 T 的 reflect.Type（生成表填充 Endpoint.QType 等使用）。
+// Type 返回 T 的 reflect.Type（生成表填充 EndpointDoc.QType 等使用，文档生成）。
 func Type[T any]() reflect.Type {
 	return reflect.TypeOf((*T)(nil)).Elem()
 }

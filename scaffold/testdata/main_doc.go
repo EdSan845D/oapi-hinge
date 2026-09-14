@@ -8,9 +8,9 @@ import (
 	"flag"
 	"fmt"
 
-	"opai-hinge/app/eps"
 	"github.com/EdSan845D/oapi-hinge/hinge"
 	"github.com/EdSan845D/oapi-hinge/openapi"
+	"opai-hinge/app/eps"
 
 	"github.com/getkin/kin-openapi/openapi3"
 )

@@ -1,7 +1,8 @@
 //go:build openapi
 
 // 开发期文档生成入口：go run -tags openapi ./example -out openapi.yaml
-// 消费生成表（Endpoints()），运行时零开发期依赖的哲学不变。
+// 消费文档描述表（AllDocSpecs()，docs_gen.go）——仅本入口链接文档元数据，
+// 运行时二进制（默认 tag）零文档开销的哲学不变。
 package main
 
 import (
@@ -51,7 +52,7 @@ func main() {
 	})
 	if err := openapi.Generate(
 		*out,
-		apigen.AllSpecs(),
+		apigen.AllDocSpecs(),
 		openapi.OptionWithDocInfo(info),
 		openapi.OptionWithServer(servers),
 		openapi.OptionWithSecurity(security),

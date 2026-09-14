@@ -18,7 +18,7 @@ type genUploadReq struct {
 }
 
 func TestGenerateBodyKinds(t *testing.T) {
-	eps := []hinge.Endpoint{
+	eps := []hinge.EndpointDoc{
 		{
 			Owner: "t", Handler: "Raw",
 			Method: "POST", Path: "/raw", Summary: "原始字节体",
@@ -61,7 +61,7 @@ type genCookieReq struct {
 }
 
 func TestCookieParameterDoc(t *testing.T) {
-	eps := []hinge.Endpoint{
+	eps := []hinge.EndpointDoc{
 		{
 			Owner: "t", Handler: "Cookie",
 			Method: "GET", Path: "/c",

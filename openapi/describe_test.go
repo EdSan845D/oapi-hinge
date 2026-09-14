@@ -43,7 +43,7 @@ func TestOptionWithEnvelopeDerivation(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Echo",
 		Method: "GET", Path: "/e/x", Summary: "壳推导",
 		RType: hinge.Type[map[string]string](),
@@ -70,7 +70,7 @@ func TestSchemaNameCollision(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	eps := []hinge.Endpoint{
+	eps := []hinge.EndpointDoc{
 		{
 			Owner: "t", Handler: "A",
 			Method: "GET", Path: "/n/a", Summary: "A 用户",
@@ -113,7 +113,7 @@ func TestOperationIDCollisionWarning(t *testing.T) {
 	defer resetRegistries()
 
 	// 同 Owner+Handler 两个端点 → operationID 重复 → 正式轮警告
-	eps := []hinge.Endpoint{
+	eps := []hinge.EndpointDoc{
 		{
 			Owner: "n", Handler: "Health",
 			Method: "GET", Path: "/n/a", Summary: "A",
@@ -158,7 +158,7 @@ func TestManualPath(t *testing.T) {
 	item.SetOperation(http.MethodGet, op)
 	RegisterManualPath("/legacy/ping", item)
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Demo",
 		Method: "GET", Path: "/m/x", Summary: "模板路由",
 		RType: hinge.Type[map[string]string](),
@@ -183,7 +183,7 @@ func TestManualPathConflictPanics(t *testing.T) {
 	item.SetOperation(http.MethodGet, op)
 	RegisterManualPath("/m/x", item) // 与端点表 GET /m/x 冲突
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Demo",
 		Method: "GET", Path: "/m/x", Summary: "模板路由",
 		RType: hinge.Type[map[string]string](),
@@ -200,7 +200,7 @@ func TestDeprecatedFlag(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Old",
 		Method: "GET", Path: "/dep/old", Summary: "旧接口",
 		Deprecated: true,
@@ -220,7 +220,7 @@ func TestGenerateStrictFailsOnWarnings(t *testing.T) {
 	defer resetRegistries()
 
 	// 手写端点未填 Summary → 警告 → 严格模式失败
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "NoSummary",
 		Method: "GET", Path: "/s/x",
 		RType: hinge.Type[map[string]string](),
@@ -246,7 +246,7 @@ func TestSourceComments(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "A",
 		Method: "GET", Path: "/c/a",
 		RType: hinge.Type[testdataa.User](),
@@ -289,7 +289,7 @@ func TestCustomCommentParser(t *testing.T) {
 		return DescribeSchema(sch, desc, example)
 	})
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "B",
 		Method: "GET", Path: "/cp/b",
 		RType: hinge.Type[datab.User](),
@@ -312,7 +312,7 @@ func TestCommentParserWithoutOptionWarns(t *testing.T) {
 		return sch
 	})
 
-	eps := []hinge.Endpoint{{
+	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Demo",
 		Method: "GET", Path: "/w/x", Summary: "演示",
 		RType: hinge.Type[map[string]string](),

@@ -14,7 +14,7 @@ import (
 )
 
 // 定制能力文档生成验证：header 标签进文档、Response[R] 解包取 Data schema。
-// v0.2 端点表范式：测试直接构造 []hinge.Endpoint（QType/BType/RType 由 hinge.Type[T]() 填充）。
+// v0.2 端点表范式：测试直接构造 []hinge.EndpointDoc（QType/BType/RType 由 hinge.Type[T]() 填充）。
 type docHeaderReq struct {
 	Lang string `header:"Accept-Language" description:"语言"`
 }
@@ -25,7 +25,7 @@ type docUser struct {
 }
 
 func TestGenerateEscapeHatches(t *testing.T) {
-	eps := []hinge.Endpoint{
+	eps := []hinge.EndpointDoc{
 		{
 			Owner: "t", Handler: "DocHeader",
 			Method: "GET", Path: "/doc/h", Summary: "header",
@@ -66,7 +66,7 @@ func TestGenerateEscapeHatches(t *testing.T) {
 // ============ 升级能力验证：Status 文档联动 + EnvelopeSchema 可替换 ============
 
 func TestGenerateDefaultStatusCode(t *testing.T) {
-	eps := []hinge.Endpoint{
+	eps := []hinge.EndpointDoc{
 		{
 			Owner: "t", Handler: "Create",
 			Method: "POST", Path: "/doc/create", Summary: "创建",
@@ -90,7 +90,7 @@ func TestGenerateDefaultStatusCode(t *testing.T) {
 }
 
 func TestGenerateCustomEnvelopeSchema(t *testing.T) {
-	eps := []hinge.Endpoint{
+	eps := []hinge.EndpointDoc{
 		{
 			Owner: "t", Handler: "H",
 			Method: "GET", Path: "/doc/h", Summary: "header",
@@ -128,7 +128,7 @@ type docPathReq struct {
 }
 
 func TestGeneratePathParamsFromQueryStruct(t *testing.T) {
-	eps := []hinge.Endpoint{
+	eps := []hinge.EndpointDoc{
 		{
 			Owner: "t", Handler: "DocPath",
 			Method: "GET", Path: "/doc/users/{id}/{sub}", Summary: "路径参数",
@@ -167,7 +167,7 @@ func TestGeneratePathParamsFromQueryStruct(t *testing.T) {
 // ============ Middleware 名命中 securitySchemes → security + 401 ============
 
 func TestGenerateAuthAndExtensions(t *testing.T) {
-	eps := []hinge.Endpoint{
+	eps := []hinge.EndpointDoc{
 		{
 			Owner: "t", Handler: "Admin",
 			Method: "GET", Path: "/doc/admin", Summary: "受保护接口",
@@ -206,7 +206,7 @@ type docSliceReq struct {
 }
 
 func TestGenerateSliceQueryParam(t *testing.T) {
-	eps := []hinge.Endpoint{
+	eps := []hinge.EndpointDoc{
 		{
 			Owner: "t", Handler: "Tags",
 			Method: "GET", Path: "/doc/tags", Summary: "tags",
@@ -234,7 +234,7 @@ func demoSessionMW() {}
 
 func TestGenerateMiddlewareDocHook(t *testing.T) {
 	const demoRef = "github.com/EdSan845D/oapi-hinge/openapi.demoSessionMW"
-	eps := []hinge.Endpoint{
+	eps := []hinge.EndpointDoc{
 		{
 			Owner: "t", Handler: "Del",
 			Method: "DELETE", Path: "/doc/users/{id}", Summary: "删除",
@@ -279,7 +279,7 @@ func TestUnmatchedMiddlewareHookWarning(t *testing.T) {
 	RegisterMiddlewareDoc(demoUnmatchedMW, func(op *openapi3.Operation) {})
 	// demoSessionMW 已在 TestGenerateMiddlewareDocHook 注册并被消费；
 	// demoUnmatchedMW 从未被任何端点 MWRefs 引用，断言警告出现
-	_, warnings, err := buildDoc([]hinge.Endpoint{
+	_, warnings, err := buildDoc([]hinge.EndpointDoc{
 		{Owner: "t", Handler: "Plain", Method: "GET", Path: "/doc/plain", Summary: "无中间件", RType: hinge.Type[map[string]string]()},
 	})
 	if err != nil {
