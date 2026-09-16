@@ -137,15 +137,19 @@ apigen.RegisterAllGin(r.Group("/api"), k, apigen.All{
 
 echo / 原生 http 各有对称的 `RegisterAllEcho` / `RegisterAllHTTP`——同一份注解，换框架只改这一行。
 
-## 包结构（单模块）
+## 包结构（多模块：内核零框架依赖）
+
+仓库为多模块布局：根模块只含内核（hinge）/ 生成器 / 文档，**go.mod 零框架依赖**；servergin / serverecho / serverhttp / validator 是独立子模块，各自携带自己的框架依赖（gin / echo / go-playground）——只 import 内核的项目不引入任何框架依赖。
 
 | 包 | 说明 |
 |---|---|
-| `hinge` | 运行时内核：Endpoint 契约、框架无关请求管线、错误链、响应壳（零反射；拦截器为直接函数引用，无注册表） |
-| `hinge/validator` | 自定义校验器扩展点 + go-playground 接入（可选依赖） |
+| `hinge`（根模块） | 运行时内核：Endpoint 契约、框架无关请求管线、错误链、响应壳（零反射；拦截器为直接函数引用，无注册表） |
+| `servergin` | **独立子模块**（tag `servergin/vX.Y.Z`）：gin 适配器（自带 gin 依赖） |
+| `serverecho` | **独立子模块**（tag `serverecho/vX.Y.Z`）：echo 适配器（自带 echo 依赖） |
+| `serverhttp` | **独立子模块**（tag `serverhttp/vX.Y.Z`）：标准库 http 适配器（零第三方依赖） |
+| `validator` | **独立子模块**（tag `validator/vX.Y.Z`）：go-playground 接入（可选依赖） |
 | `gen` + `cmd/hinge` | 代码生成器：AST 注解解析 → IR → 绑定器/注册器/表发射 |
-| `servergin` / `serverecho` / `serverhttp` | 薄 transport：取值 + 写出（约 300 行/框架） |
-| `openapi` | OpenAPI 3.1 生成器，消费 `Endpoints()` 表（`//go:build openapi` 隔离，release 零开发依赖） |
+| `openapi` | OpenAPI 3.1 生成器，消费文档描述表（`//go:build openapi` 隔离，release 零开发依赖） |
 | `scaffold` | 项目脚手架（`oapi-hinge create myapp`） |
 
 ## OpenAPI 文档
@@ -197,6 +201,17 @@ openapi.RegisterMiddlewareDoc(middleware.ParseHeaderWithInfo, func(op *openapi3.
 - **校验器**：生成绑定器内置 required 检查 + `Validate()` 直调；`validator.Playground()` 接入完整规则（可选依赖）；
 - **拦截器**：`hinge.Interceptor` 具名包级函数，`oapi:interceptor` 注解 / `EntryPointConfig.Interceptors` 直接引用（无注册表）；短路时自行经 Sink 写出并返回 nil，返回错误走统一错误链；
 - **中间件文档钩子**：`openapi.RegisterMiddlewareDoc(fn, hook)`（openapi tag），按函数引用为引用了该中间件的端点定制 security/参数/响应，见「中间件文档钩子」。
+
+### 发布（多模块锁步）
+
+多模块发版 = 每个模块一个带目录前缀的 tag（根 `vX.Y.Z`，子模块 `servergin/vX.Y.Z` …），已脚本化为一条命令：
+
+```bash
+./release.sh v0.2.0                  # 全量测试 → 子模块 go.mod 版本对齐 → 提交 → 5 tag → push
+./release.sh v0.2.0 --skip-tests     # CI 已覆盖时跳过本地测试
+```
+
+脚本动作：工作区干净校验 → test.sh 全量测试 → 子模块 go.mod 内核依赖对齐到目标版本（幂等）→ 提交 → 根 + 4 个子模块同一提交打 tag → 推送。消费者按需升级（如 `go get github.com/EdSan845D/oapi-hinge/servergin@latest`），版本不同步不报错——适配器 go.mod 记录的内核版本即为兼容底线。
 
 ## 从 v0.1 迁移（破坏性变更）
 

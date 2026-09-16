@@ -10,8 +10,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/EdSan845D/oapi-hinge/hinge/validator"
 	"github.com/EdSan845D/oapi-hinge/servergin"
+	"github.com/EdSan845D/oapi-hinge/validator"
 	"opai-hinge/apigen"
 	"opai-hinge/app/eps"
 
