@@ -34,7 +34,7 @@ var pathParamRe = regexp.MustCompile(`\{([^}]+)\}`)
 // envelopeInstance 由 OptionWithEnvelope 注入运行时实际壳实例；
 // envelopeSchemaCustom 标记 OptionWithEnvelopeSchema 手写壳 schema（仅无法从壳实例推导时使用）；
 // envelopeSchemas 由 OptionWithEnvelopeSchemas 注册命名壳（hinge.EndpointDoc.Envelope 引用名）的文档 schema。
-// securityNames OptionWithSecurity 注册的 scheme 名（端点 Middleware 名命中 → security + 401）。
+// securityNames OptionWithSecurity 注册的 scheme 名（端点 MWRefs 尾段名命中 → security + 401）。
 var (
 	envelopeSchema       EnvelopeSchema = defaultEnvelopeSchema
 	envelopeSchemaCustom bool
@@ -257,7 +257,7 @@ func endpointName(ep *hinge.EndpointDoc) string {
 //   - B：nil / interface{} 表示无 body，否则整包作为 application/json 请求体
 //   - R：Data 段 schema；hinge.FileStream 输出二进制流并声明 404，接口类型（Empty/any）输出任意 JSON 值 schema
 //   - 文档语义映射：ep.Deprecated → deprecated；ep.Status(0→200) → 成功码；
-//     Middleware 名命中 securitySchemes → security + 401；ep.Timeout → x-timeout；ep.Envelope → 命名壳 schema
+//     MWRefs 尾段名命中 securitySchemes → security + 401；ep.Timeout → x-timeout；ep.Envelope → 命名壳 schema
 func addOperation(g *specGen, ep *hinge.EndpointDoc) {
 	op := openapi3.NewOperation()
 	// Responses 先初始化：Auth 401 等响应随后写入
@@ -271,6 +271,21 @@ func addOperation(g *specGen, ep *hinge.EndpointDoc) {
 		g.noteTag(tg, "")
 	}
 
+	// 鉴权中间件的文档语义：MWRefs 尾段名命中 OptionWithSecurity 注册的
+	// securityScheme → 推导 security + 401（框架中间件与内核拦截器两类引用
+	// 都参与；文档钩子后执行，可覆盖内置推导）。
+	for _, ref := range ep.MWRefs {
+		seg := ref
+		if i := strings.LastIndex(seg, "."); i >= 0 {
+			seg = seg[i+1:]
+		}
+		if isSecurityScheme(seg) {
+			op.Security = &openapi3.SecurityRequirements{{seg: {}}}
+			op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+				WithDescription("Unauthorized：token 缺失或无效")})
+			break
+		}
+	}
 	// 中间件文档钩子：按 MWRefs 全限定引用配对（RegisterMiddlewareDoc 注册），
 	// 后于内置推导执行（同名钩子可覆盖内置 security/响应）。
 	applyMiddlewareHooks(op, ep.MWRefs)

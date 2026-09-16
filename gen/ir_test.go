@@ -45,7 +45,7 @@ func TestPathParamRegex(t *testing.T) {
 	}
 }
 
-func TestSplitMWRefs(t *testing.T) {
+func TestResolveAnnoRefs(t *testing.T) {
 	pkg := &Package{Files: []*File{{
 		byAlias: map[string]string{"mw": "example.com/app/mw"},
 		byBase:  map[string]string{"middleware": "example.com/app/middleware"},
@@ -54,42 +54,38 @@ func TestSplitMWRefs(t *testing.T) {
 		"middleware": "example.com/app/middleware", // 被扫描包名 → 可解析
 		"dup":        "",                           // 同名多包歧义 → 不解析
 	}
-	kernel, refs := splitMWRefs(pkg, scanned, []string{
-		"mw.ParseHeader",                 // 端点包显式别名 import → 路由级
-		"middleware.ParseHeaderWithInfo", // 被扫描包名 → 路由级
-		"github.com/x/lib/mw.Start",      // 完整 import 路径 → 路由级（别名取基名）
-		"Auth",                           // 无点 → 内核拦截器注册名
-		"registry.Named",                 // dotted 但限定符未解析 → 内核注册名
-		"dup.Fn",                         // 歧义限定符 → 内核注册名
-	})
-	wantRefs := []MWRef{
+	b := &irBuilder{}
+	refs := b.resolveAnnoRefs(pkg, scanned, []string{
+		"mw.ParseHeader",                 // 端点包显式别名 import → 引用
+		"middleware.ParseHeaderWithInfo", // 被扫描包名 → 引用
+		"github.com/x/lib/mw.Start",      // 完整 import 路径 → 引用（别名取基名）
+		"Auth",                           // 无点 → 无法解析
+		"registry.Named",                 // dotted 但限定符未解析 → 无法解析
+		"dup.Fn",                         // 歧义限定符 → 无法解析
+	}, "oapi:middleware", "T.Ping")
+	want := []MWRef{
 		{Qualifier: "mw", Name: "ParseHeader", Import: "example.com/app/mw"},
 		{Qualifier: "middleware", Name: "ParseHeaderWithInfo", Import: "example.com/app/middleware"},
 		{Qualifier: "mw", Name: "Start", Import: "github.com/x/lib/mw"},
 	}
-	if len(refs) != len(wantRefs) {
-		t.Fatalf("refs = %+v, want %+v", refs, wantRefs)
+	if len(refs) != len(want) {
+		t.Fatalf("refs = %+v, want %+v", refs, want)
 	}
-	for i := range wantRefs {
-		if refs[i] != wantRefs[i] {
-			t.Fatalf("refs[%d] = %+v, want %+v", i, refs[i], wantRefs[i])
+	for i := range want {
+		if refs[i] != want[i] {
+			t.Fatalf("refs[%d] = %+v, want %+v", i, refs[i], want[i])
 		}
 	}
-	wantKernel := []string{"Auth", "registry.Named", "dup.Fn"}
-	if len(kernel) != len(wantKernel) {
-		t.Fatalf("kernel names = %v, want %v", kernel, wantKernel)
+	// 无法解析的值必须生成错误：注册表已移除，不存在裸名回落（防静默丢失）
+	if len(b.errs) != 3 {
+		t.Fatalf("errs = %v, want 3 项解析失败", b.errs)
 	}
-	for i := range wantKernel {
-		if kernel[i] != wantKernel[i] {
-			t.Fatalf("kernel names = %v, want %v", kernel, wantKernel)
-		}
-	}
-	// 空名单不产生引用
-	if k2, r2 := splitMWRefs(pkg, scanned, nil); len(k2) != 0 || len(r2) != 0 {
-		t.Fatalf("nil input: kernel=%v refs=%v", k2, r2)
+	// 空名单不产生引用与错误
+	b2 := &irBuilder{}
+	if r2 := b2.resolveAnnoRefs(pkg, scanned, nil, "oapi:middleware", "T.Ping"); len(r2) != 0 || len(b2.errs) != 0 {
+		t.Fatalf("nil input: refs=%v errs=%v", r2, b2.errs)
 	}
 }
-
 func TestScanQualifiers(t *testing.T) {
 	pkgs := []*Package{
 		{Name: "eps", ImportPath: "example.com/app/eps"},

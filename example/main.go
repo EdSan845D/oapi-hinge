@@ -5,18 +5,15 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/EdSan845D/oapi-hinge/example/apigen"
 	"github.com/EdSan845D/oapi-hinge/example/app/eps"
-	"github.com/EdSan845D/oapi-hinge/hinge"
 	"github.com/EdSan845D/oapi-hinge/hinge/validator"
 	"github.com/EdSan845D/oapi-hinge/servergin"
 
@@ -40,16 +37,11 @@ func main() {
 	// 只用生成绑定器内置 required + Validate() 的项目无需调用。
 	k.AddValidator(validator.Playground())
 
-	// 扩展点 2：oapi:auth BearerAuth 注解引用的拦截器（运行时实现与文档 scheme 同名配对）。
-	// 短路时自行经 Sink 写出并返回 nil；返回错误则走统一错误链。
-	hinge.RegisterInterceptor("BearerAuth", func(ctx context.Context, ep hinge.Endpoint, req hinge.RequestReader, s hinge.Sink, next func(context.Context) error) error {
-		tok, _ := req.Header("Authorization")
-		if !strings.HasPrefix(tok, "Bearer ") {
-			s.WriteJSON(http.StatusUnauthorized, map[string]any{"code": http.StatusUnauthorized, "data": nil, "msg": "missing bearer token"})
-			return nil
-		}
-		return next(ctx)
-	})
+	// 扩展点 2：内核拦截器与框架中间件二分引用（无注册表，直引具名函数）：
+	//   - oapi:interceptor middleware.BearerAuth（方法级注解，见 app/eps）→
+	//     发射为 HandleWith 的 extra 实参，进内核拦截链；
+	//   - EntryPointConfig.Interceptors / Middlewares 程序化注入（见 app/generate.go）。
+	// 文档侧由 openapi 生成器按 MWRefs 尾段名与 OptionWithSecurity scheme 配对。
 
 	// 扩展点 3（可选）：默认裸输出（RawEnvelope，不加包装器）；
 	// 需要统一 {code,data,msg} 包装时显式开启 DefaultEnvelope

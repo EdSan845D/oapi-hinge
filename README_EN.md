@@ -22,7 +22,7 @@ Inspired by [go-fuego](https://github.com/go-fuego/fuego) and [huma](https://git
 //
 // oapi:prefix /users
 // oapi:tag users
-// oapi:auth BearerAuth
+// oapi:interceptor middleware.BearerAuth
 type UserEp struct {
 	Store *UserStore // fields = dependency container
 }

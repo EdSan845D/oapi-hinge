@@ -29,7 +29,7 @@ func (ep SystemEp) Health(ctx context.Context, _ any) (map[string]string, error)
 //
 // oapi:prefix /users
 // oapi:tag 用户
-// oapi:auth BearerAuth
+// oapi:interceptor middleware.BearerAuth
 type UserEp struct {
 	Store *UserStore
 }

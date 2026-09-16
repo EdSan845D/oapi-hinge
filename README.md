@@ -62,7 +62,9 @@ func (ep UserEp) CreateUser(ctx context.Context, _ any, b CreateUserReq) (User, 
 | `oapi:tag` | 类型/方法 | OpenAPI tag |
 | `oapi:timeout` | 类型/方法 | 超时声明，文档派生 x-timeout |
 | `oapi:status` / `oapi:deprecated` / `oapi:envelope` | 方法 | 成功码 / 弃用 / 命名响应壳 |
-| `oapi:middleware` | 类型/方法 | 环绕中间件（`oapi:auth` / `oapi:limit` 为其历史别名，值统一进 Middleware 名单，按声明顺序执行）：`pkg.Func` 限定符可解析时——类型级 → 组级中间件（scoped `Group("", mws...)`），方法级 → 路由直挂（编译期校验）；其余 → 内核拦截器注册名（RegisterInterceptor 按名解析）；中间件名命中文档侧 securitySchemes → 自动推导 security + 401 |
+| `oapi:middleware` | 类型/方法 | **框架原生中间件**（第三方框架通道，值为 `pkg.Func` 函数引用，编译期校验）：类型级 → 组级中间件（scoped `Group("", mws...)`），方法级 → 路由直挂；作用于框架链、内核之外；无端点上下文。中间件引用尾段名命中文档侧 securitySchemes → 自动推导 security + 401 |
+| `oapi:interceptor` | 类型/方法 | **内核拦截器**（hinge.Interceptor 签名，值为 `pkg.Func` 函数引用，生成期签名校验）：类型级 → owner 全端点，方法级 → 本端点；发射为 `HandleWith` 的 extra 实参，进内核拦截链（correlation/timeout 之后、bind 之前），持端点上下文与统一错误链，跨框架可移植 |
+| ~~`oapi:auth` / `oapi:limit`~~ | — | **已移除**（v0.2 二分：框架原生用 `oapi:middleware`，内核拦截器用 `oapi:interceptor`，值均为函数引用，不支持裸名） |
 
 ### 代码生成
 
@@ -96,8 +98,9 @@ gen.Config{
 	// ...
 	EntryPoints: []gen.EntryPointConfig{
 		{
-			Name:       "SystemEp",
-			Midllwares: []any{middleware.Auth}, // 组级中间件（运行时值，自动分档发射）
+			Name: "SystemEp",
+			Middlewares: []any{middleware.Auth},              // 组级框架原生中间件（组级直挂）
+			Interceptors: []hinge.Interceptor{middleware.AccessLog}, // owner 全端点内核拦截器（extra）
 			FuncDecls: map[gen.FuncId]gen.RouteMeta{
 				gen.FuncIdentity(eps.SystemEp.Health): {
 					Summary:     "健康检查（代码覆写示例）", // 字段级覆写：非零字段才覆盖注解值
@@ -121,14 +124,9 @@ k := servergin.NewKernel()
 k.SetCorrelation(true)
 k.AddValidator(validator.Playground())
 
-hinge.RegisterInterceptor("BearerAuth", func(ctx context.Context, ep hinge.Endpoint, req hinge.RequestReader, s hinge.Sink, next func(context.Context) error) error {
-	tok, _ := req.Header("Authorization")
-	if !strings.HasPrefix(tok, "Bearer ") {
-		s.WriteJSON(http.StatusUnauthorized, map[string]any{"code": 401, "data": nil, "msg": "missing bearer token"})
-		return nil
-	}
-	return next(ctx)
-})
+// 拦截器无需注册：oapi:interceptor 注解 / EntryPointConfig.Interceptors
+// 直接引用具名包级函数（如 app/middleware.BearerAuth），生成代码发射为
+// HandleWith 的 extra 实参，进内核拦截链。
 
 apigen.RegisterAllGin(r.Group("/api"), k, apigen.All{
 	SystemEp: eps.SystemEp{},
@@ -143,7 +141,7 @@ echo / 原生 http 各有对称的 `RegisterAllEcho` / `RegisterAllHTTP`——�
 
 | 包 | 说明 |
 |---|---|
-| `hinge` | 运行时内核：Endpoint 契约、框架无关请求管线、错误链、响应壳、拦截器注册表（零反射） |
+| `hinge` | 运行时内核：Endpoint 契约、框架无关请求管线、错误链、响应壳（零反射；拦截器为直接函数引用，无注册表） |
 | `hinge/validator` | 自定义校验器扩展点 + go-playground 接入（可选依赖） |
 | `gen` + `cmd/hinge` | 代码生成器：AST 注解解析 → IR → 绑定器/注册器/表发射 |
 | `servergin` / `serverecho` / `serverhttp` | 薄 transport：取值 + 写出（约 300 行/框架） |
@@ -197,7 +195,7 @@ openapi.RegisterMiddlewareDoc(middleware.ParseHeaderWithInfo, func(op *openapi3.
 - **错误携带状态码**：`hinge.NotFound/BadRequest/...` 或实现 `StatusCoder`；默认 HTTP 200 + code=7，`k.SetBindErrorStatus(400)` 切 RESTful；
 - **入参转换 / 出参加工**：`InTransform(ctx) error` / `OutTransform(ctx) error` 接口由生成绑定器与内核自动调用（零反射）；
 - **校验器**：生成绑定器内置 required 检查 + `Validate()` 直调；`validator.Playground()` 接入完整规则（可选依赖）；
-- **拦截器**：`RegisterInterceptor(name, fn)`，注解按名引用；短路时自行经 Sink 写出并返回 nil，返回错误走统一错误链；
+- **拦截器**：`hinge.Interceptor` 具名包级函数，`oapi:interceptor` 注解 / `EntryPointConfig.Interceptors` 直接引用（无注册表）；短路时自行经 Sink 写出并返回 nil，返回错误走统一错误链；
 - **中间件文档钩子**：`openapi.RegisterMiddlewareDoc(fn, hook)`（openapi tag），按函数引用为引用了该中间件的端点定制 security/参数/响应，见「中间件文档钩子」。
 
 ## 从 v0.1 迁移（破坏性变更）

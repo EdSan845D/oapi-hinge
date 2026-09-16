@@ -41,8 +41,8 @@ type Endpoint struct {
 // Summary / Description 等文档字段仅此存在。
 type EndpointDoc struct {
 	// Endpoint 运行时端点描述：与 Endpoints() 表同源（Owner/Handler/Method/
-	// Path/Status/Envelope/Middleware/Timeout）。生成器以 Endpoint: SpecXxx
-	// 整段赋值；手写字面量也可用提升字段名键（EndpointDoc{Method: ...}）。
+	// Path/Status/Envelope/Timeout）。生成器以 Endpoint: SpecXxx 整段赋值；
+	// 手写字面量也可用提升字段名键（EndpointDoc{Method: ...}）。
 	Endpoint
 
 	// ---- 文档字段 ----
@@ -52,10 +52,10 @@ type EndpointDoc struct {
 	Tags        []string
 	// Deprecated 弃用标记（文档）。
 	Deprecated bool
-	// MWRefs 文档侧中间件引用名单（hinge gen 生成）：源码引用为
-	// "import路径.FuncName" 全限定形态（与反射派生的函数名一致，如
-	// "github.com/x/app/middleware.Auth"），内核拦截器注册名为原名。
-	// openapi 生成器据此配对 RegisterMiddlewareDoc 文档钩子。
+	// MWRefs 文档侧中间件引用名单（hinge gen 生成，全限定形态）：框架原生
+	// 中间件（oapi:middleware）与内核拦截器（oapi:interceptor）两类都进，
+	// 声明序 EntryPointConfig → 结构体级 → 方法级。openapi 生成器据此做
+	// security scheme 推导（尾段名命中）与 RegisterMiddlewareDoc 钩子配对。
 	MWRefs []string
 	// QType / BType / RType 类型信息：openapi schema 生成消费。
 	QType, BType, RType reflect.Type

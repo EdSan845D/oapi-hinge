@@ -19,7 +19,7 @@ func RegisterFileEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.FileEp) {
 	r := i
 	r.GET("/files/:name", servergin.Handle(k, SpecFileEpDownloadSample, BindQDownloadSampleReq, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.DownloadSample(ctx, q.(eps.DownloadSampleReq))
-	}))
+	}, middleware.BearerAuth))
 }
 
 // RegisterPKG_epsGin 把 PKG_eps 的全部端点挂到 Gin。
@@ -35,7 +35,7 @@ func RegisterSystemEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.SystemEp) {
 	r := i.Group("", middleware.Auth)
 	r.GET("/health", servergin.Handle(k, SpecSystemEpHealth, nil, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.Health(ctx, q)
-	}))
+	}, middleware.AccessLog))
 }
 
 // RegisterUserEpGin 把 UserEp 的全部端点挂到 Gin。

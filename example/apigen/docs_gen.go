@@ -28,6 +28,7 @@ var DocSpecFileEpDownloadSample = hinge.EndpointDoc{
 	Endpoint: SpecFileEpDownloadSample,
 	Summary:  "下载示例文件（FileStream 二进制流响应）",
 	Tags:     []string{"文件"},
+	MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.BearerAuth"},
 	QType:    hinge.Type[eps.DownloadSampleReq](),
 	RType:    hinge.Type[*hinge.FileStream](),
 }
@@ -43,7 +44,7 @@ var DocSpecSystemEpHealth = hinge.EndpointDoc{
 	Summary:     "健康检查（代码覆写示例）",
 	Description: "描述由 EntryPointConfig.FuncDecls 程序化覆写：非零字段覆盖注解值，生成日志会打印覆写提示。",
 	Deprecated:  true,
-	MWRefs:      []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+	MWRefs:      []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth", "github.com/EdSan845D/oapi-hinge/example/app/middleware.AccessLog"},
 	RType:       hinge.Type[map[string]string](),
 }
 

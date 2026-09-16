@@ -29,15 +29,23 @@ type EndpointIR struct {
 	Deprecated  bool
 	Envelope    string
 	TimeoutStr  string // oapi:timeout 原值（发射 hinge.MustDuration("<原值>")）
-	Middleware  []string
 
 	// AnnoMWs 方法级 oapi:middleware 注解解析出的源码引用：发射为路由级直挂参数，
-	// 位于内核包装器之前，编译期类型校验；不进入内核拦截器注册表。
+	// 位于内核包装器之前，编译期类型校验。必须为框架原生中间件。
 	AnnoMWs []MWRef
 	// GroupMWs 结构体级 oapi:middleware 注解解析出的源码引用：发射为组级中间件
 	//（scoped Group("", mws...)，仅作用于本 Enterpoint 的路由，不污染传入路由）。
-	// 组级没有端点上下文，引用须为框架原生中间件；Interceptor 请用内核注册名。
+	// 组级没有端点上下文，引用必须为框架原生中间件。
 	GroupMWs []MWRef
+	// AnnoICs 方法级 oapi:interceptor 注解解析出的源码引用：发射为 HandleWith
+	// 的 extra 实参（内核链），需为 hinge.Interceptor 签名。
+	AnnoICs []MWRef
+	// GroupICs 结构体级 oapi:interceptor 注解解析出的源码引用：owner 全端点
+	// 注入 extra（先于方法级），需为 hinge.Interceptor 签名。
+	GroupICs []MWRef
+	// ConfigICs EntryPointConfig.Interceptors 运行时值反射出的源码引用
+	//（owner 全端点注入 extra，先于结构体级注解）。
+	ConfigICs []MWRef
 
 	HasQ  bool
 	QName string
@@ -48,9 +56,9 @@ type EndpointIR struct {
 	BSet     *fieldSet
 	BodyKind string // json / raw / multipart（HasB 时有效）
 
-	// RouteMWs EntryPointConfig.Midllwares 运行时值反射出的源码引用（owner 全端点继承）；
-	// Interceptor 值需要端点上下文，发射为每路由显式包装（InterceptAsGin 等），
-	// 其余（框架原生）并入组级。RouteMWImports 为对应 import 路径。
+	// RouteMWs EntryPointConfig.Middlewares 运行时值反射出的源码引用（owner 全端点继承）：
+	// 全部为框架原生中间件，发射为组级直挂；内核拦截器走 Interceptors → ConfigICs。
+	// RouteMWImports 为对应 import 路径。
 	RouteMWs       []RouteMWRef
 	RouteMWImports []string
 
@@ -85,7 +93,8 @@ type structAnn struct {
 	Prefix     string
 	Tags       []string
 	TimeoutStr string
-	Middleware []string
+	MWs        []string // oapi:middleware：框架原生中间件 → 组级直挂
+	ICs        []string // oapi:interceptor：内核拦截器 → owner 全端点 extra
 }
 
 // MWRef 路由级源码引用中间件（oapi:middleware "pkg.Func" 形态）。
@@ -97,38 +106,28 @@ type MWRef struct {
 	Import    string
 }
 
-// RouteMWRef EntryPointConfig.Midllwares 运行时值反射出的源码引用。
-// gen.Run 与 generate.go 同进程，运行时值的类型可精确判定：
-// Interceptor 值发射为每路由显式包装；其余为框架原生中间件，并入组级。
+// RouteMWRef EntryPointConfig.Middlewares 运行时值反射出的源码引用。
+// gen.Run 与 generate.go 同进程，运行时值类型可精确判定：
+// 仅允许框架原生中间件（hinge.Interceptor 值报错指引到 Interceptors 字段）。
 type RouteMWRef struct {
-	Ref         string // 限定名引用，如 middleware.Auth
-	Import      string // 完整 import 路径
-	Interceptor bool   // 运行时值可赋值给 hinge.Interceptor
+	Ref    string // 限定名引用，如 middleware.Auth
+	Import string // 完整 import 路径
 }
 
-// splitMWRefs 把注解收集到的 middleware 名单拆成两档：
-//   - "pkg.Func" 且限定符可解析（端点包 import 表 → 被扫描包名 → 完整
-//     import 路径形态）→ 路由级源码引用（框架原生中间件语义，生成期
-//     直挂路由链，编译期类型校验）；
-//   - 其余（无点、限定符未解析、或本身即内核注册名）→ 保留原值，运行时
-//     经 RegisterInterceptor/MustInterceptor 按名解析（框架无关）。
-//
-// 路由级引用不进入 Endpoint.Middleware：内核装配期 MustInterceptor 只认
-// 注册名，gin/echo 原生函数注册不进来，留在名单会 panic 且造成双重执行。
-func splitMWRefs(pkg *Package, scanned map[string]string, names []string) ([]string, []MWRef) {
-	kernel := make([]string, 0, len(names))
-	var refs []MWRef
+// resolveAnnoRefs 把注解值解析为源码引用（严格模式）：解析失败即生成期报错。
+// 注册表已删除，不存在「未解析 → 内核注册名」的回落——回落只会静默丢失。
+// kind 用于报错定位（oapi:middleware / oapi:interceptor），pos 为声明位置。
+func (b *irBuilder) resolveAnnoRefs(pkg *Package, scanned map[string]string, names []string, kind, pos string) []MWRef {
+	refs := make([]MWRef, 0, len(names))
 	for _, name := range names {
-		if ref, ok := resolveMWRef(pkg, scanned, name); ok {
-			refs = append(refs, ref)
+		ref, ok := resolveMWRef(pkg, scanned, name)
+		if !ok {
+			b.errf("%s：%s %q 无法解析为源码引用（限定符须在端点包 import 表/被扫描包名中，或完整 import 路径形态；字符串注册表已移除，不支持裸名）", pos, kind, name)
 			continue
 		}
-		if dot := strings.LastIndex(name, "."); dot > 0 && dot < len(name)-1 {
-			fmt.Fprintf(os.Stderr, "hinge gen: 注：oapi:middleware %q 未解析为路由级源码引用（限定符不在端点包 import 表/被扫描包名中，也非完整 import 路径形态），按内核拦截器注册名处理\n", name)
-		}
-		kernel = append(kernel, name)
+		refs = append(refs, ref)
 	}
-	return kernel, refs
+	return refs
 }
 
 // resolveMWRef 把注解值解析为路由级源码引用。依次尝试：
@@ -153,11 +152,12 @@ func resolveMWRef(pkg *Package, scanned map[string]string, name string) (MWRef, 
 	return MWRef{}, false
 }
 
-// DocMWRefs 文档侧中间件引用名单：内核注册名原样 + 源码引用全限定形态
-// （importPath.FuncName，与反射派生的函数名一致，供 openapi 钩子配对）。
-// 顺序：EntryPointConfig 注入 → 结构体级 → 方法级 → 内核注册名，去重保序。
+// DocMWRefs 文档侧中间件引用名单：源码引用全限定形态
+// （importPath.FuncName，与反射派生的函数名一致，供 openapi 钩子配对
+// 与 security scheme 推导；框架中间件与内核拦截器两类都进，行为一致）。
+// 顺序：EntryPointConfig 注入 → 结构体级 → 方法级，去重保序。
 func (ep *EndpointIR) DocMWRefs() []string {
-	out := make([]string, 0, len(ep.RouteMWs)+len(ep.GroupMWs)+len(ep.AnnoMWs)+len(ep.Middleware))
+	out := make([]string, 0, len(ep.RouteMWs)+len(ep.ConfigICs)+len(ep.GroupMWs)+len(ep.GroupICs)+len(ep.AnnoMWs)+len(ep.AnnoICs))
 	seen := map[string]bool{}
 	add := func(s string) {
 		if s != "" && !seen[s] {
@@ -174,13 +174,19 @@ func (ep *EndpointIR) DocMWRefs() []string {
 		}
 		add(r.Ref)
 	}
+	for _, r := range ep.ConfigICs {
+		add(r.Import + "." + r.Name)
+	}
 	for _, r := range ep.GroupMWs {
 		add(r.Import + "." + r.Name)
 	}
-	for _, name := range ep.Middleware {
-		add(name)
+	for _, r := range ep.GroupICs {
+		add(r.Import + "." + r.Name)
 	}
 	for _, r := range ep.AnnoMWs {
+		add(r.Import + "." + r.Name)
+	}
+	for _, r := range ep.AnnoICs {
 		add(r.Import + "." + r.Name)
 	}
 	return out
@@ -258,18 +264,32 @@ func (b *irBuilder) errf(format string, args ...any) {
 	b.errs = append(b.errs, fmt.Sprintf(format, args...))
 }
 
-// verifyMWRef 中间件源码引用的存在性校验：引用目标在扫描包内时核对包级函数名。
-func (b *irBuilder) verifyMWRef(byImport map[string]*Package, ep *EndpointIR, ref MWRef) {
+// verifyMWRef 中间件/拦截器源码引用校验：引用目标在扫描包内时核对包级
+// 函数存在；拦截器引用另做轻量签名校验（深层类型一致性交给编译器）。
+func (b *irBuilder) verifyMWRef(byImport map[string]*Package, ep *EndpointIR, ref MWRef, kind string) {
 	p, ok := byImport[ref.Import]
 	if !ok {
 		return // 非扫描包（自身 import / 完整路径解析）：交给编译器
 	}
 	for _, md := range p.methods[PKGFlag+p.Name] {
 		if md.Name.Name == ref.Name {
+			b.verifyICSignature(ep, kind, md, ref)
 			return
 		}
 	}
-	b.errf("%s.%s：oapi:middleware %s.%s 在包 %s 中不存在（包级函数）", ep.Owner, ep.Handler, ref.Qualifier, ref.Name, ref.Import)
+	b.errf("%s.%s：%s %s.%s 在包 %s 中不存在（包级函数）", ep.Owner, ep.Handler, kind, ref.Qualifier, ref.Name, ref.Import)
+}
+
+// verifyICSignature 拦截器引用的轻量签名校验：hinge.Interceptor 为
+// 5 参 1 返（ctx/ep/reader/sink/next → error）。拦的是把框架原生中间件
+// 误标成 oapi:interceptor 的手误；深层类型一致性交给编译器。
+func (b *irBuilder) verifyICSignature(ep *EndpointIR, kind string, md *ast.FuncDecl, ref MWRef) {
+	if kind != "oapi:interceptor" || md.Type == nil {
+		return
+	}
+	if md.Type.Params.NumFields() != 5 || md.Type.Results.NumFields() != 1 {
+		b.errf("%s.%s：oapi:interceptor %s.%s 签名不符（hinge.Interceptor 为 5 参 1 返；框架原生中间件请用 oapi:middleware）", ep.Owner, ep.Handler, ref.Qualifier, ref.Name)
+	}
 }
 
 // buildIR 从扫描包构建全部端点 IR（含完整校验）。
@@ -287,7 +307,9 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 		}
 		ownerPkg[ep.Owner] = ep.Pkg.ImportPath
 	}
-	// EntryPointConfig.Midllwares → 组级中间件源码引用（owner 全端点继承）：
+	// EntryPointConfig 二分通道（owner 全端点继承）：
+	//   Middlewares → 框架原生中间件，反射取名后发射为组级源码引用；
+	//   Interceptors → 内核拦截器，反射取名后发射为 extra 源码引用。
 	// gen.Run 与 generate.go 同进程，运行时值反射取名后发射为源码引用
 	if len(entryPoints) > 0 {
 		byOwner := map[string]EntryPointConfig{}
@@ -309,19 +331,39 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 						ep.Owner, ep.Handler, strings.Join(changed, ", "))
 				}
 			}
-			for i, mw := range ec.Midllwares {
+			for i, mw := range ec.Middlewares {
 				ref, imp, isIC, err := middlewareRef(mw)
 				if err != nil {
-					b.errf("Enterpoint %s Midllwares[%d]: %v", ep.Owner, i, err)
+					b.errf("Enterpoint %s Middlewares[%d]: %v", ep.Owner, i, err)
 					continue
 				}
 				if ref == "nil" {
 					continue // nil 值不发射
 				}
-				ep.RouteMWs = append(ep.RouteMWs, RouteMWRef{Ref: ref, Import: imp, Interceptor: isIC})
+				if isIC {
+					b.errf("Enterpoint %s Middlewares[%d]: hinge.Interceptor 请放 EntryPointConfig.Interceptors（两条通道不得混排：Middlewares = 框架原生 → 组级直挂，Interceptors = 内核拦截器 → extra）", ep.Owner, i)
+					continue
+				}
+				ep.RouteMWs = append(ep.RouteMWs, RouteMWRef{Ref: ref, Import: imp})
 				if imp != "" {
 					ep.RouteMWImports = append(ep.RouteMWImports, imp)
 				}
+			}
+			for i, ic := range ec.Interceptors {
+				ref, imp, isIC, err := middlewareRef(ic)
+				if err != nil {
+					b.errf("Enterpoint %s Interceptors[%d]: %v", ep.Owner, i, err)
+					continue
+				}
+				if ref == "nil" {
+					continue // nil 值不发射
+				}
+				if !isIC {
+					b.errf("Enterpoint %s Interceptors[%d]: 值不是 hinge.Interceptor（框架原生中间件请放 Middlewares）", ep.Owner, i)
+					continue
+				}
+				dot := strings.LastIndex(ref, ".")
+				ep.ConfigICs = append(ep.ConfigICs, MWRef{Qualifier: ref[:dot], Name: ref[dot+1:], Import: imp})
 			}
 		}
 		// 未命中的 FuncDecls 键警告：失配时覆写静默失效，必须可见
@@ -341,10 +383,19 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 	}
 	for _, ep := range b.eps {
 		for _, ref := range ep.AnnoMWs {
-			b.verifyMWRef(byImport, ep, ref)
+			b.verifyMWRef(byImport, ep, ref, "oapi:middleware")
 		}
 		for _, ref := range ep.GroupMWs {
-			b.verifyMWRef(byImport, ep, ref)
+			b.verifyMWRef(byImport, ep, ref, "oapi:middleware")
+		}
+		for _, ref := range ep.AnnoICs {
+			b.verifyMWRef(byImport, ep, ref, "oapi:interceptor")
+		}
+		for _, ref := range ep.GroupICs {
+			b.verifyMWRef(byImport, ep, ref, "oapi:interceptor")
+		}
+		for _, ref := range ep.ConfigICs {
+			b.verifyMWRef(byImport, ep, ref, "oapi:interceptor")
 		}
 	}
 	// 全局查重：method+path
@@ -416,20 +467,20 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 					sa.Tags = append(sa.Tags, value)
 				}
 			case "auth", "limit":
-				// oapi:auth / oapi:limit 为 oapi:middleware 的历史别名：
-				// 值 = 内核拦截器注册名，统一进 Middleware 名单（声明顺序保序）；
-				// 文档语义由 Middleware 名命中 securitySchemes 推导。
-				if value != "" {
-					sa.Middleware = append(sa.Middleware, value)
-				}
+				b.errf("Enterpoint %s：注解 oapi:%s 已移除（v0.2 二分：框架原生中间件用 oapi:middleware，内核拦截器用 oapi:interceptor，值均为函数引用）", owner, key)
+				return
 			case "timeout":
 				sa.TimeoutStr = value
-			case "middleware", "interceptor":
+			case "middleware":
 				if value != "" {
-					sa.Middleware = append(sa.Middleware, value)
+					sa.MWs = append(sa.MWs, value)
+				}
+			case "interceptor":
+				if value != "" {
+					sa.ICs = append(sa.ICs, value)
 				}
 			default:
-				b.errf("Enterpoint %s：未知 struct 级注解 oapi:%s（允许 prefix/tag/auth/limit/timeout/middleware）", owner, key)
+				b.errf("Enterpoint %s：未知 struct 级注解 oapi:%s（允许 prefix/tag/timeout/middleware/interceptor）", owner, key)
 				return
 			}
 		}
@@ -448,7 +499,7 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 		kv, docLines := annotations(md.Doc)
 		route := ""
 		ma := map[string]string{}
-		var mTags, mMiddleware []string
+		var mTags, mMWs, mICs []string
 		deprecated := false
 		hasRoute := false
 		for _, pair := range kv {
@@ -461,15 +512,16 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 				if value != "" {
 					mTags = append(mTags, value)
 				}
-			case "middleware", "interceptor", "intercepter":
+			case "middleware":
 				if value != "" {
-					mMiddleware = append(mMiddleware, value)
+					mMWs = append(mMWs, value)
 				}
-			case "auth", "limit":
-				// 同 struct 级：oapi:auth / oapi:limit 为 oapi:middleware 的别名
+			case "interceptor":
 				if value != "" {
-					mMiddleware = append(mMiddleware, value)
+					mICs = append(mICs, value)
 				}
+			case "auth", "limit", "intercepter":
+				b.errf("%s.%s：注解 oapi:%s 已移除（v0.2 二分：框架原生中间件用 oapi:middleware，内核拦截器用 oapi:interceptor，值均为函数引用）", owner, md.Name.Name, key)
 			case "timeout":
 				ma["timeout"] = value
 			case "status":
@@ -479,7 +531,7 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 			case "deprecated":
 				deprecated = true
 			default:
-				b.errf("%s.%s：未知方法级注解 oapi:%s（允许 route/tag/auth/limit/timeout/status/deprecated/envelope/middleware）", owner, md.Name.Name, key)
+				b.errf("%s.%s：未知方法级注解 oapi:%s（允许 route/tag/timeout/status/deprecated/envelope/middleware/interceptor）", owner, md.Name.Name, key)
 			}
 		}
 		if !hasRoute {
@@ -495,14 +547,14 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 			Envelope:   ma["envelope"],
 			TimeoutStr: firstNonEmpty(ma["timeout"], sa.TimeoutStr),
 		}
-		// 注解 middleware 名单拆档：dotted 且限定符可解析 → 源码引用；
-		// 其余保留为内核拦截器注册名。结构体级 → 组级（scoped Group），
-		// 方法级 → 路由级直挂。
-		saKernel, saRefs := splitMWRefs(pkg, b.scanned, sa.Middleware)
-		mKernel, mRefs := splitMWRefs(pkg, b.scanned, mMiddleware)
-		ep.Middleware = append(saKernel, mKernel...)
-		ep.AnnoMWs = mRefs
-		ep.GroupMWs = saRefs
+		// 注解二分（严格解析，失败即报错）：
+		//   oapi:middleware → 框架原生：结构体级 → 组级（scoped Group），方法级 → 路由级直挂；
+		//   oapi:interceptor → 内核拦截器：结构体级 → owner 全端点 extra，方法级 → 本端点 extra。
+		pos := owner + "." + md.Name.Name
+		ep.GroupMWs = b.resolveAnnoRefs(pkg, b.scanned, sa.MWs, "oapi:middleware", owner+"（struct 级）")
+		ep.GroupICs = b.resolveAnnoRefs(pkg, b.scanned, sa.ICs, "oapi:interceptor", owner+"（struct 级）")
+		ep.AnnoMWs = b.resolveAnnoRefs(pkg, b.scanned, mMWs, "oapi:middleware", pos)
+		ep.AnnoICs = b.resolveAnnoRefs(pkg, b.scanned, mICs, "oapi:interceptor", pos)
 		if len(docLines) > 1 {
 			ep.Description = strings.Join(docLines[1:], "\n")
 		}

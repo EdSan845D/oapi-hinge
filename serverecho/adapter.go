@@ -35,11 +35,13 @@ func NewKernel() *hinge.Kernel {
 
 // Handle 把内核端点适配为 echo.HandlerFunc。路由注册由生成代码完成：
 //
-//	e.GET("/users/:id", serverecho.Handle(k, ep, bindQ, bindB, h))
+//	e.GET("/users/:id", serverecho.Handle(k, ep, bindQ, bindB, h, ics...), mws...)
 //
+// ics 为本端点的内核拦截器（oapi:interceptor 注解 / EntryPointConfig.Interceptors
+// 的引用，声明序：EntryConfig → 结构体级 → 方法级），进 HandleWith 的 extra 内核链。
 // 路径风格转换（{id} → :id）由 hinge gen 发射注册代码时完成。
-func Handle(k *hinge.Kernel, ep hinge.Endpoint, bindQ, bindB hinge.Binder, h hinge.HandlerFunc) echo.HandlerFunc {
-	inner := k.Handle(ep, bindQ, bindB, h)
+func Handle(k *hinge.Kernel, ep hinge.Endpoint, bindQ, bindB hinge.Binder, h hinge.HandlerFunc, ics ...hinge.Interceptor) echo.HandlerFunc {
+	inner := k.HandleWith(ep, ics, bindQ, bindB, h)
 	return func(c echo.Context) error {
 		inner(&Reader{C: c}, &Sink{C: c})
 		return nil

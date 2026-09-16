@@ -114,8 +114,9 @@ func (k *Kernel) Handle(ep Endpoint, bindQ, bindB Binder, h HandlerFunc) func(Re
 	return k.HandleWith(ep, nil, bindQ, bindB, h)
 }
 
-// HandleWith 同 Handle，但允许装配方注入额外拦截器（如 stdlib 中间件桥接结果）。
-// extra 在 //oapi:middleware 名字链之前执行（路由层语义）。
+// HandleWith 同 Handle，但允许装配方注入本端点的内核拦截器链（extra）。
+// extra 为直接函数引用，声明序：EntryPointConfig.Interceptors → 结构体级
+// oapi:interceptor → 方法级 oapi:interceptor（生成代码发射，手写逃生口自行组装）。
 func (k *Kernel) HandleWith(ep Endpoint, extra []Interceptor, bindQ, bindB Binder, h HandlerFunc) func(RequestReader, Sink) {
 	env := k.envelopeFor(ep)
 	success := ep.Status

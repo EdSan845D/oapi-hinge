@@ -95,7 +95,10 @@ func (s *fakeSink) last() fakeJSONOut {
 func TestHandleWithInterceptorErrorGoesToErrorChain(t *testing.T) {
 	k := NewKernel()
 	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping"}
-	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) { return "x", nil })
+	ic := Interceptor(func(ctx context.Context, ep Endpoint, r RequestReader, s Sink, next func(context.Context) error) error {
+		return NotFound("拦截器拒绝")
+	})
+	h := k.HandleWith(ep, []Interceptor{ic}, nil, nil, func(ctx context.Context, q, b any) (any, error) { return "x", nil })
 
 	sink := &fakeSink{}
 	h(&fakeReader{}, sink)
@@ -109,17 +112,6 @@ func TestHandleWithInterceptorErrorGoesToErrorChain(t *testing.T) {
 	if !ok || m["error"] != "拦截器拒绝" {
 		t.Fatalf("error body = %v", last.body)
 	}
-}
-
-func TestHandleWithUnregisteredMiddlewarePanics(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic on unregistered middleware name")
-		}
-	}()
-	k := NewKernel()
-	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping"}
-	k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) { return "x", nil })
 }
 
 // ---- 绑定失败：默认统一壳（bind_errors 明细）与裸壳（error 汇总） ----

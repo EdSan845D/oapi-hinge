@@ -23,8 +23,8 @@ func OptionWithServer(servers *openapi3.Servers) Option {
 }
 
 // OptionWithSecurity 设置安全方案（如 BearerAuth）。
-// 端点 Middleware 名命中 scheme 名 → 推导 security + 401
-// （oapi:auth / oapi:limit 为 oapi:middleware 的别名，值统一进 Middleware 名单）。
+// 端点 MWRefs 尾段名命中 scheme 名 → 推导 security + 401
+// （框架原生中间件与内核拦截器两类引用都参与，文档钩子可覆盖）。
 func OptionWithSecurity(schemes openapi3.SecuritySchemes) Option {
 	return func(doc *openapi3.T) {
 		doc.Components.SecuritySchemes = schemes

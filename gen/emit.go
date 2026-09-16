@@ -240,9 +240,6 @@ func writeRuntimeSpecFields(b *strings.Builder, ep *EndpointIR) {
 	if ep.TimeoutStr != "" {
 		fmt.Fprintf(b, "\tTimeout: hinge.MustDuration(%q),\n", ep.TimeoutStr)
 	}
-	if len(ep.Middleware) > 0 {
-		fmt.Fprintf(b, "\tMiddleware: []string{%s},\n", quoteList(ep.Middleware))
-	}
 }
 
 // emitDocs 文档侧端点描述（hinge.EndpointDoc）：只被 openapi 开发期文档入口
@@ -763,7 +760,8 @@ func frameworkPath(emiter EmitConfig, p string) string {
 type epData struct {
 	*EndpointIR        // 端点 IR：Method / Handler / QName / BName / TwoArg / FullPath ...
 	Path        string // 目标框架路径风格
-	Args        string // 路由调用剩余中间件参数（按 target 语义组装）
+	Args        string // 路由调用剩余中间件参数（框架原生直挂，按 target 语义组装）
+	Extras      string // 内核拦截器实参串（Handle 变参尾段：", ic1, ic2"；空 = 无）
 	Spec        string // 端点描述变量名（Spec<Owner><Handler>）
 	Binder      string // 绑定器实参串（bindQ, bindB）
 }
@@ -819,6 +817,15 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 		for _, ref := range ep.AnnoMWs {
 			pkgAlias(is, taken, ref.Import, ref.Qualifier)
 		}
+		for _, ref := range ep.GroupICs {
+			pkgAlias(is, taken, ref.Import, ref.Qualifier)
+		}
+		for _, ref := range ep.AnnoICs {
+			pkgAlias(is, taken, ref.Import, ref.Qualifier)
+		}
+		for _, ref := range ep.ConfigICs {
+			pkgAlias(is, taken, ref.Import, ref.Qualifier)
+		}
 	}
 	sort.Strings(ownerOrder)
 
@@ -832,14 +839,11 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 		list := owners[owner]
 		ep0 := list[0]
 		od := &ownerData{Name: owner, IsPkg: isPkgOwner, OwnerAlias: taken[ep0.Pkg.ImportPath]}
-		// 组级引用：EntryPointConfig 中的框架原生值 + 结构体级注解引用；
-		// 顺序：EntryPointConfig（注入）→ 结构体注解（类型声明）。
+		// 组级引用：EntryPointConfig.Middlewares（框架原生）+ 结构体级 oapi:middleware。
 		// 无组概念的框架（http）不用 GroupArgs，引用由模板侧折叠进每条路由。
 		var groupRefs []string
 		for _, rmw := range ep0.RouteMWs {
-			if !rmw.Interceptor {
-				groupRefs = append(groupRefs, rmw.Ref)
-			}
+			groupRefs = append(groupRefs, rmw.Ref)
 		}
 		for _, ref := range ep0.GroupMWs {
 			groupRefs = append(groupRefs, mwSourceRef(is, taken, ref))
@@ -863,35 +867,46 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 			for _, ref := range ep.AnnoMWs {
 				annoRefs = append(annoRefs, mwSourceRef(is, taken, ref))
 			}
-			// EntryPointConfig 中的 Interceptor 值：需要端点上下文（错误链），
-			// 每路由显式包装，不走运行时类型识别。
-			icWrapped := make([]string, 0, len(ep.RouteMWs))
+			// 内核拦截器实参：EntryPointConfig.Interceptors（owner 级）→ 结构体级
+			// oapi:interceptor → 方法级 oapi:interceptor，声明序发射为 Handle
+			// 变参尾段（extra 进内核链）。
+			icRefs := make([]string, 0, len(ep0.ConfigICs)+len(ep0.GroupICs)+len(ep.AnnoICs))
+			for _, ref := range ep0.ConfigICs {
+				icRefs = append(icRefs, mwSourceRef(is, taken, ref))
+			}
+			for _, ref := range ep0.GroupICs {
+				icRefs = append(icRefs, mwSourceRef(is, taken, ref))
+			}
+			for _, ref := range ep.AnnoICs {
+				icRefs = append(icRefs, mwSourceRef(is, taken, ref))
+			}
+			extras := ""
+			if len(icRefs) > 0 {
+				extras = ", " + strings.Join(icRefs, ", ")
+			}
 
-			ed := &epData{EndpointIR: ep, Path: frameworkPath(emiter, ep.FullPath), Spec: specRef, Binder: bindArgs}
+			ed := &epData{EndpointIR: ep, Path: frameworkPath(emiter, ep.FullPath), Spec: specRef, Binder: bindArgs, Extras: extras}
 			switch target {
 			case "http":
 				// stdlib 无路由链：全部引用折叠进 Handle 变参（内核拦截链，
 				// AsInterceptors 装配期识别；类型不兼容 fail fast）。
-				raw := make([]string, 0, len(ep.RouteMWs)+len(ep.GroupMWs)+len(annoRefs))
+				raw := make([]string, 0, len(ep.RouteMWs)+len(ep0.GroupMWs)+len(annoRefs)+len(icRefs))
 				for _, rmw := range ep.RouteMWs {
 					raw = append(raw, rmw.Ref)
 				}
-				for _, ref := range ep.GroupMWs {
+				for _, ref := range ep0.GroupMWs {
 					raw = append(raw, mwSourceRef(is, taken, ref))
 				}
 				raw = append(raw, annoRefs...)
-				ed.Args = strings.Join(append([]string{}, raw...), ", ")
+				raw = append(raw, icRefs...)
+				ed.Args = strings.Join(raw, ", ")
 			case "echo":
 				// echo.Add(h, m ...MiddlewareFunc)：handle 在前，中间件变参在后
-				//（先列者在外层）；链序 = 拦截器包装 → 注解引用 → 内核管线。
-				parts := append([]string{}, icWrapped...)
-				parts = append(parts, annoRefs...)
-				ed.Args = strings.Join(parts, ", ")
+				//（先列者在外层）；内核拦截器经 Handle 变参进 extra。
+				ed.Args = strings.Join(annoRefs, ", ")
 			default:
-				// gin 同形态：路由链顺序 = 拦截器包装 → 注解引用 → 内核包装器。
-				parts := append(icWrapped, annoRefs...)
-				// parts = append(parts, handle)
-				ed.Args = strings.Join(parts, ", ")
+				// gin 同形态：路由链 = 注解中间件直挂 → 内核包装器。
+				ed.Args = strings.Join(annoRefs, ", ")
 			}
 			od.Eps = append(od.Eps, ed)
 		}

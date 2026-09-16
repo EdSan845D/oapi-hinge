@@ -30,8 +30,9 @@ type Config struct {
 	// Targets 目标框架中的代码生成配置, 根据Target名称匹配
 	Emitters map[string]EmitConfig `yaml:"emiters"`
 	// EntryPoints 程序化 Enterpoint 配置：generate.go 在 gen.Run 同进程注入的运行时值（不入 yaml）。
-	// Midllwares 元素为具名包级函数（框架原生中间件 / hinge.Interceptor），
-	// 生成器反射取名后发射为源码引用，运行时由各适配器 As*Chain 自动识别类型并挂载。
+	// Middlewares 元素为具名包级函数（框架原生中间件）→ 反射取名后组级直挂；
+	// Interceptors 元素为 hinge.Interceptor → 反射取名后发射为 HandleWith 的
+	// extra 实参（内核拦截链）。两条通道不得混排。
 	EntryPoints []EntryPointConfig `yaml:"-"`
 }
 
@@ -150,10 +151,17 @@ type RouteMeta struct {
 }
 
 type EntryPointConfig struct {
-	Name       EntryId
-	Prefix     string
-	Tags       []string
-	Midllwares []any
+	Name   EntryId
+	Prefix string
+	Tags   []string
+	// Middlewares 组级框架原生中间件（运行时值 → 反射取名 → 源码引用，
+	// 发射为 scoped Group 直挂）。元素必须为框架原生中间件类型；
+	// 内核拦截器请放 Interceptors——两条通道不得混排。
+	Middlewares []any
+	// Interceptors owner 全端点的内核拦截器（运行时值 → 反射取名 → 源码引用，
+	// 发射为 HandleWith 的 extra 实参，声明序：EntryConfig → 结构体级 → 方法级）。
+	// 框架无关、需要端点上下文与统一错误链的横切放这里。
+	Interceptors []hinge.Interceptor
 	// FuncDecls 字段级程序化覆写：键为 FuncIdentity(fn) 派生的函数标识
 	//（如 "eps.SystemEp.Health"），值为按字段合并的覆写元数据（非零字段才生效）。
 	// 命中的端点在生成期输出覆写提示，保证代码定义的覆写可见。
@@ -162,8 +170,8 @@ type EntryPointConfig struct {
 
 const PKGFlag = "PKG_"
 
-// middlewareRef 把 Midllwares 元素（gen.Run 同进程的运行时值）解析为源码引用。
-// 仅支持具名包级函数：gin.HandlerFunc / echo.MiddlewareFunc /
+// middlewareRef 把 Middlewares / Interceptors 元素（gen.Run 同进程的运行时值）
+// 解析为源码引用。仅支持具名包级函数：gin.HandlerFunc / echo.MiddlewareFunc /
 // func(http.Handler) http.Handler / hinge.Interceptor（本身即具名函数值）。
 // 返回（限定名引用如 m.Auth, importPath, 是否 hinge.Interceptor）。
 // gen.Run 与调用方同进程，运行时类型可精确判定，无需源码级签名分析。

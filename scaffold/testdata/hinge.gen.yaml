@@ -4,5 +4,6 @@
 module: opai-hinge
 scan:
   - app/eps
+  - app/middleware
 out: apigen
 targets: [gin]

@@ -113,6 +113,7 @@ func (ep UserEp) UpdateExtra(ctx context.Context, q GetUserReq, b ExtraBody) (Us
 type FileEp struct{}
 
 // oapi:route GET /{name}
+// oapi:interceptor middleware.BearerAuth
 // 下载示例文件（FileStream 二进制流响应）
 func (ep FileEp) DownloadSample(ctx context.Context, q DownloadSampleReq) (*hinge.FileStream, error) {
 	name := strings.TrimSuffix(q.Name, "/")
