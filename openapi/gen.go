@@ -271,17 +271,6 @@ func addOperation(g *specGen, ep *hinge.EndpointDoc) {
 		g.noteTag(tg, "")
 	}
 
-	// 鉴权中间件的文档语义：Middleware 名命中 OptionWithSecurity 注册的
-	// securityScheme → 推导 security + 401（oapi:auth / oapi:limit 为 oapi:middleware
-	// 的别名，值统一进 Middleware 名单）。
-	for _, name := range ep.Middleware {
-		if isSecurityScheme(name) {
-			op.Security = &openapi3.SecurityRequirements{{name: {}}}
-			op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
-				WithDescription("Unauthorized：token 缺失或无效")})
-			break
-		}
-	}
 	// 中间件文档钩子：按 MWRefs 全限定引用配对（RegisterMiddlewareDoc 注册），
 	// 后于内置推导执行（同名钩子可覆盖内置 security/响应）。
 	applyMiddlewareHooks(op, ep.MWRefs)

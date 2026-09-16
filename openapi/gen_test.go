@@ -171,8 +171,7 @@ func TestGenerateAuthAndExtensions(t *testing.T) {
 		{
 			Owner: "t", Handler: "Admin",
 			Method: "GET", Path: "/doc/admin", Summary: "受保护接口",
-			Middleware: []string{"BearerAuth"},
-			RType:      hinge.Type[map[string]string](),
+			RType: hinge.Type[map[string]string](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"

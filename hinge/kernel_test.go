@@ -92,67 +92,9 @@ func (s *fakeSink) last() fakeJSONOut {
 	return s.out[len(s.out)-1]
 }
 
-// ---- 拦截链：声明顺序执行（P0：Middleware 名单语义） ----
-
-func TestHandleWithInterceptorDeclarationOrder(t *testing.T) {
-	var order []string
-	for _, name := range []string{"a", "b", "c"} {
-		n := name
-		RegisterInterceptor("k-order-"+n, func(ctx context.Context, ep Endpoint, r RequestReader, s Sink, next func(context.Context) error) error {
-			order = append(order, n)
-			return next(ctx)
-		})
-	}
-	k := NewKernel()
-	ep := Endpoint{
-		Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping",
-		Middleware: []string{"k-order-a", "k-order-b", "k-order-c"},
-	}
-	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) {
-		return "pong", nil
-	})
-
-	sink := &fakeSink{}
-	h(&fakeReader{}, sink)
-
-	if strings.Join(order, ",") != "a,b,c" {
-		t.Fatalf("interceptor order = %v, want [a b c]", order)
-	}
-	if last := sink.last(); last.status != 200 || last.body != "pong" {
-		t.Fatalf("response = %+v（默认裸壳应透传）", last)
-	}
-}
-
-func TestHandleWithInterceptorShortCircuit(t *testing.T) {
-	RegisterInterceptor("k-short", func(ctx context.Context, ep Endpoint, r RequestReader, s Sink, next func(context.Context) error) error {
-		s.WriteJSON(401, map[string]any{"error": "unauthorized"})
-		return nil // 短路：已自行写出
-	})
-	k := NewKernel()
-	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping", Middleware: []string{"k-short"}}
-	handlerRan := false
-	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) {
-		handlerRan = true
-		return "should not run", nil
-	})
-
-	sink := &fakeSink{}
-	h(&fakeReader{}, sink)
-
-	if handlerRan {
-		t.Fatal("short-circuited interceptor must not run the handler")
-	}
-	if last := sink.last(); last.status != 401 {
-		t.Fatalf("short-circuit response = %+v", last)
-	}
-}
-
 func TestHandleWithInterceptorErrorGoesToErrorChain(t *testing.T) {
-	RegisterInterceptor("k-err", func(ctx context.Context, ep Endpoint, r RequestReader, s Sink, next func(context.Context) error) error {
-		return NotFound("拦截器拒绝")
-	})
 	k := NewKernel()
-	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping", Middleware: []string{"k-err"}}
+	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping"}
 	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) { return "x", nil })
 
 	sink := &fakeSink{}
@@ -176,7 +118,7 @@ func TestHandleWithUnregisteredMiddlewarePanics(t *testing.T) {
 		}
 	}()
 	k := NewKernel()
-	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping", Middleware: []string{"k-ghost"}}
+	ep := Endpoint{Owner: "T", Handler: "Ping", Method: "GET", Path: "/ping"}
 	k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) { return "x", nil })
 }
 

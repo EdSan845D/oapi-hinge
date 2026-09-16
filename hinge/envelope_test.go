@@ -1,7 +1,6 @@
 package hinge
 
 import (
-	"context"
 	"errors"
 	"testing"
 )
@@ -74,29 +73,6 @@ func TestEnvelopeFor(t *testing.T) {
 	if _, ok := got.(RawEnvelope); !ok {
 		t.Fatalf("missing name should fall back: %T", got)
 	}
-}
-
-func TestRegisterInterceptorPanics(t *testing.T) {
-	RegisterInterceptor("itp-test-unique", func(ctx context.Context, ep Endpoint, r RequestReader, s Sink, next func(context.Context) error) error {
-		return next(ctx)
-	})
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic on duplicate interceptor registration")
-		}
-	}()
-	RegisterInterceptor("itp-test-unique", func(ctx context.Context, ep Endpoint, r RequestReader, s Sink, next func(context.Context) error) error {
-		return next(ctx)
-	})
-}
-
-func TestMustInterceptorPanicsWhenMissing(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic on missing interceptor")
-		}
-	}()
-	MustInterceptor("itp-definitely-not-registered-xyz")
 }
 
 func TestMustDuration(t *testing.T) {

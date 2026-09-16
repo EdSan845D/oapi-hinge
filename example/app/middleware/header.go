@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// oapi:middleware
+// oapi:@middleware
 func ParseHeaderWithInfo(c *gin.Context) {
 	sid := c.GetHeader("X-SessionId")
 	if sid == "" {

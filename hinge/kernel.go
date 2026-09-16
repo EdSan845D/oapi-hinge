@@ -122,14 +122,8 @@ func (k *Kernel) HandleWith(ep Endpoint, extra []Interceptor, bindQ, bindB Binde
 	if success == 0 {
 		success = http.StatusOK
 	}
-	// 拦截链顺序 = Middleware 声明顺序（结构体级 → 方法级）；auth/limit 为
-	// oapi:middleware 的历史别名，值统一进名单（文档语义按名配对推导）
-	names := append([]string{}, ep.Middleware...)
-	chain := make([]Interceptor, 0, len(extra)+len(names))
-	chain = append(chain, extra...)
-	for _, n := range names {
-		chain = append(chain, MustInterceptor(n))
-	}
+
+	chain := extra
 	timeout := ep.Timeout
 
 	return func(r RequestReader, s Sink) {
@@ -204,7 +198,6 @@ func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink
 		bv = v
 	}
 	// Validate() 由生成的绑定器直调（生成期已知接收者形态，零反射）；
-	// 手写逃生口的端点请在闭包内自行调用。此处不再兜底，避免与绑定器重复执行。
 	for _, fn := range k.validators {
 		if err := fn(ctx, ep, qv, bv); err != nil {
 			k.bindFail(s, env, err)

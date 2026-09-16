@@ -30,9 +30,6 @@ type Endpoint struct {
 	Status int
 	// Envelope 响应壳注册名（RegisterEnvelope）；空 → 内核默认壳。
 	Envelope string
-	// Middleware 环绕拦截器名（RegisterInterceptor 注册），按声明顺序执行
-	//（结构体级 → 方法级）。鉴权/限流即普通中间件名。
-	Middleware []string
 	// Timeout 端点超时；0 → 不限时。
 	Timeout time.Duration
 }
@@ -104,37 +101,12 @@ func MustDuration(s string) time.Duration {
 // ---- 注册表：拦截器（auth / limit / middleware 共用）与命名响应壳 ----
 
 var (
-	regMu        sync.RWMutex
-	interceptors = map[string]Interceptor{}
-	envelopes    = map[string]Envelope{}
+	regMu     sync.RWMutex
+	envelopes = map[string]Envelope{}
 )
 
 // Interceptor 环绕拦截器：包装整条请求管线（绑定之前可短路）。
-// 由 oapi:middleware 注解按名引用（oapi:auth / oapi:limit 为其历史别名）。
-// 短路时自行经 Sink 写出响应并返回 nil；返回非 nil error 交给内核统一错误链。
 type Interceptor func(ctx context.Context, ep Endpoint, r RequestReader, s Sink, next func(context.Context) error) error
-
-// RegisterInterceptor 注册拦截器实现。同名重复注册 panic（装配期冲突尽早暴露）。
-func RegisterInterceptor(name string, fn Interceptor) {
-	regMu.Lock()
-	defer regMu.Unlock()
-	if _, dup := interceptors[name]; dup {
-		panic("hinge: interceptor already registered: " + name)
-	}
-	interceptors[name] = fn
-}
-
-// MustInterceptor 取已注册拦截器；缺失 panic（内核装配期 fail fast，
-// 替代 v0.1 文档钩子的静默失配）。
-func MustInterceptor(name string) Interceptor {
-	regMu.RLock()
-	defer regMu.RUnlock()
-	fn, ok := interceptors[name]
-	if !ok {
-		panic("hinge: interceptor not registered: " + name)
-	}
-	return fn
-}
 
 // RegisterEnvelope 注册命名响应壳（oapi:envelope <name> 引用）。
 func RegisterEnvelope(name string, env Envelope) {

@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// oapi:interceptor
+// oapi:@middleware
 // Auth 示例鉴权中间件：Bearer token 校验，GIN_ENV=dev 时跳过。
 // 经 UserEp 的 oapi:middleware 注解引用，hinge gen 发射为组级中间件。
 func Auth(c *gin.Context) {
