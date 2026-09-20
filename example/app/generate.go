@@ -4,11 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/EdSan845D/oapi-hinge/example/app/eps"
 	"github.com/EdSan845D/oapi-hinge/example/app/middleware"
 	"github.com/EdSan845D/oapi-hinge/gen"
-	"github.com/EdSan845D/oapi-hinge/hinge"
 )
 
 // EntryPointsConfig 程序化 Enterpoint 配置：gen.Run 同进程注入。
@@ -30,9 +30,9 @@ func EntryPointsConfig() []gen.EntryPointConfig {
 			Middlewares: []any{
 				middleware.Auth,
 			},
-			Interceptors: []hinge.Interceptor{
-				middleware.AccessLog,
-			},
+			// Interceptors: []hinge.Interceptor{
+			// 	middleware.AccessLog,
+			// },
 			FuncDecls: map[gen.FuncId]gen.RouteMeta{
 
 				gen.FuncIdentity(eps.SystemEp.Health): {
@@ -50,12 +50,22 @@ func main() {
 	check := flag.Bool("check", false, "校验生成产物是否最新（CI 门禁；不写入）")
 	flag.Parse()
 	dir := ""
+	tmplFilePath, err := filepath.Abs("./gin.row.tmpl")
+	if err != nil {
+		panic(err)
+	}
 	cfg := gen.Config{
-		Module:      "github.com/EdSan845D/oapi-hinge/example",
-		Scan:        []string{"./app/eps", "./app/middleware"},
-		Out:         "./apigen",
-		Targets:     []string{"gin"},
-		EntryPoints: EntryPointsConfig(),
+		Module:  "github.com/EdSan845D/oapi-hinge/example",
+		Scan:    []string{"./app/eps", "./app/middleware"},
+		Out:     "./apigen",
+		Targets: []string{"gin.row"},
+		Emitters: map[string]gen.EmitConfig{
+			"gin.row": {
+				Title:    "GinRow",
+				Template: tmplFilePath,
+			},
+		},
+		// EntryPoints: EntryPointsConfig(),
 	}
 	if err := gen.Run(dir, cfg, *check); err != nil {
 		fmt.Fprintln(os.Stderr, "hinge:", err)

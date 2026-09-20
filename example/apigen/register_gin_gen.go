@@ -7,6 +7,7 @@ package apigen
 
 import (
 	"context"
+
 	eps "github.com/EdSan845D/oapi-hinge/example/app/eps"
 	middleware "github.com/EdSan845D/oapi-hinge/example/app/middleware"
 	"github.com/EdSan845D/oapi-hinge/hinge"

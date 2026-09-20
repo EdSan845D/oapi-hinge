@@ -36,7 +36,7 @@ func NewKernel() *hinge.Kernel {
 // 的引用，声明序：EntryConfig → 结构体级 → 方法级），进 HandleWith 的 extra 内核链。
 // 路径风格转换（{id} → :id）由 hinge gen 发射注册代码时完成。
 func Handle(k *hinge.Kernel, ep hinge.Endpoint, bindQ, bindB hinge.Binder, h hinge.HandlerFunc, ics ...hinge.Interceptor) gin.HandlerFunc {
-	inner := k.HandleWith(ep, ics, bindQ, bindB, h)
+	inner := k.Handle(ep, bindQ, bindB, h, ics...)
 	return func(c *gin.Context) {
 		inner(&Reader{C: c}, &Sink{C: c})
 	}

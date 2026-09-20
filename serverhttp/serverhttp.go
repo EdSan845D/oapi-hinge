@@ -32,7 +32,7 @@ func NewKernel() *hinge.Kernel {
 //
 //	mux.HandleFunc("GET /users/{id}", serverhttp.Handle(k, ep, bindQ, bindB, h))
 func Handle(k *hinge.Kernel, ep hinge.Endpoint, bindQ, bindB hinge.Binder, h hinge.HandlerFunc, mws ...any) http.HandlerFunc {
-	inner := k.HandleWith(ep, AsInterceptors(ep, mws), bindQ, bindB, h)
+	inner := k.Handle(ep, bindQ, bindB, h, AsInterceptors(ep, mws)...)
 	return func(w http.ResponseWriter, r *http.Request) {
 		inner(&Reader{R: r}, &Sink{W: w, R: r})
 	}

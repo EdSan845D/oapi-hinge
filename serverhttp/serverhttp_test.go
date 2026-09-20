@@ -67,7 +67,7 @@ func bindCreate(ctx context.Context, r hinge.RequestReader) (any, error) {
 
 func setup(t *testing.T, withCorrelation bool) *http.ServeMux {
 	t.Helper()
-	k := NewKernel().SetEnvelope(hinge.DefaultEnvelope{}) // 显式统一壳：断言 {code,data,msg} 形态
+	k := NewKernel().SetEnvelope(hinge.BizCodeEnvelope{}) // 显式统一壳：断言 {code,data,msg} 形态
 	k.SetCorrelation(withCorrelation)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/users/{id}", Handle(k, hinge.Endpoint{
