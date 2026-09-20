@@ -27,12 +27,6 @@ type Reply[T any] struct {
 	BindErrors []BindFieldError `json:"bind_errors,omitempty"`
 }
 
-// Paged 分页响应
-type Paged[T any] struct {
-	Items []T   `json:"items"`
-	Total int64 `json:"total"`
-}
-
 const (
 	CodeOK    = 0 // 成功
 	CodeError = 7 // 业务错误（默认）
@@ -41,11 +35,11 @@ const (
 // DefaultEnvelope 统一包装壳：{code, data, msg}（opt-in：内核默认裸壳，
 // 需要时显式 k.SetEnvelope(DefaultEnvelope{})）。
 // SuccessMsg 自定义成功文案；空则使用默认 "操作成功"。
-type DefaultEnvelope struct {
+type BizCodeEnvelope struct {
 	SuccessMsg string
 }
 
-func (e DefaultEnvelope) Success(_ int, data any) any {
+func (e BizCodeEnvelope) Success(_ int, data any) any {
 	msg := e.SuccessMsg
 	if msg == "" {
 		msg = "操作成功"
@@ -53,7 +47,7 @@ func (e DefaultEnvelope) Success(_ int, data any) any {
 	return Reply[any]{Code: CodeOK, Data: data, Msg: msg}
 }
 
-func (DefaultEnvelope) Failure(status int, code int, msg string) any {
+func (BizCodeEnvelope) Failure(status int, code int, msg string) any {
 	return Reply[any]{Code: code, Data: nil, Msg: msg}
 }
 
@@ -76,7 +70,7 @@ type AggregateEnvelope interface {
 }
 
 // DefaultEnvelope 对聚合的原生支持：aggregated_error 明细进入默认壳。
-func (e DefaultEnvelope) AggregateFailure(status int, code int, msg string, agg any) any {
+func (e BizCodeEnvelope) AggregateFailure(status int, code int, msg string, agg any) any {
 	return Reply[any]{Code: code, Data: nil, Msg: msg, AggregatedError: agg}
 }
 
@@ -125,6 +119,6 @@ type FieldErrorEnvelope interface {
 }
 
 // DefaultEnvelope 对字段级明细的原生支持：bind_errors 进入默认壳。
-func (e DefaultEnvelope) FieldFailure(status int, code int, msg string, fields []BindFieldError) any {
+func (e BizCodeEnvelope) FieldFailure(status int, code int, msg string, fields []BindFieldError) any {
 	return Reply[any]{Code: code, Data: nil, Msg: msg, BindErrors: fields}
 }

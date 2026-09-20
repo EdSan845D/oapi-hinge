@@ -9,11 +9,10 @@ import (
 
 // 本文件的解析助手供「生成的绑定器」直接调用：从原始字符串到强类型入参
 // 的全部解析都是生成代码中的直白赋值 + 本文件的无反射助手，请求期零反射。
-// 语义与 v0.1 反射绑定（SetRaw/SetSliceValue）逐条对齐：
 //   - 基本类型 / time.Time（RFC3339）/ 指针由生成代码分配 / 切片（重复参数 + 逗号串等价）
 //   - 错误信息形态保持 "invalid <name>: <raw>"
 
-// valueT 标量绑定支持的类型集合（与 v0.1 SetRawBasic 一致）。
+// valueT 标量绑定支持的类型集合
 type valueT interface {
 	string | bool |
 		int | int8 | int16 | int32 | int64 |

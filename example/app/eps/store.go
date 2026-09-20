@@ -120,6 +120,12 @@ type PageQuery struct {
 	Size int `query:"size" default:"10"`
 }
 
+// Paged 分页响应
+type Paged[T any] struct {
+	Items []T   `json:"items"`
+	Total int64 `json:"total"`
+}
+
 // ListUsersReq 用户列表（分页）
 type ListUsersReq struct {
 	PageQuery

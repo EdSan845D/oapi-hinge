@@ -7,8 +7,8 @@ import (
 
 // ---- 响应壳：Default / Raw / 扩展接口 / 注册表 ----
 
-func TestDefaultEnvelope(t *testing.T) {
-	env := DefaultEnvelope{}
+func TestBizCodeEnvelope(t *testing.T) {
+	env := BizCodeEnvelope{}
 	out := env.Success(201, map[string]string{"id": "u1"})
 	reply, ok := out.(Reply[any])
 	if !ok {
@@ -58,33 +58,21 @@ func TestRegisterEnvelopeOverwrite(t *testing.T) {
 	if _, ok := EnvelopeFor("envelope-overwrite-test", nil).(RawEnvelope); !ok {
 		t.Fatal("first registration should hit")
 	}
-	RegisterEnvelope("envelope-overwrite-test", DefaultEnvelope{})
-	if _, ok := EnvelopeFor("envelope-overwrite-test", nil).(DefaultEnvelope); !ok {
+	RegisterEnvelope("envelope-overwrite-test", BizCodeEnvelope{})
+	if _, ok := EnvelopeFor("envelope-overwrite-test", nil).(BizCodeEnvelope); !ok {
 		t.Fatal("re-registration should overwrite")
 	}
 }
 
 func TestEnvelopeFor(t *testing.T) {
-	RegisterEnvelope("envelope-for-test", DefaultEnvelope{})
-	if _, ok := EnvelopeFor("envelope-for-test", nil).(DefaultEnvelope); !ok {
+	RegisterEnvelope("envelope-for-test", BizCodeEnvelope{})
+	if _, ok := EnvelopeFor("envelope-for-test", nil).(BizCodeEnvelope); !ok {
 		t.Fatal("named envelope should hit registry")
 	}
 	got := EnvelopeFor("envelope-for-missing", RawEnvelope{})
 	if _, ok := got.(RawEnvelope); !ok {
 		t.Fatalf("missing name should fall back: %T", got)
 	}
-}
-
-func TestMustDuration(t *testing.T) {
-	if d := MustDuration("5s"); d.Seconds() != 5 {
-		t.Fatalf("MustDuration = %v", d)
-	}
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic on invalid duration")
-		}
-	}()
-	MustDuration("5x")
 }
 
 // ---- 哨兵与错误映射依赖项（errors_test.go 补充矩阵之外的回归） ----

@@ -15,8 +15,7 @@ type RawBody []byte
 // multipart 绑定分支；字段必须带 form 标签声明 part 名（生成期校验）。
 type FileHeader = multipart.FileHeader
 
-// DecodeJSON 解码 JSON 请求体到 v（指针）。gin 默认引擎对未知字段宽松，
-// 这里同样保持宽松（与 v0.1 ShouldBindJSON 行为一致）。
+// DecodeJSON 解码 JSON 请求体到 v（指针）。
 func DecodeJSON(data []byte, v any) error {
 	return json.Unmarshal(data, v)
 }
@@ -30,8 +29,7 @@ func AsBindError(err error) *BindError {
 			Field: te.Field, In: "body", Msg: "类型错误，期望 " + te.Type.String(),
 		}}}
 	}
-	var se *json.SyntaxError
-	if errors.As(err, &se) {
+	if _, ok := errors.AsType[*json.SyntaxError](err); ok {
 		return &BindError{Fields: []BindFieldError{{
 			In: "body", Msg: "JSON 语法错误",
 		}}}
@@ -45,8 +43,7 @@ func WrapBindErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	var be *BindError
-	if errors.As(err, &be) {
+	if be, ok := errors.AsType[*BindError](err); ok {
 		return be
 	}
 	return &BindError{Fields: []BindFieldError{{Msg: err.Error()}}}

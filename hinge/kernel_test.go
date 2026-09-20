@@ -98,7 +98,7 @@ func TestHandleWithInterceptorErrorGoesToErrorChain(t *testing.T) {
 	ic := Interceptor(func(ctx context.Context, ep Endpoint, r RequestReader, s Sink, next func(context.Context) error) error {
 		return NotFound("拦截器拒绝")
 	})
-	h := k.HandleWith(ep, []Interceptor{ic}, nil, nil, func(ctx context.Context, q, b any) (any, error) { return "x", nil })
+	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) { return "x", nil }, ic)
 
 	sink := &fakeSink{}
 	h(&fakeReader{}, sink)
@@ -117,7 +117,7 @@ func TestHandleWithInterceptorErrorGoesToErrorChain(t *testing.T) {
 // ---- 绑定失败：默认统一壳（bind_errors 明细）与裸壳（error 汇总） ----
 
 func TestHandleWithBindFailDefaultEnvelope(t *testing.T) {
-	k := NewKernel().SetEnvelope(DefaultEnvelope{})
+	k := NewKernel().SetEnvelope(BizCodeEnvelope{})
 	bindQ := func(ctx context.Context, r RequestReader) (any, error) {
 		be := &BindError{}
 		be.AddField("name", "body", "is required")
@@ -214,7 +214,7 @@ func TestHandleWithNotFoundMapping(t *testing.T) {
 // ---- FileStream 直出（绕过壳）----
 
 func TestHandleWithFileStreamBypassesEnvelope(t *testing.T) {
-	k := NewKernel().SetEnvelope(DefaultEnvelope{}) // 即使统一壳，流也直出
+	k := NewKernel().SetEnvelope(BizCodeEnvelope{}) // 即使统一壳，流也直出
 	ep := Endpoint{Owner: "T", Handler: "File", Method: "GET", Path: "/file"}
 	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) {
 		return &FileStream{Name: "a.txt"}, nil

@@ -256,6 +256,10 @@ func TestBodyDefaultTypeCoercion(t *testing.T) {
 }
 
 // ============ 泛型组件名合法字符回归：Paged[User] 不再产生非法 / ============
+type Paged[T any] struct {
+	Items []T   `json:"items"`
+	Total int64 `json:"total"`
+}
 
 func TestGenericComponentNameCharset(t *testing.T) {
 	resetRegistries()
@@ -264,7 +268,7 @@ func TestGenericComponentNameCharset(t *testing.T) {
 	eps := []hinge.EndpointDoc{{
 		Owner: "t", Handler: "Paged",
 		Method: "GET", Path: "/pg/x", Summary: "泛型分页",
-		RType: hinge.Type[hinge.Paged[testdataa.User]](),
+		RType: hinge.Type[Paged[testdataa.User]](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
 	warns, err := generate(out, eps, false)

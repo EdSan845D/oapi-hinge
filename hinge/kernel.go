@@ -13,16 +13,14 @@ import (
 // 全程除「值类型出参 + 指针接收者 OutTransform」拷贝外零反射。
 type Kernel struct {
 	envelope Envelope
-	// bindStatus 绑定/校验失败的 HTTP 状态码（默认 200：HTTP 200 + code=7；
-	// SetBindErrorStatus(400) 可获得 RESTful 语义，非 200 时 code 跟随状态码）。
-	bindStatus int
+	// bindStatus 绑定/校验失败的 HTTP 状态码
+	bindErrorStatus int
 	// correlation 关联 ID 注入开关（默认关闭）。
 	correlation bool
 	// mapError 错误映射：默认 ErrNotFound → 404，其余业务错误 → 200 + code:7。
 	// 优先级低于错误自带状态码（StatusError / StatusCoder）。
 	mapError func(err error) (httpStatus, bizCode int)
 	// decorate 上下文装饰：请求期最前执行（Q/B 绑定之前），默认由框架适配器
-	// 注入原生上下文对象；业务可追加（用户/租户/依赖注入）。
 	decorate func(ctx context.Context, r RequestReader) context.Context
 	// validators 自定义校验器：绑定后按注册顺序执行（生成的绑定器已含
 	// 必填检查与 Validate() 调用；这里只跑注入的自定义校验器）。
@@ -32,18 +30,16 @@ type Kernel struct {
 // ValidatorFunc 自定义校验器签名。q/b 为解析后的请求值（可能为 nil）。
 type ValidatorFunc func(ctx context.Context, ep Endpoint, q, b any) error
 
-// NewKernel 创建内核：默认壳 RawEnvelope（裸输出，不加包装器），默认错误映射，绑定失败 200。
-// 需要统一 {code, data, msg} 包装时显式 SetEnvelope(DefaultEnvelope{})；
-// 或经 RegisterEnvelope(name, env) + oapi:envelope <name> 按端点切换命名壳。
+// NewKernel 创建内核
 func NewKernel() *Kernel {
 	return &Kernel{
-		envelope:   RawEnvelope{},
-		bindStatus: http.StatusOK,
-		mapError:   DefaultErrorMapper,
+		envelope:        RawEnvelope{},
+		bindErrorStatus: http.StatusBadRequest,
+		mapError:        DefaultErrorMapper,
 	}
 }
 
-// SetEnvelope 设置默认响应壳；nil 恢复默认壳（RawEnvelope 裸输出）。路由级覆盖见 Endpoint.Envelope
+// SetEnvelope 设置默认响应壳。路由级覆盖详见 Endpoint.Envelope
 // （oapi:envelope 注解 + RegisterEnvelope 命名注册）。
 func (k *Kernel) SetEnvelope(env Envelope) *Kernel {
 	if env != nil {
@@ -53,11 +49,9 @@ func (k *Kernel) SetEnvelope(env Envelope) *Kernel {
 }
 
 // SetBindErrorStatus 设置绑定/校验失败（含 InTransform / Validate 错误）的 HTTP 状态码。
-// 默认 200（HTTP 200 + code=CodeError）；设为 400 可获得 RESTful 语义，
-// 非 200 时业务 code 跟随状态码。仅影响绑定/校验阶段；业务错误不受影响。
 func (k *Kernel) SetBindErrorStatus(status int) *Kernel {
 	if status > 0 {
-		k.bindStatus = status
+		k.bindErrorStatus = status
 	}
 	return k
 }
@@ -79,8 +73,7 @@ func (k *Kernel) SetErrorMapper(fn func(err error) (httpStatus, bizCode int)) *K
 }
 
 // SetContextDecorator 追加上下文装饰（在框架适配器注入原生上下文之后执行）。
-// 约定：纯派生（轻量 WithValue）；重操作（鉴权、查库）请做拦截器——
-// 每个请求（含校验失败的请求）都会执行装饰。
+// 注意：每个请求（含校验失败的请求）都会执行装饰。
 func (k *Kernel) SetContextDecorator(fn func(ctx context.Context, r RequestReader) context.Context) *Kernel {
 	if fn != nil {
 		prev := k.decorate
@@ -95,7 +88,6 @@ func (k *Kernel) SetContextDecorator(fn func(ctx context.Context, r RequestReade
 }
 
 // AddValidator 注册自定义校验器（绑定后执行，按注册顺序）。
-// validator.Playground() 接入 go-playground 完整规则；不注册则零额外依赖。
 func (k *Kernel) AddValidator(fn ValidatorFunc) *Kernel {
 	if fn != nil {
 		k.validators = append(k.validators, fn)
@@ -106,18 +98,11 @@ func (k *Kernel) AddValidator(fn ValidatorFunc) *Kernel {
 // errHandled 管线内部哨兵：响应已写出，拦截链无需再处理。
 var errHandled = errors.New("hinge: response already written")
 
-// Handle 装配一个端点：拦截器在装配期解析（未注册的名字直接 panic，杜绝
-// 静默失效），响应壳与状态码预计算；返回框架适配器逐请求调用的处理函数。
+// Handle 装配一个端点
 //
-// bindQ / bindB 为生成的绑定器（无入参时传 nil）；h 为生成的闭包适配形态。
-func (k *Kernel) Handle(ep Endpoint, bindQ, bindB Binder, h HandlerFunc) func(RequestReader, Sink) {
-	return k.HandleWith(ep, nil, bindQ, bindB, h)
-}
-
-// HandleWith 同 Handle，但允许装配方注入本端点的内核拦截器链（extra）。
-// extra 为直接函数引用，声明序：EntryPointConfig.Interceptors → 结构体级
-// oapi:interceptor → 方法级 oapi:interceptor（生成代码发射，手写逃生口自行组装）。
-func (k *Kernel) HandleWith(ep Endpoint, extra []Interceptor, bindQ, bindB Binder, h HandlerFunc) func(RequestReader, Sink) {
+// bindQ / bindB 为生成的绑定器（无入参时传 nil）；h 为生成的闭包适配形态；
+// extra 请求拦截器链。
+func (k *Kernel) Handle(ep Endpoint, bindQ, bindB Binder, h HandlerFunc, extra ...Interceptor) func(RequestReader, Sink) {
 	env := k.envelopeFor(ep)
 	success := ep.Status
 	if success == 0 {
@@ -164,8 +149,7 @@ func (k *Kernel) HandleWith(ep Endpoint, extra []Interceptor, bindQ, bindB Binde
 	}
 }
 
-// envelopeFor 解析端点响应壳：命名壳未注册时 fail fast（与拦截器同策略，
-// 杜绝静默回退默认壳导致的行为漂移）。
+// envelopeFor 解析端点响应壳：命名壳未注册时 fail fast
 func (k *Kernel) envelopeFor(ep Endpoint) Envelope {
 	if ep.Envelope == "" {
 		return k.envelope
@@ -198,7 +182,7 @@ func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink
 		}
 		bv = v
 	}
-	// Validate() 由生成的绑定器直调（生成期已知接收者形态，零反射）；
+
 	for _, fn := range k.validators {
 		if err := fn(ctx, ep, qv, bv); err != nil {
 			k.bindFail(s, env, err)
@@ -254,9 +238,8 @@ func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink
 // 自带状态码的错误（StatusError/StatusCoder）优先兑现；
 // 其余普通错误 → BindFail(k.bindStatus) + err.Error()。
 func (k *Kernel) bindFail(s Sink, env Envelope, err error) {
-	var be *BindError
-	if errors.As(err, &be) {
-		status, code := BindFail(k.bindStatus)
+	if be, ok := errors.AsType[*BindError](err); ok {
+		status, code := BindFail(k.bindErrorStatus)
 		k.writeFail(s, env, status, code, be.Error(), err)
 		return
 	}
@@ -264,22 +247,20 @@ func (k *Kernel) bindFail(s Sink, env Envelope, err error) {
 		k.writeFail(s, env, status, code, msg, err)
 		return
 	}
-	status, code := BindFail(k.bindStatus)
+	status, code := BindFail(k.bindErrorStatus)
 	k.writeFail(s, env, status, code, err.Error(), err)
 }
 
 // writeFail 失败写出：错误链携带 AggregateError / BindError 且壳实现对应可选
 // 接口时输出明细（aggregated_error / bind_errors）；其余情况输出统一壳。
 func (k *Kernel) writeFail(s Sink, env Envelope, status, code int, msg string, err error) {
-	var agg *AggregateError
-	if errors.As(err, &agg) {
+	if agg, ok := errors.AsType[*AggregateError](err); ok {
 		if ae, ok := env.(AggregateEnvelope); ok {
 			s.WriteJSON(status, ae.AggregateFailure(status, code, msg, agg.Failed))
 			return
 		}
 	}
-	var be *BindError
-	if errors.As(err, &be) {
+	if be, ok := errors.AsType[*BindError](err); ok {
 		if fe, ok := env.(FieldErrorEnvelope); ok {
 			s.WriteJSON(status, fe.FieldFailure(status, code, msg, be.Fields))
 			return

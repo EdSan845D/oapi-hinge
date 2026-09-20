@@ -90,7 +90,7 @@ var DocSpecUserEpListUsers = hinge.EndpointDoc{
 	Tags:     []string{"用户"},
 	MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
 	QType:    hinge.Type[eps.ListUsersReq](),
-	RType:    hinge.Type[hinge.Paged[eps.User]](),
+	RType:    hinge.Type[eps.Paged[eps.User]](),
 }
 
 var DocSpecUserEpUpdateExtra = hinge.EndpointDoc{
