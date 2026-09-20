@@ -7,35 +7,61 @@ import (
 	"testing"
 )
 
-// ---- 内核错误决策矩阵：ResolveErrorStatus / ResolveError / BindFail ----
+// ---- InspectError：错误链一次性解析矩阵（壳实现者的便利工具） ----
 
-func TestResolveErrorStatus(t *testing.T) {
-	// StatusError：Code 缺省时非 200 跟随状态码，200 用 CodeError
-	status, code, msg, ok := ResolveErrorStatus(&StatusError{Status: http.StatusNotFound, Msg: "用户不存在"})
-	if !ok || status != 404 || code != 404 || msg != "用户不存在" {
-		t.Fatalf("StatusError 404: (%d, %d, %q, %v)", status, code, msg, ok)
+func TestInspectError(t *testing.T) {
+	// StatusError：自带状态/业务码/对外文案
+	v := InspectError(&StatusError{Status: http.StatusNotFound, Msg: "用户不存在"})
+	if v.Status != 404 || v.Code != 0 || v.Msg != "用户不存在" || v.Bind != nil || v.Aggregate != nil {
+		t.Fatalf("StatusError inspect: %+v", v)
 	}
-	status, code, _, ok = ResolveErrorStatus(&StatusError{Status: http.StatusOK})
-	if !ok || status != 200 || code != CodeError {
-		t.Fatalf("StatusError 200: (%d, %d, %v)", status, code, ok)
+	// 显式业务码原样透传（框架不做缺省填充）
+	v = InspectError(&StatusError{Status: http.StatusConflict, Code: 1001})
+	if v.Status != 409 || v.Code != 1001 {
+		t.Fatalf("explicit code inspect: %+v", v)
 	}
-	// 显式 Code 优先
-	_, code, _, _ = ResolveErrorStatus(&StatusError{Status: http.StatusConflict, Code: 1001})
-	if code != 1001 {
-		t.Fatalf("explicit code = %d, want 1001", code)
+	// StatusError 零状态 → StatusCode() 兑底 500
+	v = InspectError(&StatusError{Msg: "x"})
+	if v.Status != 500 || v.Msg != "x" {
+		t.Fatalf("zero status inspect: %+v", v)
 	}
-	// StatusCoder 自定义实现（非 StatusError）：code 用 CodeError，msg 用 err.Error()
-	status, code, msg, ok = ResolveErrorStatus(customCoded{status: 429, msg: "too many"})
-	if !ok || status != 429 || code != CodeError || msg != "too many" {
-		t.Fatalf("StatusCoder: (%d, %d, %q, %v)", status, code, msg, ok)
+	// StatusCoder 自定义实现（非 StatusError）：code 不填充
+	v = InspectError(customCoded{status: 429, msg: "too many"})
+	if v.Status != 429 || v.Code != 0 || v.Msg != "too many" {
+		t.Fatalf("StatusCoder inspect: %+v", v)
 	}
-	// 普通错误 → ok=false（交给 errorMapper / bindStatus 兜底）
-	if _, _, _, ok := ResolveErrorStatus(errors.New("plain")); ok {
-		t.Fatal("plain error should not be resolved by status")
+	// StatusCoder 零状态 → 500
+	v = InspectError(customCoded{msg: "zero"})
+	if v.Status != 500 {
+		t.Fatalf("StatusCoder zero status = %d, want 500", v.Status)
+	}
+	// 普通错误：只陈述事实（全零 + Msg）
+	v = InspectError(errors.New("plain"))
+	if v.Status != 0 || v.Code != 0 || v.Msg != "plain" {
+		t.Fatalf("plain inspect: %+v", v)
 	}
 	// Unwrap 链穿透：包装后仍可识别
-	if _, _, _, ok := ResolveErrorStatus(wrapStatus()); !ok {
-		t.Fatal("wrapped StatusError should be recognized")
+	v = InspectError(wrapStatus())
+	if v.Status != 403 || v.Msg != "无权限" {
+		t.Fatalf("wrapped StatusError inspect: %+v", v)
+	}
+	// 绑定错误：Bind 命中，状态码留给壳决策
+	be := &BindError{}
+	be.AddField("name", "body", "is required")
+	v = InspectError(be)
+	if v.Bind == nil || v.Status != 0 || v.Msg != "name: is required" {
+		t.Fatalf("bind inspect: %+v", v)
+	}
+	// 聚合错误：Aggregate 命中，整体语义来自内嵌 StatusError
+	agg := &AggregateError{StatusError: StatusError{Status: 200, Msg: "部分失败"}, Total: 3,
+		Failed: []ItemError{{Key: "1"}}}
+	v = InspectError(agg)
+	if v.Aggregate == nil || v.Status != 200 || v.Msg != "部分失败" || v.Aggregate.Total != 3 {
+		t.Fatalf("aggregate inspect: %+v", v)
+	}
+	// nil 安全
+	if v := InspectError(nil); v.Msg != "" || v.Status != 0 {
+		t.Fatalf("nil inspect: %+v", v)
 	}
 }
 
@@ -51,45 +77,7 @@ type customCoded struct {
 func (c customCoded) Error() string   { return c.msg }
 func (c customCoded) StatusCode() int { return c.status }
 
-func TestResolveError(t *testing.T) {
-	// StatusError 优先于 mapper
-	status, code, msg := ResolveError(DefaultErrorMapper, NotFound("用户不存在"))
-	if status != 404 || code != 404 || msg != "用户不存在" {
-		t.Fatalf("NotFound via status: (%d, %d, %q)", status, code, msg)
-	}
-	// ErrNotFound 哨兵 → 404（DefaultErrorMapper）
-	status, code, msg = ResolveError(nil, ErrNotFound)
-	if status != 404 || code != 404 || msg != "not found" {
-		t.Fatalf("ErrNotFound sentinel: (%d, %d, %q)", status, code, msg)
-	}
-	// 包装的 ErrNotFound 仍被 errors.Is 识别
-	status, _, _ = ResolveError(nil, wrap1(ErrNotFound))
-	if status != 404 {
-		t.Fatalf("wrapped ErrNotFound status = %d", status)
-	}
-	// 普通业务错误 → HTTP 200 + code=7
-	status, code, msg = ResolveError(nil, errors.New("业务失败"))
-	if status != 200 || code != CodeError || msg != "业务失败" {
-		t.Fatalf("plain biz error: (%d, %d, %q)", status, code, msg)
-	}
-	// 自定义 mapper
-	status, code, _ = ResolveError(func(error) (int, int) { return 418, 42 }, errors.New("x"))
-	if status != 418 || code != 42 {
-		t.Fatalf("custom mapper: (%d, %d)", status, code)
-	}
-}
-
-func TestBindFail(t *testing.T) {
-	if s, c := BindFail(http.StatusOK); s != 200 || c != CodeError {
-		t.Fatalf("BindFail(200) = (%d, %d)", s, c)
-	}
-	if s, c := BindFail(0); s != 200 || c != CodeError {
-		t.Fatalf("BindFail(0) = (%d, %d)", s, c)
-	}
-	if s, c := BindFail(400); s != 400 || c != 400 {
-		t.Fatalf("BindFail(400) = (%d, %d)", s, c)
-	}
-}
+// ---- StatusError 基础语义：Error() / Unwrap / WithCause / WithCode ----
 
 func TestStatusErrorMessageAndUnwrap(t *testing.T) {
 	se := &StatusError{Status: 400, Msg: "对外信息", Err: errors.New("内部细节")}
@@ -103,7 +91,7 @@ func TestStatusErrorMessageAndUnwrap(t *testing.T) {
 		t.Fatalf("bare Error() = %q", got)
 	}
 	// WithCause：内部原因进入 Error() 链（日志可见），对外响应走 Msg 字段
-	//（内核 ResolveErrorStatus：Msg 非空时响应只用 Msg，不泄露 cause）
+	//（InspectError：Msg 非空时只用 Msg，不泄露 cause）
 	caused := WithCause(BadRequest("参数错误"), errors.New("secret detail"))
 	if got := caused.Error(); !strings.Contains(got, "secret detail") {
 		t.Fatalf("WithCause should keep cause in error chain: %q", got)
@@ -112,12 +100,52 @@ func TestStatusErrorMessageAndUnwrap(t *testing.T) {
 	if !errors.As(caused, &se2) || se2.Status != 400 || se2.Msg != "参数错误" {
 		t.Fatalf("WithCause should unwrap to StatusError")
 	}
-	// 内核对外路径：Msg 非空时响应 msg 只用 Msg，不拼 cause
-	status, code, msg, ok := ResolveErrorStatus(caused)
-	if !ok || status != 400 || msg != "参数错误" || strings.Contains(msg, "secret") {
-		t.Fatalf("response msg leaked cause: (%d, %q)", status, msg)
+	// 对外路径：Msg 非空时响应 msg 只用 Msg，不拼 cause
+	v := InspectError(caused)
+	if v.Status != 400 || v.Msg != "参数错误" || strings.Contains(v.Msg, "secret") {
+		t.Fatalf("response msg leaked cause: %+v", v)
 	}
-	_ = code
+}
+
+func TestWithCode(t *testing.T) {
+	base := NotFound("用户不存在")
+	// 克隆语义：原错误不被改写
+	coded := WithCode(base, 40001)
+	v := InspectError(coded)
+	if v.Code != 40001 || v.Status != 404 {
+		t.Fatalf("WithCode inspect: %+v", v)
+	}
+	if got := InspectError(base); got.Code != http.StatusNotFound {
+		t.Fatalf("WithCode should not mutate source: %+v", got)
+	}
+	// 非状态错误原样返回
+	plain := errors.New("plain")
+	if WithCode(plain, 1) != plain {
+		t.Fatal("WithCode should pass through non-status errors")
+	}
+}
+
+func TestConvenienceConstructorsCarryCode(t *testing.T) {
+	// 便捷构造器：业务码默认与状态码一致（构造期显式可见，运行期无隐式规则）
+	cases := []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"BadRequest", BadRequest("x"), 400},
+		{"Unauthorized", Unauthorized("x"), 401},
+		{"Forbidden", Forbidden("x"), 403},
+		{"NotFound", NotFound("x"), 404},
+		{"Conflict", Conflict("x"), 409},
+		{"Internal", Internal("x"), 500},
+		{"NewStatusError", NewStatusError(418, "x"), 418},
+	}
+	for _, c := range cases {
+		v := InspectError(c.err)
+		if v.Status != c.status || v.Code != c.status {
+			t.Fatalf("%s = (%d, %d), want (%d, %d)", c.name, v.Status, v.Code, c.status, c.status)
+		}
+	}
 }
 
 // ---- 测试辅助：errors 包装链 ----

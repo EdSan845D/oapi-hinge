@@ -66,7 +66,7 @@ func OptionWithSourceComments() Option {
 // 常规场景用 OptionWithEnvelope 自动推导。
 type EnvelopeSchema func(data *openapi3.SchemaRef) *openapi3.SchemaRef
 
-// defaultEnvelopeSchema {code, data, msg} 壳 schema（DefaultEnvelope 形态；
+// defaultEnvelopeSchema {code, data, msg} 壳 schema（BizCodeEnvelope/Reply 形态；
 // 显式 OptionWithEnvelopeSchema 时使用；内核默认裸壳无需手写）
 func defaultEnvelopeSchema(data *openapi3.SchemaRef) *openapi3.SchemaRef {
 	env := openapi3.NewObjectSchema()

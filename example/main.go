@@ -43,10 +43,12 @@ func main() {
 	//   - EntryPointConfig.Interceptors / Middlewares 程序化注入（见 app/generate.go）。
 	// 文档侧由 openapi 生成器按 MWRefs 尾段名与 OptionWithSecurity scheme 配对。
 
-	// 扩展点 3（可选）：默认裸输出（RawEnvelope，不加包装器）；
-	// 需要统一 {code,data,msg} 包装时显式开启 DefaultEnvelope
-	// k.SetEnvelope(hinge.DefaultEnvelope{})
-	// k.SetBindErrorStatus(http.StatusBadRequest)
+	// 扩展点 3（可选）：默认裸输出（RawEnvelope，REST 风格，不加包装器）；
+	// 需要 {code,data,msg} 统一壳时显式开启。业务码取值由业务层配置，
+	// 框架不内置 CodeOK/CodeError 之类的常量：
+	// k.SetEnvelope(hinge.BizCodeEnvelope{OKCode: 0, ErrCode: 10000, SuccessMsg: "ok"})
+	// 失败侧 (HTTP 状态码, 响应体) 由壳的 Failure(err) 全权决定；
+	// 错误自带状态码（hinge.NotFound 等）始终优先。
 
 	// 装配：DI + 一行注册（gin / echo / http 各自的 RegisterAll 已生成）
 	epsAll := apigen.All{

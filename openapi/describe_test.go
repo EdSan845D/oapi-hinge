@@ -35,8 +35,8 @@ func (testEnvelope) Success(status int, data any) any {
 	return testEnvelopeBody{OK: true, Item: data}
 }
 
-func (testEnvelope) Failure(status, code int, msg string) any {
-	return testEnvelopeBody{OK: false, Item: msg}
+func (testEnvelope) Failure(err error) (int, any) {
+	return 400, testEnvelopeBody{OK: false, Item: err.Error()}
 }
 
 func TestOptionWithEnvelopeDerivation(t *testing.T) {

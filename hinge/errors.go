@@ -6,12 +6,12 @@ import (
 	"net/http"
 )
 
-// ErrNotFound 资源不存在（运行时映射为 HTTP 404）。
-// 需要携带对外信息时优先使用 NotFound(msg)（StatusError）。
+// ErrNotFound 资源不存在哨兵（裸壳 RawEnvelope 将其映射为 HTTP 404；
+// 业务码壳是否映射、映射成什么业务码由使用者决定，通常直接用 NotFound(msg)）。
 var ErrNotFound = errors.New("not found")
 
 // StatusCoder 最小契约：任何错误实现该接口即可携带 HTTP 状态码。
-// 错误决策优先级：StatusError → StatusCoder → SetErrorMapper 全局映射。
+// 错误自带的状态码由响应壳解释（InspectError 提取）；框架不做全局映射。
 type StatusCoder interface {
 	error
 	StatusCode() int
@@ -22,8 +22,8 @@ type StatusCoder interface {
 //
 // 字段规则：
 //   - Status：HTTP 状态码；0 视为未设置，StatusCode() 兜底 500
-//   - Code：业务码；0 视为未设置，内核沿用默认约定
-//     （HTTP 200 → 默认业务错误码；非 200 → 跟随状态码）
+//   - Code：业务码载体——取值与语义由业务层定义、由响应壳解释，
+//     框架不做缺省填充；0 视为未设置（响应壳用自己配置的兜底码）
 //   - Msg：对外错误信息；空则回退 err.Error()
 //   - Err：内部错误（不对外暴露），支持 errors.Unwrap 链路穿透
 type StatusError struct {
@@ -57,29 +57,51 @@ func (e *StatusError) StatusCode() int {
 // Unwrap 支持错误链穿透（fmt.Errorf("...: %w", err) 后仍可被 errors.As 识别）
 func (e *StatusError) Unwrap() error { return e.Err }
 
-// NewStatusError 构造携带自定义状态码的错误
+// NewStatusError 构造携带自定义状态码的错误（业务码默认与状态码一致）。
+// 需要自定义业务码时用 WithCode 或直构 &StatusError{}。
 func NewStatusError(status int, msg string) error {
-	return &StatusError{Status: status, Msg: msg}
+	return &StatusError{Status: status, Code: status, Msg: msg}
 }
 
 // BadRequest 400 请求错误
-func BadRequest(msg string) error { return &StatusError{Status: http.StatusBadRequest, Msg: msg} }
+func BadRequest(msg string) error {
+	return &StatusError{Status: http.StatusBadRequest, Code: http.StatusBadRequest, Msg: msg}
+}
 
 // Unauthorized 401 未认证
-func Unauthorized(msg string) error { return &StatusError{Status: http.StatusUnauthorized, Msg: msg} }
+func Unauthorized(msg string) error {
+	return &StatusError{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Msg: msg}
+}
 
 // Forbidden 403 无权限
-func Forbidden(msg string) error { return &StatusError{Status: http.StatusForbidden, Msg: msg} }
+func Forbidden(msg string) error {
+	return &StatusError{Status: http.StatusForbidden, Code: http.StatusForbidden, Msg: msg}
+}
 
 // NotFound 404 资源不存在（可携带信息）
-func NotFound(msg string) error { return &StatusError{Status: http.StatusNotFound, Msg: msg} }
+func NotFound(msg string) error {
+	return &StatusError{Status: http.StatusNotFound, Code: http.StatusNotFound, Msg: msg}
+}
 
 // Conflict 409 冲突
-func Conflict(msg string) error { return &StatusError{Status: http.StatusConflict, Msg: msg} }
+func Conflict(msg string) error {
+	return &StatusError{Status: http.StatusConflict, Code: http.StatusConflict, Msg: msg}
+}
 
 // Internal 500 内部错误（对外只暴露 msg，内部细节用 WithCause 附加）
 func Internal(msg string) error {
-	return &StatusError{Status: http.StatusInternalServerError, Msg: msg}
+	return &StatusError{Status: http.StatusInternalServerError, Code: http.StatusInternalServerError, Msg: msg}
+}
+
+// WithCode 给状态错误设置业务码（业务码语义由业务层定义、响应壳解释）。
+// 返回克隆副本，不改写原错误；非状态错误原样返回。
+func WithCode(err error, code int) error {
+	if se, ok := errors.AsType[*StatusError](err); ok {
+		clone := *se
+		clone.Code = code
+		return &clone
+	}
+	return err
 }
 
 // WithCause 给状态错误附加内部原因（err 只进日志/错误链，不对外）
@@ -91,7 +113,8 @@ func WithCause(statusErr error, cause error) error {
 }
 
 // ItemError 批量操作中的单项失败明细。
-// Key 由业务层决定语义（批次索引、业务 ID 等），用于客户端定位失败项。
+// Key 由业务层决定语义（批次索引、业务 ID 等），用于客户端定位失败项；
+// Code/Msg 同样由业务层定义、响应壳原样输出。
 type ItemError struct {
 	Key  string `json:"key"`
 	Code int    `json:"code"`
@@ -99,72 +122,75 @@ type ItemError struct {
 }
 
 // AggregateError 「整体受理、部分失败」的批量错误。
-// 整体语义走 StatusError 常规错误决策；逐项失败明细由实现
-// AggregateEnvelope 的响应壳输出到 aggregated_error 字段。
+// 内嵌 StatusError 描述整体语义（建议 Status 显式设置，如 200 受理；
+// Msg 为整体文案）；逐项失败明细 Failed 由响应壳读取输出
+// （InspectError().Aggregate / errors.As）。
 type AggregateError struct {
 	StatusError
 	Total  int         // 批量总数
 	Failed []ItemError // 失败明细
 }
 
-// ResolveErrorStatus 提取错误自带的状态信息（StatusError → StatusCoder）。
-// ok=false 表示普通错误，由调用方决定兜底策略（业务错误走 errorMapper，
-// 绑定错误走 bindStatus）。
-func ResolveErrorStatus(err error) (status, code int, msg string, ok bool) {
-	if se, e := errors.AsType[*StatusError](err); e {
-		status = se.StatusCode()
-		code = se.Code
-		if code == 0 {
-			if status == http.StatusOK {
-				code = CodeError
-			} else {
-				code = status
-			}
-		}
-		msg = se.Msg
-		if msg == "" {
-			msg = err.Error()
-		}
-		return status, code, msg, true
-	}
-	if sc, e := errors.AsType[StatusCoder](err); e {
-		status = sc.StatusCode()
-		if status == 0 {
-			status = http.StatusInternalServerError
-		}
-		return status, CodeError, err.Error(), true
-	}
-	return 0, 0, "", false
+// ErrorView 错误链的一次性解析结果：响应壳实现者的便利工具。
+// 只陈述错误自带的事实，不做任何缺省填充（零值 = 未携带）；
+// 壳据此自行决定 (HTTP 状态码, 业务码, 文案) 与明细输出。
+type ErrorView struct {
+	// Status 错误自带的 HTTP 状态码（StatusError / StatusCoder）；未携带 → 0。
+	Status int
+	// Code 错误自带的业务码（仅 *StatusError.Code，原样透传）；未携带 → 0。
+	Code int
+	// Msg 对外文案：StatusError.Msg 优先，否则 err.Error()（不拼接内部 cause）。
+	Msg string
+	// Bind 字段级绑定/校验错误（errors.As 命中时非 nil）。
+	Bind *BindError
+	// Aggregate 批量部分失败（errors.As 命中时非 nil）。
+	Aggregate *AggregateError
 }
 
-// ResolveError 业务错误解析：错误自带状态码优先，否则调用 mapError 兜底
-// （mapError 为 nil 时用 DefaultErrorMapper）。
-func ResolveError(mapError func(err error) (httpStatus, bizCode int), err error) (int, int, string) {
-	if status, code, msg, ok := ResolveErrorStatus(err); ok {
-		return status, code, msg
+// InspectError 一次性解析错误链，供壳实现按需取用。
+// 解析顺序：*AggregateError → *StatusError → *BindError → StatusCoder → 普通错误。
+// 壳可以完全不用本函数、自行 errors.As——它只是便利封装，不是内核强制路径。
+func InspectError(err error) ErrorView {
+	if err == nil {
+		return ErrorView{}
 	}
-	if mapError == nil {
-		mapError = DefaultErrorMapper
+	var v ErrorView
+	if agg, ok := errors.AsType[*AggregateError](err); ok {
+		v.Aggregate = agg
+		v.Status = agg.StatusError.StatusCode()
+		v.Code = agg.StatusError.Code
+		if agg.StatusError.Msg != "" {
+			v.Msg = agg.StatusError.Msg
+		} else {
+			v.Msg = err.Error()
+		}
+		return v
 	}
-	status, code := mapError(err)
-	return status, code, err.Error()
-}
-
-// DefaultErrorMapper 默认兜底映射：ErrNotFound → 404；其余业务错误 → HTTP 200 + code=7。
-func DefaultErrorMapper(err error) (httpStatus, bizCode int) {
-	if errors.Is(err, ErrNotFound) {
-		return http.StatusNotFound, http.StatusNotFound
+	if se, ok := errors.AsType[*StatusError](err); ok {
+		v.Status = se.StatusCode()
+		v.Code = se.Code
+		if se.Msg != "" {
+			v.Msg = se.Msg
+		} else {
+			v.Msg = err.Error()
+		}
+		return v
 	}
-	return http.StatusOK, CodeError
-}
-
-// BindFail 绑定/校验失败响应的 (status, code)：默认 200 + CodeError；
-// 自定义非 200 状态码时 code 跟随状态码（与 StatusError 约定一致）。
-func BindFail(status int) (int, int) {
-	if status <= 0 || status == http.StatusOK {
-		return http.StatusOK, CodeError
+	if be, ok := errors.AsType[*BindError](err); ok {
+		v.Bind = be
+		v.Msg = err.Error()
+		return v
 	}
-	return status, status
+	if sc, ok := errors.AsType[StatusCoder](err); ok {
+		v.Status = sc.StatusCode()
+		if v.Status == 0 {
+			v.Status = http.StatusInternalServerError
+		}
+		v.Msg = err.Error()
+		return v
+	}
+	v.Msg = err.Error()
+	return v
 }
 
 // IsBodyMethod 是否携带请求体的方法（生成器与手写挂载共用）。

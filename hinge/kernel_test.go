@@ -131,16 +131,16 @@ func TestHandleWithBindFailDefaultEnvelope(t *testing.T) {
 
 	last := sink.last()
 	if last.status != http.StatusOK {
-		t.Fatalf("默认 bindStatus=200，got %d", last.status)
+		t.Fatalf("BizCode 壳默认绑定失败走 PlainStatus=200，got %d", last.status)
 	}
 	reply, ok := last.body.(Reply[any])
-	if !ok || reply.Code != CodeError || len(reply.BindErrors) != 1 || reply.BindErrors[0].Field != "name" {
+	if !ok || reply.Code != 7 || len(reply.BindErrors) != 1 || reply.BindErrors[0].Field != "name" {
 		t.Fatalf("bind fail reply = %+v", last.body)
 	}
 }
 
 func TestHandleWithBindFailRawEnvelope(t *testing.T) {
-	k := NewKernel() // 默认裸壳
+	k := NewKernel() // 默认裸壳：绑定/校验失败遵循 HTTP 语义 → 400
 	bindQ := func(ctx context.Context, r RequestReader) (any, error) {
 		be := &BindError{}
 		be.AddField("name", "body", "is required")
@@ -153,8 +153,8 @@ func TestHandleWithBindFailRawEnvelope(t *testing.T) {
 	h(&fakeReader{body: []byte(`{}`)}, sink)
 
 	last := sink.last()
-	if last.status != http.StatusOK {
-		t.Fatalf("status = %d, want 200", last.status)
+	if last.status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", last.status)
 	}
 	m, ok := last.body.(map[string]any)
 	if !ok || !strings.Contains(m["error"].(string), "name: is required") {

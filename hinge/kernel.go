@@ -7,19 +7,17 @@ import (
 	"reflect"
 )
 
-// Kernel 框架无关的请求管线内核。装配期（Handle）完成拦截器解析、
-// 响应壳选择与状态码预计算；请求期只做：装饰 ctx → 关联 ID → 拦截链 →
+// Kernel 框架无关的请求管线内核。装配期（Handle）完成拦截器解析与
+// 响应壳选择；请求期只做：装饰 ctx → 关联 ID → 拦截链 →
 // 绑定（生成的 Binder）→ 校验 → 调用（生成的闭包）→ 出参转换 → 壳包装 → 写出。
 // 全程除「值类型出参 + 指针接收者 OutTransform」拷贝外零反射。
+//
+// 错误策略：内核不解释错误——失败侧把原始 error 交给响应壳，
+// 由壳决定 (HTTP 状态码, 响应体)；业务码语义属于业务层。
 type Kernel struct {
 	envelope Envelope
-	// bindStatus 绑定/校验失败的 HTTP 状态码
-	bindErrorStatus int
 	// correlation 关联 ID 注入开关（默认关闭）。
 	correlation bool
-	// mapError 错误映射：默认 ErrNotFound → 404，其余业务错误 → 200 + code:7。
-	// 优先级低于错误自带状态码（StatusError / StatusCoder）。
-	mapError func(err error) (httpStatus, bizCode int)
 	// decorate 上下文装饰：请求期最前执行（Q/B 绑定之前），默认由框架适配器
 	decorate func(ctx context.Context, r RequestReader) context.Context
 	// validators 自定义校验器：绑定后按注册顺序执行（生成的绑定器已含
@@ -33,9 +31,7 @@ type ValidatorFunc func(ctx context.Context, ep Endpoint, q, b any) error
 // NewKernel 创建内核
 func NewKernel() *Kernel {
 	return &Kernel{
-		envelope:        RawEnvelope{},
-		bindErrorStatus: http.StatusBadRequest,
-		mapError:        DefaultErrorMapper,
+		envelope: RawEnvelope{},
 	}
 }
 
@@ -48,27 +44,10 @@ func (k *Kernel) SetEnvelope(env Envelope) *Kernel {
 	return k
 }
 
-// SetBindErrorStatus 设置绑定/校验失败（含 InTransform / Validate 错误）的 HTTP 状态码。
-func (k *Kernel) SetBindErrorStatus(status int) *Kernel {
-	if status > 0 {
-		k.bindErrorStatus = status
-	}
-	return k
-}
-
 // SetCorrelation 开启请求关联 ID（X-Correlation-Id）：入站沿用、缺失生成 UUIDv4，
 // 注入请求 ctx 并回写响应头。默认关闭。
 func (k *Kernel) SetCorrelation(enable bool) *Kernel {
 	k.correlation = enable
-	return k
-}
-
-// SetErrorMapper 自定义 错误 → (HTTP状态码, 业务code) 映射。
-// 仅对不携带状态码的普通错误生效（StatusError / StatusCoder 优先）。
-func (k *Kernel) SetErrorMapper(fn func(err error) (httpStatus, bizCode int)) *Kernel {
-	if fn != nil {
-		k.mapError = fn
-	}
 	return k
 }
 
@@ -142,9 +121,8 @@ func (k *Kernel) Handle(ep Endpoint, bindQ, bindB Binder, h HandlerFunc, extra .
 			}
 		}
 		if err := run(ctx); err != nil {
-			// 拦截器短路返回的错误：走统一错误链写出
-			status, code, msg := ResolveError(k.mapError, err)
-			k.writeFail(s, env, status, code, msg, err)
+			// 拦截器短路返回的错误：交响应壳统一写出
+			k.writeFail(s, env, err)
 		}
 	}
 }
@@ -164,12 +142,13 @@ func (k *Kernel) envelopeFor(ep Endpoint) Envelope {
 }
 
 // serve 单请求管线：绑定 → 校验 → 调用 → 出参转换 → 状态码决策 → 壳包装 → 写出。
+// 失败路径不解释错误：原始 err 直通 env.Failure，由壳决定状态码与响应体。
 func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink, env Envelope, success int, bindQ, bindB Binder, h HandlerFunc) {
 	var qv, bv any
 	if bindQ != nil {
 		v, err := bindQ(ctx, r)
 		if err != nil {
-			k.bindFail(s, env, err)
+			k.writeFail(s, env, err)
 			return
 		}
 		qv = v
@@ -177,7 +156,7 @@ func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink
 	if bindB != nil {
 		v, err := bindB(ctx, r)
 		if err != nil {
-			k.bindFail(s, env, err)
+			k.writeFail(s, env, err)
 			return
 		}
 		bv = v
@@ -185,15 +164,14 @@ func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink
 
 	for _, fn := range k.validators {
 		if err := fn(ctx, ep, qv, bv); err != nil {
-			k.bindFail(s, env, err)
+			k.writeFail(s, env, err)
 			return
 		}
 	}
 
 	out, err := h(ctx, qv, bv)
 	if err != nil {
-		status, code, msg := ResolveError(k.mapError, err)
-		k.writeFail(s, env, status, code, msg, err)
+		k.writeFail(s, env, err)
 		return
 	}
 
@@ -213,8 +191,7 @@ func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink
 
 	out, err = TransformOut(ctx, out)
 	if err != nil {
-		status, code, msg := ResolveError(k.mapError, err)
-		k.writeFail(s, env, status, code, msg, err)
+		k.writeFail(s, env, err)
 		return
 	}
 
@@ -222,7 +199,7 @@ func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink
 	switch fv := out.(type) {
 	case *FileStream:
 		if fv == nil {
-			k.writeFail(s, env, http.StatusNotFound, http.StatusNotFound, "file not found", nil)
+			k.writeFail(s, env, NotFound("file not found"))
 			return
 		}
 		s.WriteStream(fv)
@@ -233,40 +210,11 @@ func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink
 	}
 }
 
-// bindFail 绑定/校验阶段错误（与 v0.1 bindError 语义逐条对齐）：
-// *BindError（字段级明细）→ BindFail 状态 + FieldFailure 壳输出；
-// 自带状态码的错误（StatusError/StatusCoder）优先兑现；
-// 其余普通错误 → BindFail(k.bindStatus) + err.Error()。
-func (k *Kernel) bindFail(s Sink, env Envelope, err error) {
-	if be, ok := errors.AsType[*BindError](err); ok {
-		status, code := BindFail(k.bindErrorStatus)
-		k.writeFail(s, env, status, code, be.Error(), err)
-		return
-	}
-	if status, code, msg, ok := ResolveErrorStatus(err); ok {
-		k.writeFail(s, env, status, code, msg, err)
-		return
-	}
-	status, code := BindFail(k.bindErrorStatus)
-	k.writeFail(s, env, status, code, err.Error(), err)
-}
-
-// writeFail 失败写出：错误链携带 AggregateError / BindError 且壳实现对应可选
-// 接口时输出明细（aggregated_error / bind_errors）；其余情况输出统一壳。
-func (k *Kernel) writeFail(s Sink, env Envelope, status, code int, msg string, err error) {
-	if agg, ok := errors.AsType[*AggregateError](err); ok {
-		if ae, ok := env.(AggregateEnvelope); ok {
-			s.WriteJSON(status, ae.AggregateFailure(status, code, msg, agg.Failed))
-			return
-		}
-	}
-	if be, ok := errors.AsType[*BindError](err); ok {
-		if fe, ok := env.(FieldErrorEnvelope); ok {
-			s.WriteJSON(status, fe.FieldFailure(status, code, msg, be.Fields))
-			return
-		}
-	}
-	s.WriteJSON(status, env.Failure(status, code, msg))
+// writeFail 失败写出：壳完全拥有 (HTTP 状态码, 响应体) 决策权，
+// 绑定/校验、业务、转换、拦截器短路等所有失败路径共用此出口。
+func (k *Kernel) writeFail(s Sink, env Envelope, err error) {
+	status, body := env.Failure(err)
+	s.WriteJSON(status, body)
 }
 
 // isNilValue 判断 any 是否为 nil（含底层为 nil 的指针/接口等）。

@@ -11,9 +11,9 @@ import (
 // InterceptAsGin 把内核拦截器适配为 gin 路由链节点（手写逃生口：生成代码
 // 对 oapi:interceptor 统一走 Handle 的 extra 变参进内核链，不经此包装）。
 // next(ctx) 语义：把拦截器产出的 ctx 注入 c.Request 后执行真实剩余链（c.Next()）。
-// 拦截器返回错误时经默认壳写出（路由链无错误通道；需要统一错误链的
-// 拦截器请用 oapi:interceptor 注解，走 HandleWith 的 extra 内核链）。
-func InterceptAsGin(ep hinge.Endpoint, in hinge.Interceptor) gin.HandlerFunc {
+// 拦截器返回错误时经传入的响应壳写出（壳拥有 (HTTP 状态码, 响应体) 决策权，
+// 与内核 Handle 路径同构；建议传入与 k.SetEnvelope 相同的壳实例）。
+func InterceptAsGin(ep hinge.Endpoint, in hinge.Interceptor, env hinge.Envelope) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rd := &Reader{C: c}
 		sw := &Sink{C: c}
@@ -23,8 +23,8 @@ func InterceptAsGin(ep hinge.Endpoint, in hinge.Interceptor) gin.HandlerFunc {
 			return nil
 		})
 		if err != nil {
-			status, code, msg := hinge.ResolveError(nil, err)
-			c.PureJSON(status, map[string]any{"code": code, "data": nil, "msg": msg})
+			status, body := env.Failure(err)
+			c.PureJSON(status, body)
 		}
 	}
 }

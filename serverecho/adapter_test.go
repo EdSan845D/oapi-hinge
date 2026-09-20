@@ -26,10 +26,10 @@ type adapterCreateBody struct {
 	Age  int    `json:"age"`
 }
 
-// ---- ① GET 路径参数 + DefaultEnvelope 统一壳（显式 opt-in） ----
+// ---- ① GET 路径参数 + BizCodeEnvelope 统一壳（显式 opt-in） ----
 
 func TestAdapterGetPathParamsEnvelope(t *testing.T) {
-	k := NewKernel().SetEnvelope(hinge.DefaultEnvelope{})
+	k := NewKernel().SetEnvelope(hinge.BizCodeEnvelope{})
 	e := echo.New()
 
 	bindQ := func(ctx context.Context, r hinge.RequestReader) (any, error) {
@@ -64,8 +64,8 @@ func TestAdapterGetPathParamsEnvelope(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v; body=%s", err, rec.Body.String())
 	}
-	if body.Code != hinge.CodeOK {
-		t.Fatalf("code = %d, want %d; body=%s", body.Code, hinge.CodeOK, rec.Body.String())
+	if body.Code != 0 {
+		t.Fatalf("code = %d, want 0; body=%s", body.Code, rec.Body.String())
 	}
 	if body.Data["id"] != "42" {
 		t.Fatalf("data.id = %q, want 42; body=%s", body.Data["id"], rec.Body.String())
@@ -130,7 +130,7 @@ func TestAdapterRawEnvelopeDefault(t *testing.T) {
 // ---- ② 业务错误 contract 语义：hinge.NotFound → HTTP 404 + code=404 ----
 
 func TestAdapterBusinessErrorNotFound(t *testing.T) {
-	k := NewKernel().SetEnvelope(hinge.DefaultEnvelope{})
+	k := NewKernel().SetEnvelope(hinge.BizCodeEnvelope{})
 	e := echo.New()
 
 	h := func(ctx context.Context, q, b any) (any, error) {
@@ -169,7 +169,7 @@ func TestAdapterBusinessErrorNotFound(t *testing.T) {
 // ---- ③ POST JSON body：空缺必填字段 → bind_errors 字段级明细 ----
 
 func TestAdapterPostJSONBindErrors(t *testing.T) {
-	k := NewKernel().SetEnvelope(hinge.DefaultEnvelope{})
+	k := NewKernel().SetEnvelope(hinge.BizCodeEnvelope{})
 	e := echo.New()
 
 	bindB := func(ctx context.Context, r hinge.RequestReader) (any, error) {
@@ -222,8 +222,8 @@ func TestAdapterPostJSONBindErrors(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v; body=%s", err, rec.Body.String())
 	}
-	if body.Code != hinge.CodeError {
-		t.Fatalf("code = %d, want %d; body=%s", body.Code, hinge.CodeError, rec.Body.String())
+	if body.Code != 7 {
+		t.Fatalf("code = %d, want 7; body=%s", body.Code, rec.Body.String())
 	}
 	if len(body.BindErrors) != 1 {
 		t.Fatalf("bind_errors 数量 = %d, want 1; body=%s", len(body.BindErrors), rec.Body.String())
@@ -249,7 +249,7 @@ func TestAdapterPostJSONBindErrors(t *testing.T) {
 	if err := json.Unmarshal(rec2.Body.Bytes(), &okBody); err != nil {
 		t.Fatalf("decode body: %v; body=%s", err, rec2.Body.String())
 	}
-	if okBody.Code != hinge.CodeOK || okBody.Data["name"] != "Ada" {
+	if okBody.Code != 0 || okBody.Data["name"] != "Ada" {
 		t.Fatalf("unexpected success body: %s", rec2.Body.String())
 	}
 }
@@ -257,7 +257,7 @@ func TestAdapterPostJSONBindErrors(t *testing.T) {
 // ---- ④ correlation：SetCorrelation(true) → 回写 X-Correlation-Id ----
 
 func TestAdapterCorrelation(t *testing.T) {
-	k := NewKernel().SetCorrelation(true).SetEnvelope(hinge.DefaultEnvelope{})
+	k := NewKernel().SetCorrelation(true).SetEnvelope(hinge.BizCodeEnvelope{})
 	e := echo.New()
 
 	h := func(ctx context.Context, q, b any) (any, error) {

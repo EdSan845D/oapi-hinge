@@ -2,10 +2,11 @@ package hinge
 
 import (
 	"errors"
+	"net/http"
 	"testing"
 )
 
-// ---- 响应壳：Default / Raw / 扩展接口 / 注册表 ----
+// ---- 响应壳：BizCode / Raw / 注册表 ----
 
 func TestBizCodeEnvelope(t *testing.T) {
 	env := BizCodeEnvelope{}
@@ -14,24 +15,58 @@ func TestBizCodeEnvelope(t *testing.T) {
 	if !ok {
 		t.Fatalf("Success type = %T", out)
 	}
-	if reply.Code != CodeOK || reply.Msg != "操作成功" {
+	if reply.Code != 0 || reply.Msg != "操作成功" {
 		t.Fatalf("Success reply = %+v", reply)
 	}
 	if data, ok := reply.Data.(map[string]string); !ok || data["id"] != "u1" {
 		t.Fatalf("Success data mismatch: %+v", reply.Data)
 	}
-	fail := env.Failure(404, 404, "用户不存在").(Reply[any])
-	if fail.Code != 404 || fail.Data != nil || fail.Msg != "用户不存在" {
-		t.Fatalf("Failure reply = %+v", fail)
+
+	// 普通业务错误：HTTP 200 + 兑底业务码（默认 7）
+	status, body := env.Failure(errors.New("业务失败"))
+	if status != 200 {
+		t.Fatalf("plain error status = %d, want 200", status)
 	}
-	// 扩展接口：聚合 / 字段明细
-	agg := env.AggregateFailure(200, CodeError, "部分失败", []ItemError{{Key: "0"}}).(Reply[any])
-	if agg.AggregatedError == nil {
-		t.Fatal("AggregateFailure should carry aggregated_error")
+	if fail := body.(Reply[any]); fail.Code != 7 || fail.Data != nil || fail.Msg != "业务失败" {
+		t.Fatalf("plain failure reply = %+v", fail)
 	}
-	field := env.FieldFailure(200, CodeError, "绑定失败", []BindFieldError{{Field: "name"}}).(Reply[any])
-	if len(field.BindErrors) != 1 || field.BindErrors[0].Field != "name" {
-		t.Fatalf("FieldFailure mismatch: %+v", field)
+
+	// 错误自带状态码：跟随；业务码未携带 → 兑底码
+	status, body = env.Failure(NotFound("用户不存在"))
+	fail := body.(Reply[any])
+	if status != 404 || fail.Code != 404 || fail.Msg != "用户不存在" {
+		t.Fatalf("NotFound failure = (%d, %+v)", status, fail)
+	}
+
+	// 错误自带业务码：优先于兑底码
+	status, body = env.Failure(WithCode(Conflict("冲突"), 1001))
+	if status != 409 || body.(Reply[any]).Code != 1001 {
+		t.Fatalf("explicit code = (%d, %+v)", status, body)
+	}
+
+	// 业务码完全由使用者配置（框架无内置常量）
+	custom := BizCodeEnvelope{OKCode: 0, ErrCode: 10000, SuccessMsg: "ok", PlainStatus: 500}
+	status, body = custom.Failure(errors.New("boom"))
+	if status != 500 || body.(Reply[any]).Code != 10000 {
+		t.Fatalf("custom config = (%d, %+v)", status, body)
+	}
+
+	// 绑定错误：明细进 bind_errors（HTTP 200 + code=7 兑底）
+	be := &BindError{}
+	be.AddField("name", "body", "is required")
+	status, body = env.Failure(be)
+	fail = body.(Reply[any])
+	if status != 200 || fail.Code != 7 || len(fail.BindErrors) != 1 || fail.BindErrors[0].Field != "name" {
+		t.Fatalf("bind failure = (%d, %+v)", status, fail)
+	}
+
+	// 聚合错误：明细进 aggregated_error
+	agg := &AggregateError{StatusError: StatusError{Status: http.StatusOK, Msg: "部分失败"}, Total: 2,
+		Failed: []ItemError{{Key: "0", Msg: "x"}}}
+	status, body = env.Failure(agg)
+	fail = body.(Reply[any])
+	if status != 200 || fail.Msg != "部分失败" || fail.AggregatedError == nil {
+		t.Fatalf("aggregate failure = (%d, %+v)", status, fail)
 	}
 }
 
@@ -45,9 +80,26 @@ func TestRawEnvelope(t *testing.T) {
 	if out := env.Success(200, nil); out != nil {
 		t.Fatalf("Raw Success(nil) = %v", out)
 	}
-	fail := env.Failure(404, 404, "用户不存在").(map[string]any)
-	if fail["error"] != "用户不存在" {
-		t.Fatalf("Raw Failure = %v", fail)
+
+	// 错误自带状态码：跟随
+	status, body := env.Failure(NotFound("用户不存在"))
+	if status != 404 || body.(map[string]any)["error"] != "用户不存在" {
+		t.Fatalf("Raw Failure(StatusError) = (%d, %v)", status, body)
+	}
+	// ErrNotFound 哨兵 → 404
+	status, _ = env.Failure(ErrNotFound)
+	if status != 404 {
+		t.Fatalf("Raw Failure(ErrNotFound) status = %d, want 404", status)
+	}
+	// 绑定错误 → 400
+	status, body = env.Failure(&BindError{Fields: []BindFieldError{{Field: "name", Msg: "is required"}}})
+	if status != 400 || body.(map[string]any)["error"] != "name: is required" {
+		t.Fatalf("Raw Failure(BindError) = (%d, %v)", status, body)
+	}
+	// 普通错误 → 500（REST 语义）
+	status, body = env.Failure(errors.New("boom"))
+	if status != 500 || body.(map[string]any)["error"] != "boom" {
+		t.Fatalf("Raw Failure(plain) = (%d, %v)", status, body)
 	}
 }
 
@@ -75,13 +127,13 @@ func TestEnvelopeFor(t *testing.T) {
 	}
 }
 
-// ---- 哨兵与错误映射依赖项（errors_test.go 补充矩阵之外的回归） ----
+// ---- InspectError：StatusCoder 自定义实现 ----
 
-func TestStatusCoder(t *testing.T) {
+func TestInspectErrorStatusCoder(t *testing.T) {
 	var err error = customCoded{status: 429, msg: "too many"}
-	status, code, msg, ok := ResolveErrorStatus(err)
-	if !ok || status != 429 || code != CodeError || msg != "too many" {
-		t.Fatalf("StatusCoder resolve: (%d, %d, %q, %v)", status, code, msg, ok)
+	v := InspectError(err)
+	if v.Status != 429 || v.Code != 0 || v.Msg != "too many" || v.Bind != nil || v.Aggregate != nil {
+		t.Fatalf("StatusCoder inspect: %+v", v)
 	}
 	// errors.As 识别 StatusCoder 接口
 	var sc StatusCoder

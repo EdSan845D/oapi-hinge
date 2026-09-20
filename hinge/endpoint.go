@@ -54,7 +54,7 @@ type HandlerFunc func(ctx context.Context, q, b any) (any, error)
 
 // Binder 绑定函数适配形态：生成绑定器解析原始请求值为强类型入参
 // （含 InTransform / Validate 调用与必填检查）。
-// 绑定失败 *BindError 走统一错误决策。
+// 绑定失败 *BindError 连同原始错误直通响应壳解释。
 type Binder func(ctx context.Context, r RequestReader) (any, error)
 
 // Type 返回 T 的 reflect.Type（生成表填充 EndpointDoc.QType 等使用，文档生成）。

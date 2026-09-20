@@ -195,7 +195,7 @@ openapi.RegisterMiddlewareDoc(middleware.ParseHeaderWithInfo, func(op *openapi3.
 
 ## 可插拔能力
 
-- **响应壳**：默认裸输出（RawEnvelope，不加包装器）；`k.SetEnvelope(hinge.DefaultEnvelope{})` 开启 `{code, data, msg}` 统一包装；`hinge.RegisterEnvelope(name, env)` + `oapi:envelope <name>` 路由级切换；文档侧 `OptionWithEnvelope` 从壳实例同构推导；
+- **响应壳**：默认裸输出（RawEnvelope，REST 风格）；`k.SetEnvelope(hinge.BizCodeEnvelope{OKCode: 0, ErrCode: 10000})` 开启 `{code, data, msg}` 统一包装（业务码取值由业务层配置，框架不内置业务码常量）；自定义壳只需实现 `Envelope` 接口——失败侧 `Failure(err) (status, body)` 拿到原始错误自行解释（`InspectError` 提取错误自带的状态码/业务码/明细），内核不做错误预解析；`hinge.RegisterEnvelope(name, env)` + `oapi:envelope <name>` 路由级切换；文档侧 `OptionWithEnvelope` 从壳实例同构推导；
 - **错误携带状态码**：`hinge.NotFound/BadRequest/...` 或实现 `StatusCoder`；默认 HTTP 200 + code=7，`k.SetBindErrorStatus(400)` 切 RESTful；
 - **入参转换 / 出参加工**：`InTransform(ctx) error` / `OutTransform(ctx) error` 接口由生成绑定器与内核自动调用（零反射）；
 - **校验器**：生成绑定器内置 required 检查 + `Validate()` 直调；`validator.Playground()` 接入完整规则（可选依赖）；

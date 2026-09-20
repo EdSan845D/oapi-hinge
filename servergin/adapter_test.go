@@ -21,7 +21,7 @@ type ginUserQ struct{ ID string }
 func init() { gin.SetMode(gin.TestMode) }
 
 func TestAdapterGetPathParamsEnvelope(t *testing.T) {
-	k := NewKernel().SetEnvelope(hinge.DefaultEnvelope{})
+	k := NewKernel().SetEnvelope(hinge.BizCodeEnvelope{})
 	r := gin.New()
 
 	bindQ := func(ctx context.Context, r hinge.RequestReader) (any, error) {
@@ -54,7 +54,7 @@ func TestAdapterGetPathParamsEnvelope(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v; body=%s", err, rec.Body.String())
 	}
-	if body.Code != hinge.CodeOK || body.Data["id"] != "42" || body.Msg != "操作成功" {
+	if body.Code != 0 || body.Data["id"] != "42" || body.Msg != "操作成功" {
 		t.Fatalf("envelope mismatch: %+v", body)
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
@@ -111,7 +111,7 @@ func TestAdapterRawEnvelopeDefault(t *testing.T) {
 }
 
 func TestAdapterBusinessErrorNotFound(t *testing.T) {
-	k := NewKernel().SetEnvelope(hinge.DefaultEnvelope{})
+	k := NewKernel().SetEnvelope(hinge.BizCodeEnvelope{})
 	r := gin.New()
 
 	h := func(ctx context.Context, q, b any) (any, error) {
@@ -139,7 +139,7 @@ func TestAdapterBusinessErrorNotFound(t *testing.T) {
 }
 
 func TestAdapterPostJSONBindErrors(t *testing.T) {
-	k := NewKernel().SetEnvelope(hinge.DefaultEnvelope{})
+	k := NewKernel().SetEnvelope(hinge.BizCodeEnvelope{})
 	r := gin.New()
 
 	type createBody struct {
@@ -190,7 +190,7 @@ func TestAdapterPostJSONBindErrors(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 	}
-	if body.Code != hinge.CodeError || len(body.BindErrors) != 1 || body.BindErrors[0].Field != "name" {
+	if body.Code != 7 || len(body.BindErrors) != 1 || body.BindErrors[0].Field != "name" {
 		t.Fatalf("bind errors mismatch: %+v", body)
 	}
 }
