@@ -43,9 +43,12 @@ func TestOptionWithEnvelopeDerivation(t *testing.T) {
 	defer resetRegistries()
 
 	eps := []hinge.EndpointDoc{{
-		Owner: "t", Handler: "Echo",
-		Method: "GET", Path: "/e/x", Summary: "壳推导",
-		RType: hinge.Type[map[string]string](),
+		Endpoint: hinge.Endpoint{
+			Owner: "t", Handler: "Echo",
+			Method: "GET", Path: "/e/x",
+		},
+		Summary: "壳推导",
+		RType:   hinge.Type[map[string]string](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
 	err := Generate(out, eps, OptionWithEnvelope(testEnvelope{}))
@@ -71,14 +74,20 @@ func TestSchemaNameCollision(t *testing.T) {
 
 	eps := []hinge.EndpointDoc{
 		{
-			Owner: "t", Handler: "A",
-			Method: "GET", Path: "/n/a", Summary: "A 用户",
-			RType: hinge.Type[testdataa.User](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "A",
+				Method: "GET", Path: "/n/a",
+			},
+			Summary: "A 用户",
+			RType:   hinge.Type[testdataa.User](),
 		},
 		{
-			Owner: "t", Handler: "B",
-			Method: "GET", Path: "/n/b", Summary: "B 用户",
-			RType: hinge.Type[datab.User](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "B",
+				Method: "GET", Path: "/n/b",
+			},
+			Summary: "B 用户",
+			RType:   hinge.Type[datab.User](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
@@ -114,14 +123,20 @@ func TestOperationIDCollisionWarning(t *testing.T) {
 	// 同 Owner+Handler 两个端点 → operationID 重复 → 正式轮警告
 	eps := []hinge.EndpointDoc{
 		{
-			Owner: "n", Handler: "Health",
-			Method: "GET", Path: "/n/a", Summary: "A",
-			RType: hinge.Type[testdataa.User](),
+			Endpoint: hinge.Endpoint{
+				Owner: "n", Handler: "Health",
+				Method: "GET", Path: "/n/a",
+			},
+			Summary: "A",
+			RType:   hinge.Type[testdataa.User](),
 		},
 		{
-			Owner: "n", Handler: "Health",
-			Method: "GET", Path: "/n/b", Summary: "B",
-			RType: hinge.Type[datab.User](),
+			Endpoint: hinge.Endpoint{
+				Owner: "n", Handler: "Health",
+				Method: "GET", Path: "/n/b",
+			},
+			Summary: "B",
+			RType:   hinge.Type[datab.User](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
@@ -158,9 +173,12 @@ func TestManualPath(t *testing.T) {
 	RegisterManualPath("/legacy/ping", item)
 
 	eps := []hinge.EndpointDoc{{
-		Owner: "t", Handler: "Demo",
-		Method: "GET", Path: "/m/x", Summary: "模板路由",
-		RType: hinge.Type[map[string]string](),
+		Endpoint: hinge.Endpoint{
+			Owner: "t", Handler: "Demo",
+			Method: "GET", Path: "/m/x",
+		},
+		Summary: "模板路由",
+		RType:   hinge.Type[map[string]string](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
 	if err := Generate(out, eps); err != nil {
@@ -183,9 +201,12 @@ func TestManualPathConflictPanics(t *testing.T) {
 	RegisterManualPath("/m/x", item) // 与端点表 GET /m/x 冲突
 
 	eps := []hinge.EndpointDoc{{
-		Owner: "t", Handler: "Demo",
-		Method: "GET", Path: "/m/x", Summary: "模板路由",
-		RType: hinge.Type[map[string]string](),
+		Endpoint: hinge.Endpoint{
+			Owner: "t", Handler: "Demo",
+			Method: "GET", Path: "/m/x",
+		},
+		Summary: "模板路由",
+		RType:   hinge.Type[map[string]string](),
 	}}
 	defer func() {
 		if recover() == nil {
@@ -200,8 +221,11 @@ func TestDeprecatedFlag(t *testing.T) {
 	defer resetRegistries()
 
 	eps := []hinge.EndpointDoc{{
-		Owner: "t", Handler: "Old",
-		Method: "GET", Path: "/dep/old", Summary: "旧接口",
+		Endpoint: hinge.Endpoint{
+			Owner: "t", Handler: "Old",
+			Method: "GET", Path: "/dep/old",
+		},
+		Summary:    "旧接口",
 		Deprecated: true,
 		RType:      hinge.Type[map[string]string](),
 	}}
@@ -220,8 +244,11 @@ func TestGenerateStrictFailsOnWarnings(t *testing.T) {
 
 	// 手写端点未填 Summary → 警告 → 严格模式失败
 	eps := []hinge.EndpointDoc{{
-		Owner: "t", Handler: "NoSummary",
-		Method: "GET", Path: "/s/x",
+		Endpoint: hinge.Endpoint{
+			Owner: "t", Handler: "NoSummary",
+			Method: "GET", Path: "/s/x",
+		},
+
 		RType: hinge.Type[map[string]string](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
@@ -246,8 +273,11 @@ func TestSourceComments(t *testing.T) {
 	defer resetRegistries()
 
 	eps := []hinge.EndpointDoc{{
-		Owner: "t", Handler: "A",
-		Method: "GET", Path: "/c/a",
+		Endpoint: hinge.Endpoint{
+			Owner: "t", Handler: "A",
+			Method: "GET", Path: "/c/a",
+		},
+
 		RType: hinge.Type[testdataa.User](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
@@ -289,8 +319,10 @@ func TestCustomCommentParser(t *testing.T) {
 	})
 
 	eps := []hinge.EndpointDoc{{
-		Owner: "t", Handler: "B",
-		Method: "GET", Path: "/cp/b",
+		Endpoint: hinge.Endpoint{
+			Owner: "t", Handler: "B",
+			Method: "GET", Path: "/cp/b",
+		},
 		RType: hinge.Type[datab.User](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
@@ -312,9 +344,12 @@ func TestCommentParserWithoutOptionWarns(t *testing.T) {
 	})
 
 	eps := []hinge.EndpointDoc{{
-		Owner: "t", Handler: "Demo",
-		Method: "GET", Path: "/w/x", Summary: "演示",
-		RType: hinge.Type[map[string]string](),
+		Endpoint: hinge.Endpoint{
+			Owner: "t", Handler: "Demo",
+			Method: "GET", Path: "/w/x",
+		},
+		Summary: "演示",
+		RType:   hinge.Type[map[string]string](),
 	}}
 	out := t.TempDir() + "/spec.yaml"
 	warns, err := generate(out, eps, false)

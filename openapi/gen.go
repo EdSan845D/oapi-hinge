@@ -362,6 +362,13 @@ func addOperation(g *specGen, ep *hinge.EndpointDoc) {
 				WithRequired(true).
 				WithDescription("Request body for " + bT.String()).
 				WithContent(openapi3.NewContentWithSchemaRef(&openapi3.SchemaRef{Value: sch}, []string{"multipart/form-data"}))}
+		case isFormBody(bT):
+			// urlencoded 表单体（与 gen 侧 BodyKind "form" 同规则：全部扁平字段 form 标签、无文件字段）
+			sch := multipartSchema(bT)
+			op.RequestBody = &openapi3.RequestBodyRef{Value: openapi3.NewRequestBody().
+				WithRequired(true).
+				WithDescription("Request body for " + bT.String()).
+				WithContent(openapi3.NewContentWithSchemaRef(&openapi3.SchemaRef{Value: sch}, []string{"application/x-www-form-urlencoded"}))}
 		default:
 			ref := g.sb.ref(bT)
 			op.RequestBody = &openapi3.RequestBodyRef{Value: openapi3.NewRequestBody().
@@ -817,6 +824,28 @@ func isFileHeaderField(t reflect.Type) bool {
 		}
 	}
 	return false
+}
+
+// isFormBody 判断 B 是否为纯 form 标签结构体（全部导出扁平字段均声明 form 标签、
+// 无文件字段）：与 gen 侧 BodyKind "form" 检测同规则。gen 侧为展平后判定；
+// 此处 reflect 不递归内嵌，与 multipartSchema 同限制。
+func isFormBody(t reflect.Type) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct || t.NumField() == 0 {
+		return false
+	}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() || f.Anonymous {
+			continue
+		}
+		if f.Tag.Get("form") == "" || isFileHeaderField(f.Type) {
+			return false
+		}
+	}
+	return true
 }
 
 // multipartSchema 为含 FileHeader 字段的 B 生成 multipart/form-data 的 requestBody

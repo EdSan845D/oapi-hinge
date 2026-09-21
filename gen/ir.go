@@ -54,7 +54,7 @@ type EndpointIR struct {
 	HasB     bool
 	BName    string
 	BSet     *fieldSet
-	BodyKind string // json / raw / multipart（HasB 时有效）
+	BodyKind string // json / raw / multipart / form（HasB 时有效；form = application/x-www-form-urlencoded）
 
 	// RouteMWs EntryPointConfig.Middlewares 运行时值反射出的源码引用（owner 全端点继承）：
 	// 全部为框架原生中间件，发射为组级直挂；内核拦截器走 Interceptors → ConfigICs。
@@ -87,6 +87,31 @@ var (
 		"DELETE": true, "HEAD": true, "OPTIONS": true,
 	}
 )
+
+// bodyKindOf 由展平后的 B 字段集判定 body kind（不含校验）：
+//   - 含文件字段 → multipart（value/文件字段全部要求 form 标签，由调用方校验）
+//   - 全部字段 form 标签（无文件字段）→ form（application/x-www-form-urlencoded）
+//   - 其余（含字段标签混排）→ json（保持 JSON 语义）
+func bodyKindOf(fs *fieldSet) string {
+	hasFile := false
+	allForm := len(fs.Fields) > 0
+	for _, f := range fs.Fields {
+		if f.Class == classFile || f.Class == classFileSlice {
+			hasFile = true
+		}
+		if f.In != "form" {
+			allForm = false
+		}
+	}
+	switch {
+	case hasFile:
+		return "multipart"
+	case allForm:
+		return "form"
+	default:
+		return "json"
+	}
+}
 
 // structAnn 结构体级注解。
 type structAnn struct {
@@ -707,17 +732,19 @@ func (b *irBuilder) buildSignature(ep *EndpointIR, md *ast.FuncDecl) bool {
 					return false
 				}
 				ep.BSet = fs
-				ep.BodyKind = "json"
-				for _, f := range fs.Fields {
-					if f.Class == classFile || f.Class == classFileSlice {
-						ep.BodyKind = "multipart"
-						break
-					}
-				}
+				ep.BodyKind = bodyKindOf(fs)
 				if ep.BodyKind == "multipart" {
 					for _, f := range fs.Fields {
-						if (f.Class == classFile || f.Class == classFileSlice) && f.In != "form" {
-							b.errf("%s：multipart 字段 %s 必须声明 form 标签（否则文件静默丢失）", pos, f.GoName)
+						isFile := f.Class == classFile || f.Class == classFileSlice
+						switch {
+						case isFile && f.In != "form":
+							b.errf("%s：multipart 文件字段 %s 必须声明 form 标签（否则文件静默丢失）", pos, f.GoName)
+						case !isFile && f.In != "form":
+							src := f.In
+							if src == "" {
+								src = "无标签（JSON 语义）"
+							}
+							b.errf("%s：multipart body 字段 %s 当前为 %s；multipart value 只认 form 标签，query 入参请拆到 Q，JSON 字段请勿与 multipart 混排", pos, f.GoName, src)
 						}
 					}
 				}

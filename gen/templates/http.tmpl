@@ -13,7 +13,7 @@ func Register{{.Name}}{{$.Target.Title}}(i *http.ServeMux, k *hinge.Kernel{{if n
 {{- $isPkg := .IsPkg}}
 {{- $ownerAlias := .OwnerAlias}}
 {{- range .Eps}}
-	i.HandleFunc("{{.Method}} {{.Path}}", serverhttp.Handle(k, {{.Spec}}(), {{.Binder}}, func(ctx context.Context, q, b any) (any, error) {
+	i.HandleFunc("{{.Method}} {{.Path}}", serverhttp.Handle(k, {{.Spec}}, {{.Binder}}, func(ctx context.Context, q, b any) (any, error) {
 		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{if not .TwoArg}}, b.({{$ownerAlias}}.{{.BName}}){{end}})
 	}{{if ne .Args ""}}, {{.Args}}{{end}}))
 {{- end}}

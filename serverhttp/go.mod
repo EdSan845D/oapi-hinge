@@ -5,7 +5,7 @@
 // 发版：随仓库主版本打子模块 tag（如 serverhttp/v0.2.0）。
 module github.com/EdSan845D/oapi-hinge/serverhttp
 
-go 1.27
+go 1.25
 
 require github.com/EdSan845D/oapi-hinge v0.2.1
 

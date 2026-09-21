@@ -97,7 +97,8 @@ func Internal(msg string) error {
 // WithCode 给状态错误设置业务码（业务码语义由业务层定义、响应壳解释）。
 // 返回克隆副本，不改写原错误；非状态错误原样返回。
 func WithCode(err error, code int) error {
-	if se, ok := errors.AsType[*StatusError](err); ok {
+	var se *StatusError
+	if errors.As(err, &se) {
 		clone := *se
 		clone.Code = code
 		return &clone
@@ -107,7 +108,8 @@ func WithCode(err error, code int) error {
 
 // WithCause 给状态错误附加内部原因（err 只进日志/错误链，不对外）
 func WithCause(statusErr error, cause error) error {
-	if se, ok := errors.AsType[*StatusError](statusErr); ok {
+	var se *StatusError
+	if errors.As(statusErr, &se) {
 		return &StatusError{Status: se.Status, Code: se.Code, Msg: se.Msg, Err: cause}
 	}
 	return statusErr
@@ -192,7 +194,8 @@ func InspectError(err error) ErrorView {
 		return ErrorView{}
 	}
 	var v ErrorView
-	if agg, ok := errors.AsType[*AggregateError](err); ok {
+	var agg *AggregateError
+	if errors.As(err, &agg) {
 		v.Aggregate = agg
 		v.Status = agg.StatusError.StatusCode()
 		v.Code = agg.StatusError.Code
@@ -203,7 +206,8 @@ func InspectError(err error) ErrorView {
 		}
 		return v
 	}
-	if se, ok := errors.AsType[*StatusError](err); ok {
+	var se *StatusError
+	if errors.As(err, &se) {
 		v.Status = se.StatusCode()
 		v.Code = se.Code
 		if se.Msg != "" {
@@ -213,12 +217,14 @@ func InspectError(err error) ErrorView {
 		}
 		return v
 	}
-	if be, ok := errors.AsType[*BindError](err); ok {
+	var be *BindError
+	if errors.As(err, &be) {
 		v.Bind = be
 		v.Msg = err.Error()
 		return v
 	}
-	if sc, ok := errors.AsType[StatusCoder](err); ok {
+	var sc StatusCoder
+	if errors.As(err, &sc) {
 		v.Status = sc.StatusCode()
 		if v.Status == 0 {
 			v.Status = http.StatusInternalServerError

@@ -1,6 +1,6 @@
 module github.com/EdSan845D/oapi-hinge/example
 
-go 1.27
+go 1.25
 
 replace github.com/EdSan845D/oapi-hinge => ../
 

@@ -133,7 +133,7 @@ type EntryPoint interface {
 
 // Ptr 返回 v 的指针：RouteMeta.Deprecated 三态覆写用
 // （nil = 不覆盖 / Ptr(true) = 置位 / Ptr(false) = 清除）。
-func Ptr[T any](v T) *T { return new(v) }
+func Ptr[T any](v T) *T { return &v }
 
 type RouteMeta struct {
 	// Method / Path 程序化路由覆写：预留字段，暂未消费——路由以注解为唯一事实源。

@@ -675,8 +675,91 @@ func emitBBinder(b *strings.Builder, ep *EndpointIR, is *importSet, taken map[st
 		emitRequiredChecks(b, ep.BSet)
 		emitValidate(b, ep.ValidateB, ep.ValidateBPtr)
 		b.WriteString("\treturn v, nil\n")
+	case "form":
+		// application/x-www-form-urlencoded：value 全部来自 r.FormValues（PostForm），
+		// 错误立即返回（与 multipart value part 同语义）；必填缺失经 emitRequiredChecks 收集。
+		fmt.Fprintf(b, "\tbe := &hinge.BindError{}\n\tadd := be.AddField\n")
+		if len(requiredFields(ep.BSet)) == 0 {
+			b.WriteString("\t_ = add\n")
+		}
+		for _, a := range ep.BSet.Allocs {
+			rd2 := &renderer{pkg: ep.Pkg, ownerAlias: ownerAlias, src: a.SrcFile, is: is}
+			t, err := rd2.expr(ast.NewIdent(a.TypeName))
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(b, "\tif %s == nil {\n\t\t%s = new(%s)\n\t}\n", a.Access, a.Access, t)
+		}
+		for _, f := range ep.BSet.Fields {
+			if err := emitFormValueBlock(b, f, ep.Pkg, ownerAlias, is); err != nil {
+				return err
+			}
+		}
+		if ep.InTransformB {
+			recv := "v"
+			if ep.InTransformBPtr {
+				recv = "(&v)"
+			}
+			fmt.Fprintf(b, "\tif err := %s.InTransform(ctx); err != nil {\n\t\treturn v, err\n\t}\n", recv)
+		}
+		emitRequiredChecks(b, ep.BSet)
+		emitValidate(b, ep.ValidateB, ep.ValidateBPtr)
+		b.WriteString("\treturn v, nil\n")
 	default:
 		return fmt.Errorf("未知 body kind %q", ep.BodyKind)
+	}
+	return nil
+}
+
+// emitFormValueBlock urlencoded 表单体 value 字段（错误立即返回）。
+// 与 multipart value part 的差异仅在取值源：r.FormValues（PostForm）而非 fm.Value。
+func emitFormValueBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string, is *importSet) error {
+	rd := &renderer{pkg: pkg, ownerAlias: ownerAlias, src: f.SrcFile, is: is}
+	t, err := rd.expr(f.TypeExpr)
+	if err != nil {
+		return fmt.Errorf("字段 %s: %w", f.GoName, err)
+	}
+
+	var accessAssignmentStatement = func(f Field) {
+		b.WriteString("\t\t")
+		b.WriteString(f.Access)
+		switch f.Class {
+		case classScalar:
+			b.WriteString(" = x\n")
+		case classPtrScalar:
+			b.WriteString(" = &x\n")
+		case classSlice:
+			b.WriteString(" = xs\n")
+		}
+	}
+
+	fmt.Fprintf(b, "\tif vals, ok := r.FormValues(%q); ok && len(vals) > 0 && vals[0] != \"\" {\n", f.Source)
+	switch f.Class {
+	case classScalar, classPtrScalar:
+		fmt.Fprintf(b, "\t\tx, err := hinge.Parse[%s](vals[0], %q)\n", t, f.Source)
+	case classSlice:
+		src := "hinge.Flat(vals)"
+		if f.BaseKind == "string" {
+			src = "vals" // string 元素不拆逗号，整段原样解析
+		}
+		fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](%s, %q)\n", t, src, f.Source)
+	default:
+		return fmt.Errorf("form 字段 %s 类型不支持", f.GoName)
+	}
+	b.WriteString("\t\tif err != nil {\n\t\t\treturn v, err\n\t\t}\n")
+	accessAssignmentStatement(f)
+	b.WriteString("\t}\n")
+	if f.Def != "" {
+		fmt.Fprintf(b, "\tif %s {\n", zeroCmp(f))
+		switch f.Class {
+		case classSlice:
+			fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](%s, %q)\n", t, sliceDefSrc(f), f.Source)
+		default:
+			fmt.Fprintf(b, "\t\tx, err := hinge.Parse[%s](%s, %q)\n", t, strconv.Quote(f.Def), f.Source)
+		}
+		b.WriteString("\t\tif err != nil {\n\t\t\treturn v, err\n\t\t}\n")
+		accessAssignmentStatement(f)
+		b.WriteString("\t}\n")
 	}
 	return nil
 }
@@ -862,6 +945,8 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 				bindArgs += ", nil"
 			}
 
+			// 调用括号由发射器统一追加：specRef = "SpecXxx()"，模板内 {{.Spec}} 为裸标识符
+			//（自定义模板请勿再手写 "()"，否则产生 SpecXxx()() 双调用编译错误）
 			specRef := GenSpecName(ep) + "()"
 			// 方法级注解引用：路由级直挂（组级之后、内核包装器之前）。
 			annoRefs := make([]string, 0, len(ep.AnnoMWs))

@@ -15,6 +15,7 @@ type fakeReader struct {
 	method     string
 	pathParams map[string]string
 	query      map[string][]string
+	form       map[string][]string
 	headers    map[string]string
 	body       []byte
 }
@@ -40,6 +41,11 @@ func (r *fakeReader) PathParam(n string) (string, bool) {
 
 func (r *fakeReader) QueryValues(n string) ([]string, bool) {
 	v, ok := r.query[n]
+	return v, ok && len(v) > 0
+}
+
+func (r *fakeReader) FormValues(n string) ([]string, bool) {
+	v, ok := r.form[n]
 	return v, ok && len(v) > 0
 }
 

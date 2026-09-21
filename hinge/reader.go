@@ -18,6 +18,10 @@ type RequestReader interface {
 	PathParam(name string) (string, bool)
 	// QueryValues query 参数的全部取值（重复参数 ?ids=1&ids=2）。缺失返回 (nil, false)。
 	QueryValues(name string) ([]string, bool)
+	// FormValues urlencoded 表单体（application/x-www-form-urlencoded）字段的全部取值。
+	// 仅 BodyKind=form 的生成绑定器调用；实现方负责 ParseForm 后取 PostForm。
+	// 缺失返回 (nil, false)。
+	FormValues(name string) ([]string, bool)
 	// Header 请求头取值。缺失/为空返回 ("", false)。
 	Header(name string) (string, bool)
 	// Cookie 请求 Cookie 取值。缺失返回 ("", false)。
