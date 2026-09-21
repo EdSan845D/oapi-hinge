@@ -8,7 +8,7 @@ module github.com/EdSan845D/oapi-hinge/serverecho
 go 1.27
 
 require (
-	github.com/EdSan845D/oapi-hinge v0.2.0
+	github.com/EdSan845D/oapi-hinge v0.2.1
 	github.com/labstack/echo/v4 v4.15.4
 )
 

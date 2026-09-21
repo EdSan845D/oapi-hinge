@@ -8,7 +8,7 @@ module github.com/EdSan845D/oapi-hinge/validator
 go 1.27
 
 require (
-	github.com/EdSan845D/oapi-hinge v0.2.0
+	github.com/EdSan845D/oapi-hinge v0.2.1
 	github.com/go-playground/validator/v10 v10.30.3
 )
 

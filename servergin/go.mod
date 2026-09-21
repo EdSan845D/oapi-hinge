@@ -8,7 +8,7 @@ module github.com/EdSan845D/oapi-hinge/servergin
 go 1.27
 
 require (
-	github.com/EdSan845D/oapi-hinge v0.2.0
+	github.com/EdSan845D/oapi-hinge v0.2.1
 	github.com/gin-gonic/gin v1.12.0
 )
 
