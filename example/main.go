@@ -1,12 +1,10 @@
 //go:build !openapi
 
-// 运行时入口（release 构建）：原生 Gin 纯净应用。
-// 仅作为开发期 OpenAPI 文档生成器（见 main_doc.go，-tags openapi 构建），
-// 本构建不包含任何文档生成相关代码与开发期多余依赖。
+// 运行时入口：v0.2 装配只剩 DI + 一行注册。
+// 业务侧没有路由注册代码——注册函数由 hinge gen 从 oapi:* 注解生成（apigen 包）。
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,9 +12,10 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/EdSan845D/oapi-hinge/contract/validator"
-	"github.com/EdSan845D/oapi-hinge/example/app/routes"
+	"github.com/EdSan845D/oapi-hinge/example/apigen"
+	"github.com/EdSan845D/oapi-hinge/example/app/eps"
 	"github.com/EdSan845D/oapi-hinge/servergin"
+	"github.com/EdSan845D/oapi-hinge/validator"
 
 	scalargo "github.com/bdpiprava/scalar-go"
 	"github.com/gin-gonic/gin"
@@ -31,46 +30,52 @@ func main() {
 	}
 
 	r := gin.Default()
-	s := servergin.New()
+	k := servergin.NewKernel()
+	k.SetCorrelation(true)
 
-	// 扩展点演示 1：完整规则校验（validate:"..."，go-playground 引擎）
-	// 只用内置 required + Validate() 的项目无需调用；调用才引入该依赖
-	s.AddValidator(validator.Playground())
+	// 扩展点 1：完整规则校验（validate:"..."，go-playground 引擎）。
+	// 只用生成绑定器内置 required + Validate() 的项目无需调用。
+	k.AddValidator(validator.Playground())
 
-	// 扩展点演示 2（可选）：替换响应壳。默认 {code, data, msg}；
-	// 需要纯 RESTful 裸输出时放开下一行，并同步在 main_doc.go 配置文档侧壳 schema
-	// s.SetEnvelope(response.RawEnvelope{})
+	// 扩展点 2：内核拦截器与框架中间件二分引用（无注册表，直引具名函数）：
+	//   - oapi:interceptor middleware.BearerAuth（方法级注解，见 app/eps）→
+	//     发射为 HandleWith 的 extra 实参，进内核拦截链；
+	//   - EntryPointConfig.Interceptors / Middlewares 程序化注入（见 app/generate.go）。
+	// 文档侧由 openapi 生成器按 MWRefs 尾段名与 OptionWithSecurity scheme 配对。
 
-	// 扩展点演示 3：把 gin 上下文里的用户信息注入 handler 的 context.Context
-	// （handler 通过 handlers.CurrentUser(ctx) 读取，业务层零 gin 依赖）
-	s.SetContextDecorator(func(c *gin.Context, ctx context.Context) context.Context {
-		return ctx
-	})
+	// 扩展点 3（可选）：默认裸输出（RawEnvelope，REST 风格，不加包装器）；
+	// 需要 {code,data,msg} 统一壳时显式开启。业务码取值由业务层配置，
+	// 框架不内置 CodeOK/CodeError 之类的常量：
+	// k.SetEnvelope(hinge.BizCodeEnvelope{OKCode: 0, ErrCode: 10000, SuccessMsg: "ok"})
+	// 失败侧 (HTTP 状态码, 响应体) 由壳的 Failure(err) 全权决定；
+	// 错误自带状态码（hinge.NotFound 等）始终优先。
 
-	// 按分组挂载：users 组的 auth 中间件声明在 routes.All() 的 Group.Middlewares
-	s.Mount(r.Group(routes.BasePath), routes.All())
+	// 装配：DI + 一行注册（gin / echo / http 各自的 RegisterAll 已生成）
+	epsAll := apigen.All{
+		SystemEp: eps.SystemEp{},
+		UserEp:   eps.UserEp{Store: eps.NewUserStore()},
+		FileEp:   eps.FileEp{},
+	}
+	apigen.RegisterAllGin(r.Group("/api"), k, epsAll)
 
 	r.GET("/", func(c *gin.Context) {
-		c.String(http.StatusOK, "opai-hinge server: try /api/health")
+		c.String(http.StatusOK, "oapi-hinge server: try /api/health")
 	})
-
-	r.GET("/docs", func(ctx *gin.Context) {
+	r.GET("/docs", func(c *gin.Context) {
 		spec, err := os.ReadFile("openapi.yaml")
 		if err != nil {
-			ctx.AbortWithError(404, errors.New("SPEC文件丢失"))
+			c.AbortWithError(404, errors.New("SPEC文件丢失"))
 			return
 		}
-		html, err := scalargo.NewV2(
-			scalargo.WithSpecBytes(spec),
-		)
+		html, err := scalargo.NewV2(scalargo.WithSpecBytes(spec))
 		if err != nil {
-			ctx.AbortWithError(555, err)
+			c.AbortWithError(555, err)
 			return
 		}
-		fmt.Fprint(ctx.Writer, html)
+		fmt.Fprint(c.Writer, html)
 	})
 
-	log.Printf("opai-hinge listening on %s", *addr)
+	log.Printf("oapi-hinge listening on %s", *addr)
 	if err := r.Run(*addr); err != nil {
 		log.Fatal(err)
 	}

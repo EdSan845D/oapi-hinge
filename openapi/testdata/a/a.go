@@ -5,7 +5,7 @@ package a
 import (
 	"context"
 
-	"github.com/EdSan845D/oapi-hinge/contract"
+	"github.com/EdSan845D/oapi-hinge/hinge"
 )
 
 // A 包用户（注释即文档样例）
@@ -20,6 +20,6 @@ type User struct {
 
 // A 包健康检查
 // 返回 A 包用户信息
-func Health(ctx context.Context, _ contract.NoReq, _ any) (User, error) {
+func Health(ctx context.Context, _ hinge.NoReq, _ any) (User, error) {
 	return User{ID: "a1", Name: "from-a"}, nil
 }

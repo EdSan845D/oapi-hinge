@@ -20,7 +20,7 @@ profile.cov
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
-# Go workspace file
+# Go workspace 文件随仓库提交（多模块：内核 + 适配器子模块的仓内解析）
 go.work
 go.work.sum
 
@@ -37,3 +37,4 @@ openapi.yaml
 openapi.json
 
 docs/*.html
+hinge-smoke/

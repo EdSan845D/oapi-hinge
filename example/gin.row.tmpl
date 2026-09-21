@@ -1,0 +1,110 @@
+{{- .Header}}
+package {{.Pkg}}
+
+import (
+    "io"
+	"mime/multipart"
+	"net/http"
+	{{.ImportBlock}}
+
+	"github.com/gin-gonic/gin"
+)
+
+type Reader struct {
+	C *gin.Context
+}
+
+func (r *Reader) Context() context.Context { return r.C.Request.Context() }
+
+func (r *Reader) Method() string { return r.C.Request.Method }
+
+func (r *Reader) PathParam(name string) (string, bool) {
+	v := r.C.Param(name)
+	return v, v != ""
+}
+
+func (r *Reader) QueryValues(name string) ([]string, bool) {
+	vals := r.C.QueryArray(name)
+	return vals, len(vals) > 0
+}
+
+func (r *Reader) Header(name string) (string, bool) {
+	v := r.C.GetHeader(name)
+	return v, v != ""
+}
+
+func (r *Reader) Cookie(name string) (string, bool) {
+	v, err := r.C.Cookie(name)
+	if err != nil || v == "" {
+		return "", false
+	}
+	return v, true
+}
+
+func (r *Reader) Body() ([]byte, error) {
+	if r.C.Request.Body == nil {
+		return nil, nil
+	}
+	return io.ReadAll(r.C.Request.Body)
+}
+
+func (r *Reader) MultipartForm() (*multipart.Form, error) {
+	// 标准库对已解析请求为空操作；内存缓冲水位固定 32MB
+	if err := r.C.Request.ParseMultipartForm(32 << 20); err != nil {
+		return nil, err
+	}
+	return r.C.Request.MultipartForm, nil
+}
+
+func Adaptor(bindQ hinge.Binder, bindB hinge.Binder, h hinge.HandlerFunc) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		var qv, bv any
+		if bindQ != nil {
+			v, err := bindQ(ctx, &Reader{C: ctx})
+			if err != nil {
+				ctx.AbortWithError(http.StatusBadRequest, err)
+				return
+			}
+			qv = v
+		}
+		if bindB != nil {
+			v, err := bindB(ctx, &Reader{C: ctx})
+			if err != nil {
+				ctx.AbortWithError(http.StatusBadRequest, err)
+				return
+			}
+			bv = v
+		}
+		out, err := h(ctx, qv, bv)
+		if err != nil {
+			ctx.AbortWithError(http.StatusInternalServerError, err)
+			return
+		}
+		ctx.JSON(http.StatusOK, out)
+	}
+}
+
+{{range .Owners -}}
+// Register{{.Name}}{{$.Target.Title}} 把 {{.Name}} 的全部端点挂到 {{$.Target.Title}}。
+func Register{{.Name}}{{$.Target.Title}}(i gin.IRouter{{if not .IsPkg}}, ep {{.OwnerAlias}}.{{.Name}}{{end}}) {
+{{- if .HasGroup}}
+	r := i.Group("", {{.GroupArgs}})
+{{- else}}
+	r := i
+{{- end}}
+{{- $isPkg := .IsPkg}}
+{{- $ownerAlias := .OwnerAlias}}
+{{- range .Eps}}
+	r.{{.Method}}("{{.Path}}"{{if ne .Args ""}}, {{.Args}}{{end}}, Adaptor({{.Binder}}, func(ctx context.Context, q, b any) (any, error) {
+		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{if not .TwoArg}}, b.({{$ownerAlias}}.{{.BName}}){{end}})
+	}{{.Extras}}))
+{{- end}}
+}
+
+{{end -}}
+// RegisterAll{{.Target.Title}} 一次装配全部端点（{{.Target.Title}}）。
+func RegisterAll{{.Target.Title}}(i gin.IRouter, all All) {
+{{- range .Owners}}
+	Register{{.Name}}{{$.Target.Title}}(i{{if not .IsPkg}}, all.{{.Name}}{{end}})
+{{- end}}
+}

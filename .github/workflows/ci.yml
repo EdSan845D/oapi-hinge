@@ -19,8 +19,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.27'
 
+      # 根模块（内核 hinge / 生成器 / 文档）：零框架依赖
       # 默认构建（release 语义，不含 openapi 包）
       - name: Build
         run: go build ./...
@@ -41,10 +42,29 @@ jobs:
       - name: Test (openapi tag)
         run: go test -tags openapi ./...
 
+      # example 独立模块：程序化 EntryPoints 生成 + 门禁（CLI 已禁止该场景，见 P0-1）
+      - name: Example (programmatic entrypoint)
+        run: |
+          cd example
+          go build ./...
+          go run ./app -check
+          go build -tags openapi ./...
+
       # 脚手架可用性冒烟：生成项目并编译（不跑 tidy，依赖版本以 tag 发布后为准）
+      # GOWORK=off：myapp 不在仓库工作区内，走单模块 replace/tidy 流程
       - name: Scaffold smoke
         run: |
           go run ./scaffold create myapp --no-tidy
-          (cd myapp && go mod edit -replace github.com/EdSan845D/oapi-hinge=.. )
-          (cd myapp && go mod tidy)
-          (cd myapp && go build ./...)
+          (cd myapp && GOWORK=off go mod edit -replace github.com/EdSan845D/oapi-hinge=.. )
+          (cd myapp && GOWORK=off go mod edit -replace github.com/EdSan845D/oapi-hinge/servergin=../servergin )
+          (cd myapp && GOWORK=off go mod edit -replace github.com/EdSan845D/oapi-hinge/validator=../validator )
+          (cd myapp && GOWORK=off go mod tidy)
+          (cd myapp && GOWORK=off go build ./...)
+
+      # 适配器子模块：独立 go.mod（gin / echo 依赖只存在于各自模块）
+      - name: Adapters (servergin / serverecho / serverhttp)
+        run: |
+          cd servergin  && go build ./... && go vet ./... && go test ./...
+          cd ../serverecho && go build ./... && go vet ./... && go test ./...
+          cd ../serverhttp && go build ./... && go vet ./... && go test ./...
+          cd ../validator  && go build ./... && go vet ./...

@@ -1,71 +1,63 @@
 //go:build openapi
 
-// 开发期文档生成入口：go run -tags openapi . -out openapi.yaml
-// 仅在本构建中作为 OpenAPI 文档生成器使用；
-// 本文件与 internal/openapi 不参与 release 构建，运行时零开发期依赖。
+// 开发期文档生成入口：go run -tags openapi ./example -out openapi.yaml
+// 消费文档描述表（AllDocSpecs()，docs_gen.go）——仅本入口链接文档元数据，
+// 运行时二进制（默认 tag）零文档开销的哲学不变。
 package main
 
 import (
 	"flag"
 	"fmt"
-	"net/http"
 
-	"github.com/EdSan845D/oapi-hinge/example/app/handlers"
+	"github.com/EdSan845D/oapi-hinge/example/apigen"
 	"github.com/EdSan845D/oapi-hinge/example/app/middleware"
-	"github.com/EdSan845D/oapi-hinge/example/app/routes"
 	"github.com/EdSan845D/oapi-hinge/openapi"
 
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-func init() {
-	// 中间件文档钩子（可选择性）：Auth 中间件所在组的所有 operation 标注 BearerAuth。
-	// 401 响应由钩子按需声明（文档生成器不再全局硬编码 401，公开接口不出现 401）。
-	// 未在这里注册钩子的中间件照常运行，但不进文档。
-	openapi.RegisterMiddlewareDoc(middleware.Auth, func(op *openapi3.Operation) {
-		op.Security = &openapi3.SecurityRequirements{{"BearerAuth": []string{}}}
-		op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
-			WithDescription("Unauthorized：token 缺失或无效")})
-	})
-
-	// 路由级纯文档增强（DescribeRoute）：错误响应声明 / OperationID 覆盖 / 响应头。
-	// key = handler 函数引用（反射取「包.函数」）；只活在 doc 构建，release 二进制零内容。
-	openapi.DescribeRoute(handlers.GetUser, openapi.RouteDoc{
-		OperationID: "getUserById",
-		Errors: []openapi.ErrorDecl{
-			{Status: http.StatusNotFound, Description: "用户不存在"},
-		},
-	})
-	openapi.DescribeRoute(handlers.DeleteUser, openapi.RouteDoc{
-		Errors: []openapi.ErrorDecl{
-			{Status: http.StatusNotFound, Description: "用户不存在"},
-		},
-	})
-}
-
+//go:generate go run ./app/generate.go
 func main() {
 	out := flag.String("out", "openapi.yaml", "openapi 文档输出路径（.yaml/.yml -> YAML，.json -> JSON）")
 	flag.Parse()
 
 	info := &openapi3.Info{
 		Title:       "OAPI-hinge API",
-		Version:     "1.0.0",
-		Description: "hinge 仅作为开发期 OpenAPI 文档生成器；本规范由统一路由注册表自动生成（go run -tags openapi . -out openapi.yaml），请勿手改。",
+		Version:     "2.0.0",
+		Description: "本规范由端点注解自动生成（hinge gen + Endpoints 表），请勿手改。",
 	}
-	servers := &openapi3.Servers{{URL: routes.BasePath}}
+	servers := &openapi3.Servers{{URL: "/api"}}
+	// scheme 名与鉴权中间件钩子写出的 security 同名配对
 	security := openapi3.SecuritySchemes{
 		"BearerAuth": &openapi3.SecuritySchemeRef{Value: openapi3.NewSecurityScheme().
 			WithType("http").
 			WithScheme("bearer").
 			WithDescription("token 传递方式：Header `Authorization: Bearer <token>`")},
 	}
+	// 中间件文档钩子：按函数引用注册（反射名与生成侧 MWRefs 对齐，
+	// 无需手写字符串）。引用了该中间件的端点生成 operation 时调用钩子。
+	openapi.RegisterMiddlewareDoc(middleware.Auth, func(op *openapi3.Operation) {
+		op.Security = &openapi3.SecurityRequirements{{"BearerAuth": {}}}
+		op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+			WithDescription("Unauthorized：缺少或无效的 Bearer token")})
+	})
+	openapi.RegisterMiddlewareDoc(middleware.ParseHeaderWithInfo, func(op *openapi3.Operation) {
+		op.AddParameter(&openapi3.Parameter{
+			Name: "X-SessionId", In: "header", Required: true,
+			Description: "会话 ID（ParseHeaderWithInfo 校验，缺失返回 403）",
+			Schema:      &openapi3.SchemaRef{Value: openapi3.NewStringSchema()},
+		})
+		op.Responses.Set("403", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+			WithDescription("Forbidden：缺少 X-SessionId 请求头")})
+	})
 	if err := openapi.Generate(
 		*out,
-		routes.All(),
+		apigen.AllDocSpecs(),
 		openapi.OptionWithDocInfo(info),
 		openapi.OptionWithServer(servers),
 		openapi.OptionWithSecurity(security),
-		openapi.OptionWithSourceComments(), // 注释即文档：字段/结构体/handler 注释进描述
+		openapi.OptionWithSourceComments(), // 注释即文档：字段/结构体注释进描述
+		// 中间件文档钩子（RegisterMiddlewareDoc）无需 Option，进程级注册即生效
 	); err != nil {
 		panic(err)
 	}

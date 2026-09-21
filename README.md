@@ -2,213 +2,220 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-一个 Go API 框架：**统一 Handler 模板 + 原生框架运行时 + OpenAPI 文档自动生成**。
+一个 Go API 框架：**端点函数 + 注解即全部路由声明，注册与文档是构建产物**。
 
-本项目受 [go-fuego](https://github.com/go-fuego/fuego) 启发，文档生成基于 [kin-openapi](https://github.com/getkin/kin-openapi) 实现。
+受 [go-fuego](https://github.com/go-fuego/fuego) 与 [huma](https://github.com/danielgtaylor/huma) 启发，但在范式上更进一步：fuego / huma 的路由注册仍是「逐端点调用注册函数」，oapi-hinge 把这一步整体省去——你只写端点方法和 `oapi:*` 注解，`hinge gen` 生成路由注册、类型化绑定器、Endpoints 对应表与 OpenAPI 文档。
 
 ## 设计动机
 
-业务 API 开发中，三个诉求经常打架：
-
-1. **Handler 想写成纯函数**——不依赖具体 Web 框架，单元测试直接调用函数即可，无需启动 HTTP 服务器；
-2. **框架能力想全保留**——gin 的中间件生态、echo 的上下文特性，不想被抽象阉割；
-3. **文档想自动生成**——类型即契约，OpenAPI 规范不该手写。
-
-oapi-hinge 用「契约层描述 + 框架适配器执行 + 纯 kin-openapi 生成文档」三层结构同时满足三者。
-
-📘 **使用手册**（快速开始 / OpenAPI 隔离构建 / 自定义适配器开发）：[docs/MANUAL.md](docs/MANUAL.md)
+1. **端点函数是唯一事实源**——一个路由对应一个处理函数，中间件等横切语义都是它的补充；方法签名 + 注解已经包含了路由所需的全部信息，注册样板是重复誊写；
+2. **注册应当是编译器的活**——生成的注册代码与强类型绑定器直调端点方法，请求期零反射；
+3. **文档与运行时同源**——两者消费同一个生成表，不存在钩子失配导致的分叉；
+4. **框架可移植是真的**——gin / echo / 原生 http 只是薄 transport（取值 + 写出），业务层与横切拦截器完全框架无关。
 
 ## 核心概念
 
-### 统一 Handler 模板
-
-所有业务接口遵循同一签名：
+### Enterpoint：端点分类单元
 
 ```go
-func(ctx context.Context, query Q, body B) (resp R, error error)
-```
+// UserEp 用户端点。
+//
+// oapi:prefix /users
+// oapi:tag 用户
+// oapi:middleware BearerAuth
+type UserEp struct {
+	Store *UserStore // 字段 = 依赖容器，装配时注入
+}
 
-- `Q`：query / path / header 参数，用结构体标签声明（`query:"page"`、`path:"id"`、`header:"X-Token"`）；`default:"2"` 声明缺省值（文档与运行时同步生效，支持基本类型、`time.Time`（RFC3339）、指针与切片）
-- `B`：JSON 请求体（`any` 表示无 body）
-- `R`：响应数据，自动包装为统一壳 `{code, data, msg}`
-- 业务层零框架依赖，`context.Context` 用于取消/超时传播与用户注入
+// oapi:route GET
+// 用户列表（分页）
+func (ep UserEp) ListUsers(ctx context.Context, q ListUsersReq) (hinge.Paged[User], error) {
+	items, total := ep.Store.Page(q.Page, q.Size)
+	return hinge.Paged[User]{Items: items, Total: total}, nil
+}
 
-### 路由分组树
+// oapi:route GET /{id}
+// 用户详情
+func (ep UserEp) GetUser(ctx context.Context, q GetUserReq) (User, error) {
+	if u, ok := ep.Store.Get(q.ID); ok {
+		return u, nil
+	}
+	return User{}, hinge.NotFound("用户不存在")
+}
 
-路由以树形分组声明，中间件随树继承：
-
-```go
-func All() []*contract.Group {
-    return []*contract.Group{
-        {
-            Prefix: "/users", Tags: []string{"用户"},
-            Middlewares: []any{middleware.Auth},
-            Routes: []contract.Route{
-                contract.New(contract.RouteMeta[handlers.ListUsersReq, any, response.Paged[handlers.User]]{
-                    Method: "GET", Path: "", Summary: "用户列表",
-                    Handler: handlers.ListUsers,
-                }),
-            },
-        },
-    }
+// oapi:route POST
+// oapi:status 201
+// 创建用户
+func (ep UserEp) CreateUser(ctx context.Context, _ any, b CreateUserReq) (User, error) {
+	return ep.Store.Create(b.Name, b.Email), nil
 }
 ```
 
-运行时与文档生成器消费同一棵树，行为天然一致。
+统一 Handler 模板：`func(ctx context.Context, Q[, B]) (R, error)`。无 body 方法允许省略 B 参数（2 参简式）。Q/B 用结构体标签声明来源（`path:` / `query:` / `header:` / `cookie:` / `form:` / `json`），支持 default、必填（binding/validate 双标签）、指针、切片、time.Time。
 
-### 包结构（单模块）
+### 注解
 
-整个框架是单一 Go module `github.com/EdSan845D/oapi-hinge`，一个版本覆盖全部包：
-
-| 包 | 说明 | 依赖 |
+| 注解 | 层级 | 说明 |
 |---|---|---|
-| `contract` | 核心契约：RouteMeta / Group / 响应壳 / 错误类型 / 扩展点注册表 | 无第三方依赖 |
-| `servergin` | gin 运行时适配器 | gin |
-| `serverecho` | echo 运行时适配器 | echo |
-| `openapi` | OpenAPI 3.1 文档生成器（开发期工具，`//go:build openapi` 隔离） | kin-openapi |
-| `scaffold` | 项目脚手架 CLI | 无第三方依赖 |
+| `oapi:route` | 方法·必填 | `"<METHOD> <相对路径>"`，路径省略 = 组根 |
+| `oapi:prefix` | 类型 | 组前缀 |
+| `oapi:tag` | 类型/方法 | OpenAPI tag |
+| `oapi:timeout` | 类型/方法 | 超时声明，文档派生 x-timeout |
+| `oapi:status` / `oapi:deprecated` / `oapi:envelope` | 方法 | 成功码 / 弃用 / 命名响应壳 |
+| `oapi:middleware` | 类型/方法 | **框架原生中间件**（第三方框架通道，值为 `pkg.Func` 函数引用，编译期校验）：类型级 → 组级中间件（scoped `Group("", mws...)`），方法级 → 路由直挂；作用于框架链、内核之外；无端点上下文。中间件引用尾段名命中文档侧 securitySchemes → 自动推导 security + 401 |
+| `oapi:interceptor` | 类型/方法 | **内核拦截器**（hinge.Interceptor 签名，值为 `pkg.Func` 函数引用，生成期签名校验）：类型级 → owner 全端点，方法级 → 本端点；发射为 `HandleWith` 的 extra 实参，进内核拦截链（correlation/timeout 之后、bind 之前），持端点上下文与统一错误链，跨框架可移植 |
+| ~~`oapi:auth` / `oapi:limit`~~ | — | **已移除**（v0.2 二分：框架原生用 `oapi:middleware`，内核拦截器用 `oapi:interceptor`，值均为函数引用，不支持裸名） |
 
-release 构建不包含任何文档生成依赖（openapi 包整体构建标签隔离）。
-
-## 快速开始
+### 代码生成
 
 ```bash
-# 使用脚手架生成项目（推荐）
-go run github.com/EdSan845D/oapi-hinge/scaffold@latest create myapp -m github.com/you/myapp
-
-# 或在已有项目手动接入
-go get github.com/EdSan845D/oapi-hinge
+go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen        # 生成（纯注解项目）
+go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen -check # CI 门禁：产物过期即失败
 ```
 
-```go
-package main
+> **程序化 EntryPoints 项目（generate.go 注入）**：CLI 生成会丢失 EntryPointConfig
+>（组级中间件 / FuncDecls 覆写），已被禁止——产物头部带
+> `entrypoints: programmatic` 标记，CLI 检测到即报错引导。生成与门禁走项目内入口：
+> `go run ./app` 与 `go run ./app -check`（参考 example/app/generate.go）。
 
-import (
-    "context"
-    "net/http"
+产物（按 `hinge.gen.yaml` 的 targets 按需生成）：
 
-    "github.com/EdSan845D/oapi-hinge/contract"
-    "github.com/EdSan845D/oapi-hinge/servergin"
-    "github.com/gin-gonic/gin"
-)
+| 文件 | 内容 |
+|---|---|
+| `apigen/specs_gen.go` | 端点描述变量（hinge.Endpoint）+ `All` 聚合器 |
+| `apigen/binders_gen.go` | 类型化绑定器（按 Q/B 类型去重，请求期零反射） |
+| `apigen/register_<t>_gen.go` | 各框架注册函数 + `RegisterAll<Target>`（模板发射；`emiters.<t>.template` 可换自定义模板接入新框架） |
+| `<包>/hinge_gen_table.go` | `Enterpoint()` 守卫 + `Endpoints()` 路径↔函数对应表 |
 
-type HealthReq struct{}
+生成期即做诊断：路径冲突、path 参数与 Q 字段一致性、策略未声明、multipart 字段缺 form 标签、双前缀笔误等。
 
-func Health(ctx context.Context, _ HealthReq, _ any) (map[string]string, error) {
-    return map[string]string{"status": "ok"}, nil
-}
+### 程序化覆写：EntryPointConfig
 
-func main() {
-    r := gin.Default()
-    s := servergin.New()
-    s.Mount(r.Group("/api"), []*contract.Group{{
-        Routes: []contract.Route{
-            contract.New(contract.RouteMeta[HealthReq, any, map[string]string]{
-                Method: "GET", Path: "/health", Summary: "健康检查",
-                Handler: Health,
-            }),
-        },
-    }})
-    r.Run(":8080")
-}
-```
-
-生成 OpenAPI 文档：
+gen.Run 同进程可注入程序化配置（generate.go），注解为主、代码为辅：
 
 ```go
-// main_doc.go（构建标签 openapi）
-openapi.Generate("openapi.yaml", routes.All(),
-    openapi.OptionWithDocInfo(&openapi3.Info{Title: "myapp API", Version: "1.0.0"}),
-    openapi.OptionWithServer(&openapi3.Servers{{URL: "/api"}}),
-)
-// 运行：go run -tags openapi . -out openapi.yaml
-```
-
-## 可插拔能力
-
-### 响应壳自由定制
-
-默认统一壳 `{code, data, msg}`；不想用壳时一行切换：
-
-```go
-s.SetEnvelope(response.RawEnvelope{}) // 成功裸输出 data，失败 {"error": msg}
-```
-
-或实现 `response.Envelope` 接口输出任意风格（RFC 9457、自定义协议等）；个别接口需不同壳时用 `RouteMeta.Envelope` 路由级覆盖。文档侧用 `openapi.OptionWithEnvelopeSchema(...)` 同步配置壳 schema。
-
-### 错误携带状态码
-
-```go
-func GetUser(ctx context.Context, req GetUserReq, _ any) (User, error) {
-    ...
-    return User{}, contract.NotFound("用户不存在") // HTTP 404 + {"code":404,"msg":"用户不存在"}
+gen.Config{
+	// ...
+	EntryPoints: []gen.EntryPointConfig{
+		{
+			Name: "SystemEp",
+			Middlewares: []any{middleware.Auth},              // 组级框架原生中间件（组级直挂）
+			Interceptors: []hinge.Interceptor{middleware.AccessLog}, // owner 全端点内核拦截器（extra）
+			FuncDecls: map[gen.FuncId]gen.RouteMeta{
+				gen.FuncIdentity(eps.SystemEp.Health): {
+					Summary:     "健康检查（代码覆写示例）", // 字段级覆写：非零字段才覆盖注解值
+					Deprecated:  gen.Ptr(true),           // 三态：nil 不动 / true 置位 / false 清除
+				},
+			},
+		},
+	},
 }
 ```
 
-便捷构造器：`BadRequest`/`Unauthorized`/`Forbidden`/`NotFound`/`Conflict`/`Internal`；自定义 error 类型只需实现 `StatusCoder` 接口即可携带状态码。非 200 错误与成功响应走同一套壳，格式始终一致。全局兜底仍可用 `SetErrorMapper`。
+FuncDecls 支持覆写 Summary / Description / Tags / DefaultStatusCode / Envelope / Deprecated（*bool 三态），
+零值字段保持注解不变；命中端点在生成日志输出覆写提示（如 `注：SystemEp.Health 被 EntryPointConfig.FuncDecls 覆写：summary, deprecated=true`），
+保证代码定义的覆写可见。路由（Method/Path）以注解为唯一事实源，不参与覆写。
 
-### 绑定/校验错误的 HTTP 状态码
-
-参数绑定、校验失败默认返回 HTTP 200 + code=7（与业务错误同格式）；需要 RESTful 语义时一行切换：
-
-```go
-s.SetBindErrorStatus(http.StatusBadRequest) // 绑定/校验失败 → HTTP 400，业务 code 跟随状态码
-```
-
-Handler 返回的业务错误不受影响，仍按 StatusError / SetErrorMapper 解析。
-
-### 成功状态码可声明
+### 装配：DI + 一行注册
 
 ```go
-contract.New(contract.RouteMeta[NoReq, CreateUserReq, User]{
-    Method:            "POST",
-    DefaultStatusCode: 201, // 文档与运行时同步生效
-    Handler:           handlers.CreateUser,
+r := gin.Default()
+k := servergin.NewKernel()
+k.SetCorrelation(true)
+k.AddValidator(validator.Playground())
+
+// 拦截器无需注册：oapi:interceptor 注解 / EntryPointConfig.Interceptors
+// 直接引用具名包级函数（如 app/middleware.BearerAuth），生成代码发射为
+// HandleWith 的 extra 实参，进内核拦截链。
+
+apigen.RegisterAllGin(r.Group("/api"), k, apigen.All{
+	SystemEp: eps.SystemEp{},
+	UserEp:   eps.UserEp{Store: eps.NewUserStore()},
+	FileEp:   eps.FileEp{},
 })
 ```
 
-动态覆盖优先级：`contract.Response[R]{Status}`（单次调用）> `DefaultStatusCode`（路由级）> 200。
+echo / 原生 http 各有对称的 `RegisterAllEcho` / `RegisterAllHTTP`——同一份注解，换框架只改这一行。
 
-### 入参转换 / 出参加工
+## 包结构（多模块：内核零框架依赖）
+
+仓库为多模块布局：根模块只含内核（hinge）/ 生成器 / 文档，**go.mod 零框架依赖**；servergin / serverecho / serverhttp / validator 是独立子模块，各自携带自己的框架依赖（gin / echo / go-playground）——只 import 内核的项目不引入任何框架依赖。
+
+| 包 | 说明 |
+|---|---|
+| `hinge`（根模块） | 运行时内核：Endpoint 契约、框架无关请求管线、错误链、响应壳（零反射；拦截器为直接函数引用，无注册表） |
+| `servergin` | **独立子模块**（tag `servergin/vX.Y.Z`）：gin 适配器（自带 gin 依赖） |
+| `serverecho` | **独立子模块**（tag `serverecho/vX.Y.Z`）：echo 适配器（自带 echo 依赖） |
+| `serverhttp` | **独立子模块**（tag `serverhttp/vX.Y.Z`）：标准库 http 适配器（零第三方依赖） |
+| `validator` | **独立子模块**（tag `validator/vX.Y.Z`）：go-playground 接入（可选依赖） |
+| `gen` + `cmd/hinge` | 代码生成器：AST 注解解析 → IR → 绑定器/注册器/表发射 |
+| `openapi` | OpenAPI 3.1 生成器，消费文档描述表（`//go:build openapi` 隔离，release 零开发依赖） |
+| `scaffold` | 项目脚手架（`oapi-hinge create myapp`） |
+
+## OpenAPI 文档
 
 ```go
-// 绑定后、校验前自动调用：trim 后能通过 required 必填检查
-func (r *CreateUserReq) InTransform(ctx context.Context) error {
-    r.Name = strings.TrimSpace(r.Name)
-    return nil
-}
-
-// 序列化前自动调用：邮箱脱敏 alice@example.com -> a***@example.com
-func (u *MaskedUser) OutTransform(ctx context.Context) error {
-    if at := strings.Index(u.Email, "@"); at > 1 {
-        u.Email = u.Email[:1] + "***" + u.Email[at:]
-    }
-    return nil
+//go:build openapi
+// main_doc.go：go run -tags openapi . -out openapi.yaml
+func collect(epss ...hinge.Enterpoint) []hinge.Endpoint {
+	var out []hinge.Endpoint
+	for _, ep := range epss {
+		out = append(out, ep.Endpoints()...)
+	}
+	return out
 }
 ```
 
-业务层只写纯函数，适配器自动触发，无需在 handler 里手动调用。
+`Endpoints()` 表即「路径↔函数对应关系」的唯一检视入口，conformance 测试与文档都从它派生。
 
-### 校验器扩展
+### 中间件文档钩子
 
-内置必填标签双兼容（`binding:"required"` / `validate:"required"`）+ 结构体 `Validate()` 方法；需要完整规则时一行接入：
+中间件对文档的影响（security、header 参数、错误响应等）通过函数引用注册钩子自定义。
+生成器把每个端点的中间件引用发射为 `Endpoint.MWRefs`（全限定名，与反射派生函数名一致），
+文档生成时按引用配对调用钩子：
 
 ```go
-s.AddValidator(validator.Playground()) // 支持 validate:"required,email,min=8" 等
+//go:build openapi
+// main_doc.go
+openapi.RegisterMiddlewareDoc(middleware.Auth, func(op *openapi3.Operation) {
+	op.Security = &openapi3.SecurityRequirements{{"BearerAuth": {}}}
+	op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+		WithDescription("Unauthorized：缺少或无效的 Bearer token")})
+})
+openapi.RegisterMiddlewareDoc(middleware.ParseHeaderWithInfo, func(op *openapi3.Operation) {
+	op.AddParameter(&openapi3.Parameter{Name: "X-SessionId", In: "header", Required: true,
+		Description: "会话 ID", Schema: &openapi3.SchemaRef{Value: openapi3.NewStringSchema()}})
+	op.Responses.Set("403", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+		WithDescription("Forbidden：缺少 X-SessionId 请求头")})
+})
 ```
 
-不调用则完全不引入 go-playground 依赖。
+无需手写中间件名字符串；未注册钩子的中间件不影响文档。内核拦截器注册名（无点形态）
+另有内置推导：名字命中 `OptionWithSecurity` 注册的 scheme 时自动加 security + 401。
 
-## 框架特色
+## 可插拔能力
 
-- **类型即契约**：Handler 的 Q/B/R 泛型参数直接驱动参数绑定与 OpenAPI schema 生成，业务层写一次，运行时和文档同时就绪；
-- **框架可移植**：同一份路由注册表挂到 gin 或 echo 只差一行装配代码，业务代码零改动；
-- **运行时零开发期依赖**：文档生成器带 `//go:build openapi` 标签，release 构建完全不包含 kin-openapi / yaml 等开发期依赖；
-- **schema 自研反射生成**：组件化 `$ref` 去重、递归类型防栈溢出、`time.Time`/`[]byte`/泛型等开箱即用；
-- **逐级定制**：模板覆盖不了的场景，按优先级逐级放开——`header` 标签绑定 → `contract.Response[R]` 响应定制（状态码/响应头/Cookie）→ `contract.WithFramework` 注入框架上下文；
-- **中间件文档钩子**：中间件按函数名（反射派生）可选注册文档钩子（如鉴权中间件自动标注 BearerAuth），未注册钩子的中间件照常运行但不污染文档；
-- **性能开销可量化**：统一模板经反射调用的单请求额外开销约 0.8~1.9µs；挂载期完成预计算，配合字段元数据缓存，每次请求仅额外引入 4~6 次内存分配。
+- **响应壳**：默认裸输出（RawEnvelope，REST 风格）；`k.SetEnvelope(hinge.BizCodeEnvelope{OKCode: 0, ErrCode: 10000})` 开启 `{code, data, msg}` 统一包装（业务码取值由业务层配置，框架不内置业务码常量）；自定义壳只需实现 `Envelope` 接口——失败侧 `Failure(err) (status, body)` 拿到原始错误自行解释（`InspectError` 提取错误自带的状态码/业务码/明细），内核不做错误预解析；`hinge.RegisterEnvelope(name, env)` + `oapi:envelope <name>` 路由级切换；文档侧 `OptionWithEnvelope` 从壳实例同构推导；
+- **错误携带状态码**：`hinge.NotFound/BadRequest/...` 或实现 `StatusCoder`；默认 HTTP 200 + code=7，`k.SetBindErrorStatus(400)` 切 RESTful；
+- **入参转换 / 出参加工**：`InTransform(ctx) error` / `OutTransform(ctx) error` 接口由生成绑定器与内核自动调用（零反射）；
+- **校验器**：生成绑定器内置 required 检查 + `Validate()` 直调；`validator.Playground()` 接入完整规则（可选依赖）；
+- **拦截器**：`hinge.Interceptor` 具名包级函数，`oapi:interceptor` 注解 / `EntryPointConfig.Interceptors` 直接引用（无注册表）；短路时自行经 Sink 写出并返回 nil，返回错误走统一错误链；
+- **中间件文档钩子**：`openapi.RegisterMiddlewareDoc(fn, hook)`（openapi tag），按函数引用为引用了该中间件的端点定制 security/参数/响应，见「中间件文档钩子」。
 
+### 发布（多模块锁步）
+
+多模块发版 = 每个模块一个带目录前缀的 tag（根 `vX.Y.Z`，子模块 `servergin/vX.Y.Z` …），已脚本化为一条命令：
+
+```bash
+./release.sh v0.2.0                  # 全量测试 → 子模块 go.mod 版本对齐 → 提交 → 5 tag → push
+./release.sh v0.2.0 --skip-tests     # CI 已覆盖时跳过本地测试
+```
+
+脚本动作：工作区干净校验 → test.sh 全量测试 → 子模块 go.mod 内核依赖对齐到目标版本（幂等）→ 提交 → 根 + 4 个子模块同一提交打 tag → 推送。消费者按需升级（如 `go get github.com/EdSan845D/oapi-hinge/servergin@latest`），版本不同步不报错——适配器 go.mod 记录的内核版本即为兼容底线。
+
+## 手写挂载
+
+手写逃生口：直接构造 `hinge.Endpoint` + `Binder` + `HandlerFunc` 调 `Kernel.Handle`，即可在任意框架上挂载动态路由。
 
 ## License
 

@@ -3,42 +3,91 @@
 package openapi
 
 import (
-	"github.com/EdSan845D/oapi-hinge/contract"
+	"reflect"
+	"runtime"
+	"sort"
+	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
+// 中间件文档钩子：把中间件函数引用与 operation 改写函数绑定，
+// 生成 OpenAPI 文档时对引用了该中间件的端点调用钩子（security、参数、
+// 响应码、扩展等均可改写），实现「中间件 → 接口文档语义」的自定义。
+//
+// 配对机制：hinge gen 把每个端点的中间件引用发射为 Endpoint.MWRefs——
+// 源码引用为 "import路径.FuncName" 全限定形态（与 runtime.FuncForPC 派生的
+// 函数名一致），内核拦截器注册名为原名。本文件的注册表按同一键空间配对。
+//
+// 进程级注册（同 hinge.RegisterInterceptor 语义）：Generate 不重置；
+// 同名重复注册 panic（装配期冲突尽早暴露）。
+
 // DocHook 中间件文档钩子：生成 operation 时被调用，可修改任意字段
-// （security、header 参数、响应码等）。未注册钩子的中间件不进文档。
+// （security、header 参数、响应码、扩展等）。
 type DocHook = func(op *openapi3.Operation)
 
-// 中间件文档钩子注册表：键为反射派生的函数名（contract.FuncName）
-var hooks = map[string]DocHook{}
+// mwHooks 中间件文档钩子注册表。
+var mwHooks = map[string]DocHook{}
 
-// hookUsed 已被路由树消费的钩子 key（Generate 结束时未消费的输出警告）
-var hookUsed = map[string]bool{}
+// mwHookUsed 已被至少一个端点 MWRefs 消费的钩子键：Generate 结束时未消费的
+// 键 = 注册名与 MWRefs 失配（函数改名/移动），钩子静默失效，输出警告（P0-2）。
+var mwHookUsed = map[string]bool{}
 
-// RegisterMiddlewareDoc 把中间件函数与文档钩子绑定（可选择性注册）。
-// fn 传业务中间件函数引用（如 middleware.Auth），内部反射取名字做键，
-// 调用方不需要手写名字字符串。
+// RegisterMiddlewareDoc 注册中间件文档钩子。fn 传中间件函数引用，
+// 反射取全限定名做键（与生成侧 MWRefs 对齐，调用方无需手写名字字符串）；
+// 引用了该中间件的端点在生成 operation 时调用 h。同名重复注册 panic。
+//
+// 例：
+//
+//	openapi.RegisterMiddlewareDoc(middleware.Auth, func(op *openapi3.Operation) {
+//		op.Security = &openapi3.SecurityRequirements{{"BearerAuth": {}}}
+//		op.Responses.Set("401", ...)
+//	})
 func RegisterMiddlewareDoc(fn any, h DocHook) {
-	name := contract.FuncName(fn)
+	name := funcRefName(fn)
 	if name == "" {
-		panic("RegisterMiddlewareDoc: invalid middleware function")
+		panic("openapi.RegisterMiddlewareDoc: invalid middleware function（需为具名包级函数）")
 	}
-	if _, dup := hooks[name]; dup {
-		panic("middleware doc hook already registered: " + name)
+	if _, dup := mwHooks[name]; dup {
+		panic("openapi: middleware doc hook already registered: " + name)
 	}
-	hooks[name] = h
+	mwHooks[name] = h
 }
 
-// applyHooks 按中间件函数名匹配并应用文档钩子
-func applyHooks(op *openapi3.Operation, mws []any) {
-	for _, mw := range mws {
-		name := contract.FuncName(mw)
-		if h, ok := hooks[name]; ok {
+// funcRefName 函数引用的全限定名（runtime 形态，去方法值后缀）；
+// 非具名包级函数（闭包/方法值）返回 ""（无法生成稳定引用）。
+func funcRefName(fn any) string {
+	rv := reflect.ValueOf(fn)
+	if rv.Kind() != reflect.Func {
+		return ""
+	}
+	full := runtime.FuncForPC(rv.Pointer()).Name()
+	full = strings.TrimSuffix(full, "-fm")
+	if full == "" || strings.Contains(full, ".(") || strings.Contains(full, "..") || !strings.Contains(full, "/") {
+		return ""
+	}
+	return full
+}
+
+// applyMiddlewareHooks 中间件文档钩子配对：按 MWRefs 全限定引用应用钩子
+// （同一中间件在类型级与方法级重复引用时去重后的名单，钩子仅生效一次）。
+func applyMiddlewareHooks(op *openapi3.Operation, refs []string) {
+	for _, ref := range refs {
+		if h, ok := mwHooks[ref]; ok {
+			mwHookUsed[ref] = true
 			h(op)
-			hookUsed[name] = true
 		}
 	}
+}
+
+// unmatchedMiddlewareHooks 注册了但未被任何端点 MWRefs 消费的钩子键（排序）。
+func unmatchedMiddlewareHooks() []string {
+	var out []string
+	for name := range mwHooks {
+		if !mwHookUsed[name] {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

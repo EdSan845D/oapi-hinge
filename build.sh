@@ -13,9 +13,9 @@ usage() {
 case "$1" in
 -r)
   mkdir -p bin
-  CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/app ./example || exit 1
+  (cd example && CGO_ENABLED=0 go build -ldflags "-s -w" -o ../bin/app .) || exit 1
   echo "--- release 依赖链检查---"
-  if go list -deps ./example | grep -q "oapi-hinge/openapi"; then
+  if (cd example && go list -deps . | grep -q "oapi-hinge/openapi"); then
     echo "FAIL: release 构建包含文档生成器（oapi-hinge/openapi）"
     exit 1
   fi
@@ -23,7 +23,7 @@ case "$1" in
   ;;
 -d)
   mkdir -p bin
-  go build -o bin/app-dev ./example
+  (cd example && go build -o ../bin/app-dev .)
   ;;
 -s)
   (cd example && go run -tags openapi . -out openapi.yaml)

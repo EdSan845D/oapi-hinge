@@ -4,10 +4,16 @@
 set -e
 cd "$(dirname "$0")"
 
-echo "=== 默认构建（release 语义，不含 openapi 包） ==="
+echo "=== 根模块（内核 / 生成器 / 文档）：零框架依赖 ==="
 go build ./...
 go vet ./...
 go test ./...
+
+echo "=== 适配器子模块（gin / echo / http / validator） ==="
+(cd servergin  && go build ./... && go vet ./... && go test ./...)
+(cd serverecho && go build ./... && go vet ./... && go test ./...)
+(cd serverhttp && go build ./... && go vet ./... && go test ./...)
+(cd validator  && go build ./... && go vet ./...)
 
 echo "=== openapi（-tags openapi） ==="
 go build -tags openapi ./...
