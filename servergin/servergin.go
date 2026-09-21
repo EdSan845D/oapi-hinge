@@ -82,7 +82,7 @@ func (r *Reader) Body() ([]byte, error) {
 }
 
 func (r *Reader) MultipartForm() (*multipart.Form, error) {
-	// 标准库对已解析请求为空操作；内存缓冲水位固定 32MB（与 v0.1 一致）
+	// 标准库对已解析请求为空操作；内存缓冲水位固定 32MB
 	if err := r.C.Request.ParseMultipartForm(32 << 20); err != nil {
 		return nil, err
 	}
@@ -101,14 +101,13 @@ func (s *Sink) SetHeader(k, v string) { s.C.Header(k, v) }
 func (s *Sink) AddCookie(c *http.Cookie) { http.SetCookie(s.C.Writer, c) }
 
 func (s *Sink) WriteJSON(status int, v any) {
-	// PureJSON：不转义 HTML 字面量（与 v0.1 行为一致）
+	// PureJSON：不转义 HTML 字面量
 	s.C.PureJSON(status, v)
 }
 
 func (s *Sink) WriteStream(f *hinge.FileStream) { writeStreamFile(s.C, f) }
 
-// writeStreamFile 输出二进制流（自 v0.1 servergin/mount.go 平移：ServeContent 条件请求 / DataFromReader / 分块回退）。
-// 注：与旧版 mount.go 的 serveFile 并存（旧文件待分支上 git rm），故此处另取其名。
+// writeStreamFile 输出二进制流（ServeContent 条件请求 / DataFromReader / 分块回退）。
 func writeStreamFile(c *gin.Context, f *hinge.FileStream) {
 	if f.Reader == nil {
 		// 无 Reader 的 FileStream 无法输出：防 panic（内核 serve 不校验 Reader）

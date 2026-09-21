@@ -16,11 +16,10 @@ import (
 	datab "github.com/EdSan845D/oapi-hinge/openapi/testdata/b"
 )
 
-// ============ v0.2 端点表范式测试 ============
+// ============ 端点表范式测试 ============
 //
-// v0.1 的 DescribeRoute（错误/响应头/OperationID 覆盖/Hide）、ParamBinder
-// schema 注册与中间件文档钩子已随路由分组树移除；端点级文档语义由
-// Endpoint 字段承载（见 gen.go addOperation）。本文件覆盖保留能力的回归。
+// 端点级文档语义由 Endpoint 字段承载（见 gen.go addOperation）；
+// 本文件覆盖保留能力的回归。
 
 // ============ OptionWithEnvelope：壳实例推导（文档与运行时同构） ============
 

@@ -174,7 +174,7 @@ func TestAdapterPostJSONBindErrors(t *testing.T) {
 	}
 	r.POST("/users", Handle(k, ep, nil, bindB, h))
 
-	// 缺 name：默认 bindStatus=200 → HTTP 200 + code=7 + bind_errors 明细
+	// 缺 name：BizCode 壳策略 → HTTP 200 + code=7 + bind_errors 明细
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"age":18}`))
 	req.Header.Set("Content-Type", "application/json")

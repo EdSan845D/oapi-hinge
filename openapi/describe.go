@@ -15,10 +15,6 @@ import (
 // 与路由树 / handler 引用解耦（v0.2 端点表范式）：类型级 schema 覆盖、
 // 非模板路由补录、注释解析器注册。所有注册只应出现在 main_doc.go
 //（-tags openapi 构建），release 二进制零内容。
-//
-// v0.1 的 DescribeRoute / RouteDoc / RegisterParamBinderSchema（handler 引用键的
-// 纯文档增强）已随路由分组树一并移除；端点级文档语义由 Endpoint 注解承载
-//（Summary/Description/Tags/Status/Auth/Limit/Timeout/Envelope），见 gen.go。
 
 var (
 	regMu sync.Mutex

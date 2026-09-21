@@ -161,7 +161,7 @@ func (rd *renderer) expr(x ast.Expr) (string, error) {
 	}
 }
 
-// ---- 字段分类（绑定器发射的依据，语义对齐 v0.1 SetRaw/SetSliceValue/BindMultipart）----
+// ---- 字段分类（绑定器发射的依据）----
 
 type fieldClass int
 
@@ -292,7 +292,7 @@ func tagRequired(tag reflect.StructTag) bool {
 		strings.Contains(tag.Get("validate"), "required")
 }
 
-// resolveFields 展平结构体字段（内嵌结构体递归；语义对齐 v0.1 ParseFields + FieldMeta.Source 优先级）。
+// resolveFields 展平结构体字段（内嵌结构体递归）。
 func resolveFields(pkg *Package, typeName, accessPrefix string, depth int) (*fieldSet, error) {
 	if depth > 8 {
 		return nil, fmt.Errorf("内嵌结构体层级过深: %s", typeName)
@@ -342,7 +342,7 @@ func resolveFields(pkg *Package, typeName, accessPrefix string, depth int) (*fie
 		}
 		for _, n := range sf.Names {
 			if !n.IsExported() {
-				continue // 与 v0.1 一致：未导出字段跳过
+				continue // 未导出字段跳过
 			}
 			fd := Field{
 				GoName:   n.Name,

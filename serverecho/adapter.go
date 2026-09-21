@@ -119,7 +119,7 @@ func (s *Sink) WriteJSON(status int, v any) {
 
 func (s *Sink) WriteStream(f *hinge.FileStream) { writeStreamFile(s.C, f) }
 
-// writeStreamFile 输出二进制流（自 v0.1 serverecho/mount.go 的 serveFile 平移：
+// writeStreamFile 输出二进制流（
 // Reader 可 Seek 且 Size>0 时走 http.ServeContent——自动支持 Range/206 多段、
 // If-None-Match / If-Modified-Since / If-Range 条件请求与 416；其余情况回退
 // 全量/分块输出）。

@@ -143,7 +143,7 @@ func TestKernelBindFieldErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	// 默认 bindStatus=200（存量语义）：HTTP 200 + code=7 + bind_errors 明细
+	// BizCode 壳策略：HTTP 200 + code=7 + bind_errors 明细
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}

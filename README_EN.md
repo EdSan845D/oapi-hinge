@@ -75,9 +75,9 @@ apigen.RegisterAllGin(r.Group("/api"), k, apigen.All{
 | `openapi` | OpenAPI 3.1 generator consuming `Endpoints()` tables (build-tag isolated) |
 | `scaffold` | Project scaffolding (`oapi-hinge create myapp`) |
 
-## Breaking changes from v0.1
+## Hand-written mounting
 
-`contract.Group` / `RouteMeta` registration, engine-typed middlewares, name-matched doc hooks, and the reflection-based binder registry are removed. See the Chinese README for the full migration table. A hand-written escape hatch (`hinge.Endpoint` + `Binder` + `Kernel.Handle`) remains for dynamic routes.
+Escape hatch: construct `hinge.Endpoint` + `Binder` + `HandlerFunc` and call `Kernel.Handle` directly to mount dynamic routes on any framework.
 
 ## License
 

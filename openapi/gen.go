@@ -252,8 +252,8 @@ func endpointName(ep *hinge.EndpointDoc) string {
 
 // addOperation 为一个端点生成 OpenAPI 操作。
 // 类型来源：ep.QType / ep.BType / ep.RType（生成表用 hinge.Type[T]() 填充；
-// nil 视同 v0.1 的 interface 占位：无参数 / 无 body / 任意 JSON 响应）。
-//   - Q：query 参数来自 `query` 标签，path 参数来自路径 {id}（Q 中 path 标签字段命中则用其类型），header/cookie 标签同 v0.1
+// nil 视同 interface 占位：无参数 / 无 body / 任意 JSON 响应）。
+//   - Q：query 参数来自 `query` 标签，path 参数来自路径 {id}（Q 中 path 标签字段命中则用其类型），header/cookie 标签同理
 //   - B：nil / interface{} 表示无 body，否则整包作为 application/json 请求体
 //   - R：Data 段 schema；hinge.FileStream 输出二进制流并声明 404，接口类型（Empty/any）输出任意 JSON 值 schema
 //   - 文档语义映射：ep.Deprecated → deprecated；ep.Status(0→200) → 成功码；
@@ -773,7 +773,7 @@ var rawBodyType = reflect.TypeOf(hinge.RawBody(nil))
 var fileHeaderT = reflect.TypeOf(hinge.FileHeader{})
 
 // hasFileHeader 判断 B 是否声明了上传文件字段（含内嵌结构体递归）。
-// 生成器据此推导 multipart 请求体 schema（语义与 v0.1 contract.HasFileHeader 一致）。
+// 生成器据此推导 multipart 请求体 schema。
 func hasFileHeader(t reflect.Type) bool {
 	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()

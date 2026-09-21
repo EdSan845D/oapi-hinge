@@ -424,7 +424,7 @@ func BindRawBody(ctx context.Context, r hinge.RequestReader) (any, error) {
 	return b.String(), nil
 }
 
-// emitFieldBlock 发射单字段绑定块（按来源分派；语义对齐 v0.1 bindFields/setValue）。
+// emitFieldBlock 发射单字段绑定块（按来源分派）。
 // 每个字段用自己的源文件上下文渲染类型（内嵌字段可能来自同包其他文件）。
 func emitFieldBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string, is *importSet, immediate bool) error {
 	rd := &renderer{pkg: pkg, ownerAlias: ownerAlias, src: f.SrcFile, is: is}
@@ -434,7 +434,7 @@ func emitFieldBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string
 	}
 	in := f.In
 	if in == "" {
-		in = "query" // Q 的 form 标签语义与 query 相同（v0.1 setValue(c, f, name, false)）
+		in = "query" // Q 的 form 标签语义与 query 相同
 	}
 	valExpr := "raw"
 	if in == "query" || in == "form" {
@@ -453,11 +453,11 @@ func emitFieldBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string
 	if f.Class == classSlice && (in == "query" || in == "form") {
 		src := "hinge.Flat(vals)"
 		if f.BaseKind == "string" {
-			src = "vals" // v0.1：[]string 不拆逗号（SetSliceValue 首分支）
+			src = "vals" // string 元素不拆逗号，整段原样解析
 		}
 		fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](%s, %q)\n", t, src, f.Source)
 	} else if f.Class == classSlice {
-		// v0.1 语义：path/header/cookie 切片经 SetRaw→SetSliceValue([]string{raw})，单元素切片
+		// path/header/cookie 切片收单值：包装为单元素切片解析
 		fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s]([]string{raw}, %q)\n", t, f.Source)
 	} else {
 		switch f.Class {
@@ -485,7 +485,7 @@ func emitFieldBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string
 	} else {
 		b.WriteString("\t\t}\n\t}\n")
 	}
-	// default 标签：仅 query/form/cookie（对齐 v0.1：path/header 无 default 分支）
+	// default 标签：仅 query/form/cookie 支持（path/header 无 default 分支）
 	if f.Def != "" && (in == "query" || in == "cookie" || in == "form") {
 		fmt.Fprintf(b, "\tif %s {\n", zeroCmp(f))
 		switch f.Class {
@@ -516,7 +516,7 @@ func emitFieldBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string
 	return nil
 }
 
-// zeroCmp 字段零值判断表达式（对齐 v0.1 reflect IsZero 语义）。
+// zeroCmp 字段零值判断表达式（reflect IsZero 语义）。
 func zeroCmp(f Field) string {
 	switch f.Class {
 	case classScalar:
@@ -537,7 +537,7 @@ func zeroCmp(f Field) string {
 	}
 }
 
-// emitRequiredChecks 必填检查（对齐 v0.1 checkRequired：绑定/default 之后判断）。
+// emitRequiredChecks 必填检查（绑定/default 之后判断）。
 func emitRequiredChecks(b *strings.Builder, fs *fieldSet) {
 	isNeedErrorCheck := false
 	for _, f := range fs.Fields {
@@ -655,7 +655,7 @@ func emitBBinder(b *strings.Builder, ep *EndpointIR, is *importSet, taken map[st
 			case classFileSlice:
 				fmt.Fprintf(b, "\tif fhs, ok := fm.File[%q]; ok {\n\t\t%s = fhs\n\t}\n", f.Source, f.Access)
 			default:
-				// value part：form 标签字段（语义同 query；错误立即返回，对齐 v0.1 BindMultipart）
+				// value part：form 标签字段（语义同 query；错误立即返回）
 				if f.In != "form" {
 					continue
 				}
@@ -680,7 +680,7 @@ func emitBBinder(b *strings.Builder, ep *EndpointIR, is *importSet, taken map[st
 	return nil
 }
 
-// emitMultipartValueBlock multipart value part（错误立即返回，对齐 v0.1）。
+// emitMultipartValueBlock multipart value part（错误立即返回）。
 func emitMultipartValueBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string, is *importSet) error {
 	rd := &renderer{pkg: pkg, ownerAlias: ownerAlias, src: f.SrcFile, is: is}
 	t, err := rd.expr(f.TypeExpr)
@@ -957,7 +957,7 @@ func renderRegister(rootDir string, emiter EmitConfig, target string, data *regi
 	return out.String(), nil
 }
 
-// sliceDefSrc 切片 default 值的源表达式：string 元素不拆逗号（v0.1 SetSliceValue 首分支），其余按逗号展开。
+// sliceDefSrc 切片 default 值的源表达式：string 元素不拆逗号，其余按逗号展开。
 func sliceDefSrc(f Field) string {
 	if f.BaseKind == "string" {
 		return "[]string{" + strconv.Quote(f.Def) + "}"

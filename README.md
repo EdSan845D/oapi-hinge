@@ -51,7 +51,7 @@ func (ep UserEp) CreateUser(ctx context.Context, _ any, b CreateUserReq) (User, 
 }
 ```
 
-统一 Handler 模板（与 v0.1 兼容）：`func(ctx context.Context, Q[, B]) (R, error)`。无 body 方法允许省略 B 参数（2 参简式）。Q/B 用结构体标签声明来源（`path:` / `query:` / `header:` / `cookie:` / `form:` / `json`），支持 default、必填（binding/validate 双标签）、指针、切片、time.Time。
+统一 Handler 模板：`func(ctx context.Context, Q[, B]) (R, error)`。无 body 方法允许省略 B 参数（2 参简式）。Q/B 用结构体标签声明来源（`path:` / `query:` / `header:` / `cookie:` / `form:` / `json`），支持 default、必填（binding/validate 双标签）、指针、切片、time.Time。
 
 ### 注解
 
@@ -213,19 +213,9 @@ openapi.RegisterMiddlewareDoc(middleware.ParseHeaderWithInfo, func(op *openapi3.
 
 脚本动作：工作区干净校验 → test.sh 全量测试 → 子模块 go.mod 内核依赖对齐到目标版本（幂等）→ 提交 → 根 + 4 个子模块同一提交打 tag → 推送。消费者按需升级（如 `go get github.com/EdSan845D/oapi-hinge/servergin@latest`），版本不同步不报错——适配器 go.mod 记录的内核版本即为兼容底线。
 
-## 从 v0.1 迁移（破坏性变更）
+## 手写挂载
 
-| v0.1 | v0.2 |
-|---|---|
-| `contract.Group` 树 + `contract.New(RouteMeta[...])` | 删除；Enterpoint 结构体 + `oapi:*` 注解 |
-| `servergin.New().Mount(...)` | `servergin.NewKernel()` + 生成的 `RegisterAllGin` |
-| `Middlewares []any`（引擎类型断言） | `hinge.Interceptor`（框架无关，注解按名引用） |
-| 文档钩子按函数名匹配 | 删除；文档语义来自注解，随函数走 |
-| 反射绑定 + `RegisterParamBinder` | 生成绑定器（自定义解析请手写 Endpoint 逃生口） |
-| `contract.Response[R]` | `hinge.Response[R]`；壳类型 `hinge.Reply[T]` |
-| `contract.NotFound/...` | `hinge.NotFound/...` |
-
-手写逃生口保留：直接构造 `hinge.Endpoint` + `Binder` + `HandlerFunc` 调 `Kernel.Handle`，即可在任意框架上挂载动态路由。
+手写逃生口：直接构造 `hinge.Endpoint` + `Binder` + `HandlerFunc` 调 `Kernel.Handle`，即可在任意框架上挂载动态路由。
 
 ## License
 
