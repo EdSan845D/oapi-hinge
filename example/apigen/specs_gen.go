@@ -11,15 +11,15 @@ import (
 
 func AllSpecs() []hinge.Endpoint {
 	return []hinge.Endpoint{
-		SpecFileEpDownloadSample,
-		SpecPKG_epsIndex,
-		SpecSystemEpHealth,
-		SpecUserEpChangePassword,
-		SpecUserEpCreateUser,
-		SpecUserEpDeleteUser,
-		SpecUserEpGetUser,
-		SpecUserEpListUsers,
-		SpecUserEpUpdateExtra,
+		SpecFileEpDownloadSample(),
+		SpecPKG_epsIndex(),
+		SpecSystemEpHealth(),
+		SpecUserEpChangePassword(),
+		SpecUserEpCreateUser(),
+		SpecUserEpDeleteUser(),
+		SpecUserEpGetUser(),
+		SpecUserEpListUsers(),
+		SpecUserEpUpdateExtra(),
 	}
 }
 
@@ -30,66 +30,84 @@ type All struct {
 	UserEp   eps.UserEp
 }
 
-var SpecFileEpDownloadSample = hinge.Endpoint{
-	Owner:   "FileEp",
-	Handler: "DownloadSample",
-	Method:  "GET",
-	Path:    "/files/{name}",
+func SpecFileEpDownloadSample() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "FileEp",
+		Handler: "DownloadSample",
+		Method:  "GET",
+		Path:    "/files/{name}",
+	}
 }
 
-var SpecPKG_epsIndex = hinge.Endpoint{
-	Owner:   "PKG_eps",
-	Handler: "Index",
-	Method:  "GET",
-	Path:    "/",
+func SpecPKG_epsIndex() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "PKG_eps",
+		Handler: "Index",
+		Method:  "GET",
+		Path:    "/",
+	}
 }
 
-var SpecSystemEpHealth = hinge.Endpoint{
-	Owner:   "SystemEp",
-	Handler: "Health",
-	Method:  "GET",
-	Path:    "/health",
+func SpecSystemEpHealth() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "SystemEp",
+		Handler: "Health",
+		Method:  "GET",
+		Path:    "/health",
+	}
 }
 
-var SpecUserEpChangePassword = hinge.Endpoint{
-	Owner:   "UserEp",
-	Handler: "ChangePassword",
-	Method:  "PATCH",
-	Path:    "/users/{id}/password",
+func SpecUserEpChangePassword() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "UserEp",
+		Handler: "ChangePassword",
+		Method:  "PATCH",
+		Path:    "/users/{id}/password",
+	}
 }
 
-var SpecUserEpCreateUser = hinge.Endpoint{
-	Owner:   "UserEp",
-	Handler: "CreateUser",
-	Method:  "POST",
-	Path:    "/users",
-	Status:  201,
+func SpecUserEpCreateUser() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "UserEp",
+		Handler: "CreateUser",
+		Method:  "POST",
+		Path:    "/users",
+		Status:  201,
+	}
 }
 
-var SpecUserEpDeleteUser = hinge.Endpoint{
-	Owner:   "UserEp",
-	Handler: "DeleteUser",
-	Method:  "DELETE",
-	Path:    "/users/{id}",
+func SpecUserEpDeleteUser() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "UserEp",
+		Handler: "DeleteUser",
+		Method:  "DELETE",
+		Path:    "/users/{id}",
+	}
 }
 
-var SpecUserEpGetUser = hinge.Endpoint{
-	Owner:   "UserEp",
-	Handler: "GetUser",
-	Method:  "GET",
-	Path:    "/users/{id}",
+func SpecUserEpGetUser() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "UserEp",
+		Handler: "GetUser",
+		Method:  "GET",
+		Path:    "/users/{id}",
+	}
 }
 
-var SpecUserEpListUsers = hinge.Endpoint{
-	Owner:   "UserEp",
-	Handler: "ListUsers",
-	Method:  "GET",
-	Path:    "/users",
+func SpecUserEpListUsers() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "UserEp",
+		Handler: "ListUsers",
+		Method:  "GET",
+		Path:    "/users",
+	}
 }
 
-var SpecUserEpUpdateExtra = hinge.Endpoint{
-	Owner:   "UserEp",
-	Handler: "UpdateExtra",
-	Method:  "PUT",
-	Path:    "/users/{id}/extra",
+func SpecUserEpUpdateExtra() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "UserEp",
+		Handler: "UpdateExtra",
+		Method:  "PUT",
+		Path:    "/users/{id}/extra",
+	}
 }

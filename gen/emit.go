@@ -17,7 +17,7 @@ import (
 )
 
 // 发射器：IR → 生成文件。
-//   - <out>/specs_gen.go        端点描述变量（hinge.Endpoint）+ All 聚合器
+//   - <out>/specs_gen.go        端点描述函数（hinge.Endpoint，按需构造，导入零分配）+ All 聚合器
 //   - <out>/binders_gen.go      类型化绑定器（按 Q/B 类型去重；请求期零反射）
 //   - <out>/register_<t>_gen.go 各框架注册函数（gin/echo/http）+ RegisterAll<Target>
 
@@ -165,9 +165,10 @@ func GenSpecName(ep *EndpointIR) string {
 	return fmt.Sprintf("Spec%s%s", ep.Owner, ep.Handler)
 }
 
-// emitSpecs 端点运行时描述变量（注册函数消费的唯一事实）。只发射请求管线
-// 需要的字段；文档元数据见 emitDocs（docs_gen.go，仅被 openapi build-tag
-// 入口引用，运行时二进制由链接器剥离）。
+// emitSpecs 端点运行时描述函数（注册函数消费的唯一事实，按需构造：导入
+// apigen 零内存分配，未调用即零占用——链接器可剥离全部未引用函数）。
+// 只发射请求管线需要的字段；文档元数据见 emitDocs（docs_gen.go，仅被 openapi
+// build-tag 入口调用，运行时二进制不触达）。
 func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 	is := newImportSet()
 	is.add(hingeImportPath, "")
@@ -175,14 +176,14 @@ func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 	for _, ep := range eps {
 		pkgAlias(is, taken, ep.Pkg.ImportPath, ep.Pkg.Name)
 	}
-	specNames := make([]string, 0)
+specNames := make([]string, 0)
 	var body strings.Builder
 	for _, ep := range eps {
 		specName := GenSpecName(ep)
-		specNames = append(specNames, specName)
-		fmt.Fprintf(&body, "var %s = hinge.Endpoint{\n", specName)
+		specNames = append(specNames, specName+"()")
+		fmt.Fprintf(&body, "func %s() hinge.Endpoint {\n\treturn hinge.Endpoint{\n", specName)
 		writeRuntimeSpecFields(&body, ep)
-		body.WriteString("}\n\n")
+		body.WriteString("\t}\n}\n\n")
 	}
 
 	var b strings.Builder
@@ -224,8 +225,8 @@ func AllSpecs() []hinge.Endpoint {
 }
 
 // writeRuntimeSpecFields 端点运行时字段发射（specs_gen.go 专用，字段集与
-// hinge.Endpoint 保持一致）。docs_gen.go 不再重复发射：直接引用 SpecXxx
-// 变量赋值给内嵌的 Endpoint 字段（运行时字段单一事实源）。
+// hinge.Endpoint 保持一致）。docs_gen.go 不再重复发射：直接调用 SpecXxx()
+// 赋值给内嵌的 Endpoint 字段（运行时字段单一事实源）。
 func writeRuntimeSpecFields(b *strings.Builder, ep *EndpointIR) {
 	fmt.Fprintf(b, "\tOwner:   %q,\n", ep.Owner)
 	fmt.Fprintf(b, "\tHandler: %q,\n", ep.Handler)
@@ -242,12 +243,12 @@ func writeRuntimeSpecFields(b *strings.Builder, ep *EndpointIR) {
 	}
 }
 
-// emitDocs 文档侧端点描述（hinge.EndpointDoc）：只被 openapi 开发期文档入口
-// 引用（go run -tags openapi → openapi.Generate(AllDocSpecs())）。运行时
-// 二进制不引用本文件，链接器 deadcode 剥离 —— Summary/Description 等文档
-// 字符串与 QType/BType/RType 类型描述零运行时开销。
-// 运行时字段不重复发射：内嵌 Endpoint 字段直接引用 specs_gen.go 的
-// SpecXxx 变量（同包必然可见；跨包重名 Owner 在 IR 构建期已拒绝）。
+// emitDocs 文档侧端点描述函数（hinge.EndpointDoc）：只被 openapi 开发期文档入口
+// 调用（go run -tags openapi → openapi.Generate(AllDocSpecs())）。按需构造：
+// 运行时二进制不调用本文件的任何函数，链接器 deadcode 全量剥离 ——
+// Summary/Description 等文档字符串与 QType/BType/RType 类型描述零运行时开销。
+// 运行时字段不重复发射：内嵌 Endpoint 字段直接调用 specs_gen.go 的
+// SpecXxx()（同包必然可见；跨包重名 Owner 在 IR 构建期已拒绝）。
 func emitDocs(cfg Config, eps []*EndpointIR) (string, error) {
 	is := newImportSet()
 	is.add(hingeImportPath, "")
@@ -260,10 +261,10 @@ func emitDocs(cfg Config, eps []*EndpointIR) (string, error) {
 	for _, ep := range eps {
 		ownerAlias := taken[ep.Pkg.ImportPath]
 		docName := "Doc" + GenSpecName(ep)
-		docNames = append(docNames, docName)
-		fmt.Fprintf(&body, "var %s = hinge.EndpointDoc{\n", docName)
-		// 运行时字段：引用运行时表变量，不重复发射（与 specs_gen.go 单源）。
-		fmt.Fprintf(&body, "\tEndpoint: %s,\n", GenSpecName(ep))
+		docNames = append(docNames, docName+"()")
+		fmt.Fprintf(&body, "func %s() hinge.EndpointDoc {\n\treturn hinge.EndpointDoc{\n", docName)
+		// 运行时字段：调用运行时表函数，不重复发射（与 specs_gen.go 单源）。
+		fmt.Fprintf(&body, "\tEndpoint: %s(),\n", GenSpecName(ep))
 		// ---- 文档字段 ----
 		fmt.Fprintf(&body, "\tSummary: %q,\n", ep.Summary)
 		if ep.Description != "" {
@@ -294,7 +295,7 @@ func emitDocs(cfg Config, eps []*EndpointIR) (string, error) {
 			return "", fmt.Errorf("%s.%s R 类型: %w", ep.Owner, ep.Handler, err)
 		}
 		fmt.Fprintf(&body, "\tRType: hinge.Type[%s](),\n", rExpr)
-		body.WriteString("}\n\n")
+		body.WriteString("\t}\n}\n\n")
 	}
 
 	var b strings.Builder
@@ -861,7 +862,7 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 				bindArgs += ", nil"
 			}
 
-			specRef := GenSpecName(ep)
+			specRef := GenSpecName(ep) + "()"
 			// 方法级注解引用：路由级直挂（组级之后、内核包装器之前）。
 			annoRefs := make([]string, 0, len(ep.AnnoMWs))
 			for _, ref := range ep.AnnoMWs {

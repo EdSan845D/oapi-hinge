@@ -11,89 +11,106 @@ import (
 
 func AllDocSpecs() []hinge.EndpointDoc {
 	return []hinge.EndpointDoc{
-		DocSpecFileEpDownloadSample,
-		DocSpecPKG_epsIndex,
-		DocSpecSystemEpHealth,
-		DocSpecUserEpChangePassword,
-		DocSpecUserEpCreateUser,
-		DocSpecUserEpDeleteUser,
-		DocSpecUserEpGetUser,
-		DocSpecUserEpListUsers,
-		DocSpecUserEpUpdateExtra,
+		DocSpecFileEpDownloadSample(),
+		DocSpecPKG_epsIndex(),
+		DocSpecSystemEpHealth(),
+		DocSpecUserEpChangePassword(),
+		DocSpecUserEpCreateUser(),
+		DocSpecUserEpDeleteUser(),
+		DocSpecUserEpGetUser(),
+		DocSpecUserEpListUsers(),
+		DocSpecUserEpUpdateExtra(),
+	}
+}
+func DocSpecFileEpDownloadSample() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecFileEpDownloadSample(),
+		Summary:  "下载示例文件（FileStream 二进制流响应）",
+		Tags:     []string{"文件"},
+		QType:    hinge.Type[eps.DownloadSampleReq](),
+		RType:    hinge.Type[*hinge.FileStream](),
 	}
 }
 
-var DocSpecFileEpDownloadSample = hinge.EndpointDoc{
-	Endpoint: SpecFileEpDownloadSample,
-	Summary:  "下载示例文件（FileStream 二进制流响应）",
-	Tags:     []string{"文件"},
-	QType:    hinge.Type[eps.DownloadSampleReq](),
-	RType:    hinge.Type[*hinge.FileStream](),
+func DocSpecPKG_epsIndex() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecPKG_epsIndex(),
+		Summary:  "Index",
+		RType:    hinge.Type[string](),
+	}
 }
 
-var DocSpecPKG_epsIndex = hinge.EndpointDoc{
-	Endpoint: SpecPKG_epsIndex,
-	Summary:  "Index",
-	RType:    hinge.Type[string](),
+func DocSpecSystemEpHealth() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecSystemEpHealth(),
+		Summary:  "健康检查",
+		RType:    hinge.Type[map[string]string](),
+	}
 }
 
-var DocSpecSystemEpHealth = hinge.EndpointDoc{
-	Endpoint: SpecSystemEpHealth,
-	Summary:  "健康检查",
-	RType:    hinge.Type[map[string]string](),
+func DocSpecUserEpChangePassword() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecUserEpChangePassword(),
+		Summary:  "修改密码（出参脱敏演示：InTransform 规范化 + validate 标签 + OutTransform）",
+		Tags:     []string{"用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+		QType:    hinge.Type[eps.ChangePasswordReq](),
+		RType:    hinge.Type[eps.MaskedUser](),
+	}
 }
 
-var DocSpecUserEpChangePassword = hinge.EndpointDoc{
-	Endpoint: SpecUserEpChangePassword,
-	Summary:  "修改密码（出参脱敏演示：InTransform 规范化 + validate 标签 + OutTransform）",
-	Tags:     []string{"用户"},
-	MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
-	QType:    hinge.Type[eps.ChangePasswordReq](),
-	RType:    hinge.Type[eps.MaskedUser](),
+func DocSpecUserEpCreateUser() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecUserEpCreateUser(),
+		Summary:  "创建用户",
+		Tags:     []string{"用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+		BType:    hinge.Type[eps.CreateUserReq](),
+		RType:    hinge.Type[eps.User](),
+	}
 }
 
-var DocSpecUserEpCreateUser = hinge.EndpointDoc{
-	Endpoint: SpecUserEpCreateUser,
-	Summary:  "创建用户",
-	Tags:     []string{"用户"},
-	MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
-	BType:    hinge.Type[eps.CreateUserReq](),
-	RType:    hinge.Type[eps.User](),
+func DocSpecUserEpDeleteUser() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecUserEpDeleteUser(),
+		Summary:  "删除用户（Empty 响应：data 为 null）",
+		Tags:     []string{"用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth", "github.com/EdSan845D/oapi-hinge/example/app/middleware.ParseHeaderWithInfo"},
+		QType:    hinge.Type[eps.DeleteUserReq](),
+		RType:    hinge.Type[hinge.Empty](),
+	}
 }
 
-var DocSpecUserEpDeleteUser = hinge.EndpointDoc{
-	Endpoint: SpecUserEpDeleteUser,
-	Summary:  "删除用户（Empty 响应：data 为 null）",
-	Tags:     []string{"用户"},
-	MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth", "github.com/EdSan845D/oapi-hinge/example/app/middleware.ParseHeaderWithInfo"},
-	QType:    hinge.Type[eps.DeleteUserReq](),
-	RType:    hinge.Type[hinge.Empty](),
+func DocSpecUserEpGetUser() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecUserEpGetUser(),
+		Summary:  "用户详情",
+		Tags:     []string{"用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+		QType:    hinge.Type[eps.GetUserReq](),
+		RType:    hinge.Type[eps.User](),
+	}
 }
 
-var DocSpecUserEpGetUser = hinge.EndpointDoc{
-	Endpoint: SpecUserEpGetUser,
-	Summary:  "用户详情",
-	Tags:     []string{"用户"},
-	MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
-	QType:    hinge.Type[eps.GetUserReq](),
-	RType:    hinge.Type[eps.User](),
+func DocSpecUserEpListUsers() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecUserEpListUsers(),
+		Summary:  "用户列表（分页）",
+		Tags:     []string{"用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+		QType:    hinge.Type[eps.ListUsersReq](),
+		RType:    hinge.Type[eps.Paged[eps.User]](),
+	}
 }
 
-var DocSpecUserEpListUsers = hinge.EndpointDoc{
-	Endpoint: SpecUserEpListUsers,
-	Summary:  "用户列表（分页）",
-	Tags:     []string{"用户"},
-	MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
-	QType:    hinge.Type[eps.ListUsersReq](),
-	RType:    hinge.Type[eps.Paged[eps.User]](),
-}
-
-var DocSpecUserEpUpdateExtra = hinge.EndpointDoc{
-	Endpoint: SpecUserEpUpdateExtra,
-	Summary:  "修改用户扩展信息（演示 any 类型的请求体绑定）",
-	Tags:     []string{"用户"},
-	MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
-	QType:    hinge.Type[eps.GetUserReq](),
-	BType:    hinge.Type[eps.ExtraBody](),
-	RType:    hinge.Type[eps.User](),
+func DocSpecUserEpUpdateExtra() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecUserEpUpdateExtra(),
+		Summary:  "修改用户扩展信息（演示 any 类型的请求体绑定）",
+		Tags:     []string{"用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+		QType:    hinge.Type[eps.GetUserReq](),
+		BType:    hinge.Type[eps.ExtraBody](),
+		RType:    hinge.Type[eps.User](),
+	}
 }

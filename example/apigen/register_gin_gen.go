@@ -18,7 +18,7 @@ import (
 // RegisterFileEpGin 把 FileEp 的全部端点挂到 Gin。
 func RegisterFileEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.FileEp) {
 	r := i
-	r.GET("/files/:name", servergin.Handle(k, SpecFileEpDownloadSample, BindQDownloadSampleReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.GET("/files/:name", servergin.Handle(k, SpecFileEpDownloadSample(), BindQDownloadSampleReq, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.DownloadSample(ctx, q.(eps.DownloadSampleReq))
 	}, middleware.BearerAuth))
 }
@@ -26,7 +26,7 @@ func RegisterFileEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.FileEp) {
 // RegisterPKG_epsGin 把 PKG_eps 的全部端点挂到 Gin。
 func RegisterPKG_epsGin(i gin.IRouter, k *hinge.Kernel) {
 	r := i
-	r.GET("/", servergin.Handle(k, SpecPKG_epsIndex, nil, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.GET("/", servergin.Handle(k, SpecPKG_epsIndex(), nil, nil, func(ctx context.Context, q, b any) (any, error) {
 		return eps.Index(ctx, q)
 	}))
 }
@@ -34,7 +34,7 @@ func RegisterPKG_epsGin(i gin.IRouter, k *hinge.Kernel) {
 // RegisterSystemEpGin 把 SystemEp 的全部端点挂到 Gin。
 func RegisterSystemEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.SystemEp) {
 	r := i.Group("", middleware.Auth)
-	r.GET("/health", servergin.Handle(k, SpecSystemEpHealth, nil, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.GET("/health", servergin.Handle(k, SpecSystemEpHealth(), nil, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.Health(ctx, q)
 	}, middleware.AccessLog))
 }
@@ -42,22 +42,22 @@ func RegisterSystemEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.SystemEp) {
 // RegisterUserEpGin 把 UserEp 的全部端点挂到 Gin。
 func RegisterUserEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.UserEp) {
 	r := i.Group("", middleware.Auth)
-	r.PATCH("/users/:id/password", servergin.Handle(k, SpecUserEpChangePassword, BindQChangePasswordReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.PATCH("/users/:id/password", servergin.Handle(k, SpecUserEpChangePassword(), BindQChangePasswordReq, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.ChangePassword(ctx, q.(eps.ChangePasswordReq))
 	}))
-	r.POST("/users", servergin.Handle(k, SpecUserEpCreateUser, nil, BindBCreateUserReq, func(ctx context.Context, q, b any) (any, error) {
+	r.POST("/users", servergin.Handle(k, SpecUserEpCreateUser(), nil, BindBCreateUserReq, func(ctx context.Context, q, b any) (any, error) {
 		return ep.CreateUser(ctx, q, b.(eps.CreateUserReq))
 	}))
-	r.DELETE("/users/:id", middleware.ParseHeaderWithInfo, servergin.Handle(k, SpecUserEpDeleteUser, BindQDeleteUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.DELETE("/users/:id", middleware.ParseHeaderWithInfo, servergin.Handle(k, SpecUserEpDeleteUser(), BindQDeleteUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.DeleteUser(ctx, q.(eps.DeleteUserReq))
 	}))
-	r.GET("/users/:id", servergin.Handle(k, SpecUserEpGetUser, BindQGetUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.GET("/users/:id", servergin.Handle(k, SpecUserEpGetUser(), BindQGetUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.GetUser(ctx, q.(eps.GetUserReq))
 	}))
-	r.GET("/users", servergin.Handle(k, SpecUserEpListUsers, BindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
+	r.GET("/users", servergin.Handle(k, SpecUserEpListUsers(), BindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.ListUsers(ctx, q.(eps.ListUsersReq))
 	}))
-	r.PUT("/users/:id/extra", servergin.Handle(k, SpecUserEpUpdateExtra, BindQGetUserReq, BindBExtraBody, func(ctx context.Context, q, b any) (any, error) {
+	r.PUT("/users/:id/extra", servergin.Handle(k, SpecUserEpUpdateExtra(), BindQGetUserReq, BindBExtraBody, func(ctx context.Context, q, b any) (any, error) {
 		return ep.UpdateExtra(ctx, q.(eps.GetUserReq), b.(eps.ExtraBody))
 	}))
 }
