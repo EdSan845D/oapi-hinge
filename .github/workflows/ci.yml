@@ -54,7 +54,10 @@ jobs:
           (cd myapp && GOWORK=off go run ./docs -out openapi.yaml)
 
       # 适配器子模块：独立 go.mod（gin / echo 依赖只存在于各自模块）
+      # GOFLAGS=-mod=mod：发版锁步后子模块 require 新内核 tag，go.sum 哈希需在 CI 内自填充
       - name: Adapters (servergin / serverecho / serverhttp)
+        env:
+          GOFLAGS: -mod=mod
         run: |
           cd servergin  && go build ./... && go vet ./... && go test ./...
           cd ../serverecho && go build ./... && go vet ./... && go test ./...
