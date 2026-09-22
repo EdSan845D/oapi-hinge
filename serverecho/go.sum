@@ -1,5 +1,5 @@
-github.com/EdSan845D/oapi-hinge v0.2.1 h1:7lnvgdmL7LemRW21Y0Kgy5XlvBs2vbB8OjbEVyasPAg=
-github.com/EdSan845D/oapi-hinge v0.2.1/go.mod h1:5NWWdc/0SJaBvxi5fheblxX8vjWpc/aZAc+3xE598wM=
+github.com/EdSan845D/oapi-hinge v0.2.2 h1:nra3hcvFJSoS9RKVSnAqSNolIZaoOezo6z5ZYIR6QcQ=
+github.com/EdSan845D/oapi-hinge v0.2.2/go.mod h1:H7xKrqHge/wih7DA60GVP0smiU+yaKXuMTfmSgjva4I=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/labstack/echo/v4 v4.15.4 h1:DL45vVYa+BWE+XuW+zZNd9H0YEdZ80UAWJGcTVW4EVs=

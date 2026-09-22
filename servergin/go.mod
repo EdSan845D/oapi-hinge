@@ -5,10 +5,10 @@
 // 发版：随仓库主版本打子模块 tag（如 servergin/v0.2.0）。
 module github.com/EdSan845D/oapi-hinge/servergin
 
-go 1.27
+go 1.25.0
 
 require (
-	github.com/EdSan845D/oapi-hinge v0.2.1
+	github.com/EdSan845D/oapi-hinge v0.2.2
 	github.com/gin-gonic/gin v1.12.0
 )
 

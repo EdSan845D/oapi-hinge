@@ -5,10 +5,10 @@
 // 发版：随仓库主版本打子模块 tag（如 validator/v0.2.0）。
 module github.com/EdSan845D/oapi-hinge/validator
 
-go 1.27
+go 1.25.0
 
 require (
-	github.com/EdSan845D/oapi-hinge v0.2.1
+	github.com/EdSan845D/oapi-hinge v0.2.2
 	github.com/go-playground/validator/v10 v10.30.3
 )
 
