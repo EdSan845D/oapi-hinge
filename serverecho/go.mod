@@ -5,7 +5,7 @@
 // 发版：随仓库主版本打子模块 tag（如 serverecho/v0.2.0）。
 module github.com/EdSan845D/oapi-hinge/serverecho
 
-go 1.25
+go 1.27
 
 require (
 	github.com/EdSan845D/oapi-hinge v0.2.1

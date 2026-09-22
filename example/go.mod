@@ -1,11 +1,11 @@
 module github.com/EdSan845D/oapi-hinge/example
 
-go 1.25
+go 1.27
 
 replace github.com/EdSan845D/oapi-hinge => ../
 
 require (
-	github.com/EdSan845D/oapi-hinge v0.2.0
+	github.com/EdSan845D/oapi-hinge v0.2.1
 	github.com/EdSan845D/oapi-hinge/servergin v0.2.0
 	github.com/EdSan845D/oapi-hinge/validator v0.2.0
 	github.com/bdpiprava/scalar-go v0.13.0
