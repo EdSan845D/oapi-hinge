@@ -148,7 +148,7 @@ func Adaptor(ep hinge.Endpoint, bindQ hinge.Binder, bindB hinge.Binder, h hinge.
 func RegisterAdminEpGinRow(i gin.IRouter, ep eps.AdminEp) {
 	r := i.Group("", middleware.Auth)
 	r.GET("/admin", Adaptor(hinge.Endpoint{Owner: "AdminEp", Handler: "Index", Method: "GET", Path: "/admin"}, nil, nil, func(ctx context.Context, q, b any) (any, error) {
-		return ep.Index(ctx, q)
+		return ep.Index(ctx)
 	}))
 }
 
@@ -180,7 +180,7 @@ func RegisterPKG_epsGinRow(i gin.IRouter) {
 func RegisterSystemEpGinRow(i gin.IRouter, ep eps.SystemEp) {
 	r := i.Group("", middleware.Auth)
 	r.GET("/health", Adaptor(hinge.Endpoint{Owner: "SystemEp", Handler: "Health", Method: "GET", Path: "/health"}, nil, nil, func(ctx context.Context, q, b any) (any, error) {
-		return ep.Health(ctx, q)
+		return ep.Health(ctx)
 	}))
 }
 
@@ -223,7 +223,7 @@ func RegisterVipUserEpGinRow(i gin.IRouter, ep eps.VipUserEp) {
 		return ep.GetUser(ctx, q.(eps.GetUserReq))
 	}))
 	r.GET("/users/vip/panel", Adaptor(hinge.Endpoint{Owner: "VipUserEp", Handler: "LevelContent", Method: "GET", Path: "/users/vip/panel"}, nil, nil, func(ctx context.Context, q, b any) (any, error) {
-		return ep.LevelContent(ctx, q)
+		return ep.LevelContent(ctx)
 	}))
 	r.GET("/users/vip", Adaptor(hinge.Endpoint{Owner: "VipUserEp", Handler: "ListUsers", Method: "GET", Path: "/users/vip"}, BindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.ListUsers(ctx, q.(eps.ListUsersReq))

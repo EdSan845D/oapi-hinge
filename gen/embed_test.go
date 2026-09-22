@@ -1,4 +1,4 @@
-package gen
+﻿package gen
 
 import (
 	"strings"
@@ -41,7 +41,7 @@ type VipUserEp struct {
 }
 
 // oapi:route GET /panel
-func (ep VipUserEp) LevelContent(ctx context.Context, _ any) (map[string]string, error) {
+func (ep VipUserEp) LevelContent(ctx context.Context) (map[string]string, error) {
 	return nil, nil
 }
 
@@ -179,6 +179,10 @@ func TestEmbedPromotion(t *testing.T) {
 	// 提升端点的方法级拦截器随方法走（表断言已覆盖，此处验证 GroupICs 为空）
 	if ep := findEp(t, eps, "VipUserEp", "Get"); len(ep.GroupICs) != 0 {
 		t.Errorf("VipUserEp.Get GroupICs = %v, want 空（AuthIC 是方法级注解）", ep.GroupICs)
+	}
+	// 自身端点 NoArgs：func(ctx) 形态，无 Q 无 B
+	if ep := findEp(t, eps, "VipUserEp", "LevelContent"); !ep.NoArgs || ep.HasQ || ep.HasB {
+		t.Errorf("LevelContent NoArgs=%v HasQ=%v HasB=%v, want true/false/false", ep.NoArgs, ep.HasQ, ep.HasB)
 	}
 	// 提升不产生 Mount（oapi:parent 才有）
 	for _, ep := range eps {

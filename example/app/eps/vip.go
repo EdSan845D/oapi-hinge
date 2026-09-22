@@ -1,4 +1,4 @@
-package eps
+﻿package eps
 
 import (
 	"context"
@@ -27,7 +27,7 @@ type VipUserEp struct {
 
 // oapi:route GET /panel
 // VIP 面板
-func (ep VipUserEp) LevelContent(ctx context.Context, _ any) (map[string]string, error) {
+func (ep VipUserEp) LevelContent(ctx context.Context) (map[string]string, error) {
 	return map[string]string{
 		"module":  "vip",
 		"message": "wellcome, my dear vip",

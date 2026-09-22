@@ -82,6 +82,8 @@ type EndpointIR struct {
 	ValidateB       bool
 	ValidateBPtr    bool
 	TwoArg          bool // func(ctx, Q) 简式
+	// NoArgs func(ctx) 无业务参形态（无 Q 无 B）：生成调用表达式时不传 q/b。
+	NoArgs bool
 
 	// 发射期回填：去重后的绑定器函数名（空 = 无绑定器）
 	qBinder string
@@ -934,8 +936,8 @@ func (b *irBuilder) buildSignature(ep *EndpointIR, md *ast.FuncDecl) bool {
 	ep.RExpr = results[0].Type
 	ep.RSrcFile = srcFile
 	params := flattenFields(ft.Params)
-	if len(params) < 2 || len(params) > 3 {
-		b.errf("%s：签名必须为 func(ctx context.Context, Q[, B]) (R, error)，实际 %d 个参数", pos, len(params))
+	if len(params) < 1 || len(params) > 3 {
+		b.errf("%s：签名必须为 func(ctx context.Context) / func(ctx context.Context, Q) / func(ctx context.Context, Q, B) (R, error)，实际 %d 个参数", pos, len(params))
 		return false
 	}
 	if !isContextParam(params[0].Type, ep.Pkg) {
@@ -943,25 +945,28 @@ func (b *irBuilder) buildSignature(ep *EndpointIR, md *ast.FuncDecl) bool {
 		return false
 	}
 	ep.TwoArg = len(params) == 2
+	ep.NoArgs = len(params) == 1
 	// ---- Q ----
-	qExpr := params[1].Type
-	qName, qAny, err := classifyParam(qExpr, ep.Pkg, "Q")
-	if err != nil {
-		b.errf("%s：%v", pos, err)
-		return false
-	}
-	if !qAny {
-		ep.HasQ = true
-		ep.QName = qName
-		fs, ferr := resolveFields(ep.Pkg, qName, "", 0)
-		if ferr != nil {
-			b.errf("%s：%v", pos, ferr)
+	if len(params) >= 2 {
+		qExpr := params[1].Type
+		qName, qAny, err := classifyParam(qExpr, ep.Pkg, "Q")
+		if err != nil {
+			b.errf("%s：%v", pos, err)
 			return false
 		}
-		ep.QSet = fs
-		b.checkPathParams(ep)
-		ep.InTransformQ, ep.InTransformQPtr = methodShape(ep.Pkg, qName, "InTransform", true)
-		ep.ValidateQ, ep.ValidateQPtr = methodShape(ep.Pkg, qName, "Validate", false)
+		if !qAny {
+			ep.HasQ = true
+			ep.QName = qName
+			fs, ferr := resolveFields(ep.Pkg, qName, "", 0)
+			if ferr != nil {
+				b.errf("%s：%v", pos, ferr)
+				return false
+			}
+			ep.QSet = fs
+			b.checkPathParams(ep)
+			ep.InTransformQ, ep.InTransformQPtr = methodShape(ep.Pkg, qName, "InTransform", true)
+			ep.ValidateQ, ep.ValidateQPtr = methodShape(ep.Pkg, qName, "Validate", false)
+		}
 	}
 	// ---- B ----
 	if len(params) == 3 {

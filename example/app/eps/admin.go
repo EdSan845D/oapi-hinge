@@ -1,4 +1,4 @@
-package eps
+﻿package eps
 
 import (
 	"context"
@@ -34,7 +34,7 @@ type AdminEp struct {
 //
 // oapi:route GET
 // 管理面板索引
-func (ep AdminEp) Index(ctx context.Context, _ any) (map[string]string, error) {
+func (ep AdminEp) Index(ctx context.Context) (map[string]string, error) {
 	return map[string]string{
 		"module":  "admin",
 		"message": "管理面板索引（挂载链根）",

@@ -1,4 +1,4 @@
-{{- .Header}}
+﻿{{- .Header}}
 package {{.Pkg}}
 
 import (
@@ -149,7 +149,7 @@ func Register{{.Name}}{{$.Target.Title}}(i gin.IRouter{{if not .IsPkg}}, ep {{.O
 {{- $ownerAlias := .OwnerAlias}}
 {{- range .Eps}}
 	r.{{.Method}}("{{.Path}}"{{if ne .Args ""}}, {{.Args}}{{end}}, Adaptor({{.EPLit}}, {{.Binder}}, func(ctx context.Context, q, b any) (any, error) {
-		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{if not .TwoArg}}, b.({{$ownerAlias}}.{{.BName}}){{end}})
+		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx{{if not .NoArgs}}, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{if and (not .TwoArg) (not .NoArgs)}}, b.({{$ownerAlias}}.{{.BName}}){{end}}{{end}})
 	}{{.Extras}}))
 {{- end}}
 }

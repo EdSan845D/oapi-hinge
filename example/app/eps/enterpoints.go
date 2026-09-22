@@ -1,4 +1,4 @@
-package eps
+﻿package eps
 
 import (
 	"context"
@@ -24,7 +24,7 @@ type SystemEp struct {
 
 // oapi:route GET /health
 // 健康检查
-func (ep SystemEp) Health(ctx context.Context, _ any) (map[string]string, error) {
+func (ep SystemEp) Health(ctx context.Context) (map[string]string, error) {
 	return map[string]string{
 		"status": "ok",
 		"time":   time.Now().Format(time.RFC3339),

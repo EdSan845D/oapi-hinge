@@ -18,7 +18,7 @@ import (
 func RegisterAdminEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.AdminEp) {
 	r := i.Group("", middleware.Auth)
 	r.GET("/admin", servergin.Handle(k, SpecAdminEpIndex(), nil, nil, func(ctx context.Context, q, b any) (any, error) {
-		return ep.Index(ctx, q)
+		return ep.Index(ctx)
 	}))
 }
 
@@ -50,7 +50,7 @@ func RegisterPKG_epsGin(i gin.IRouter, k *hinge.Kernel) {
 func RegisterSystemEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.SystemEp) {
 	r := i.Group("", middleware.Auth)
 	r.GET("/health", servergin.Handle(k, SpecSystemEpHealth(), nil, nil, func(ctx context.Context, q, b any) (any, error) {
-		return ep.Health(ctx, q)
+		return ep.Health(ctx)
 	}))
 }
 
@@ -93,7 +93,7 @@ func RegisterVipUserEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.VipUserEp) {
 		return ep.GetUser(ctx, q.(eps.GetUserReq))
 	}))
 	r.GET("/users/vip/panel", servergin.Handle(k, SpecVipUserEpLevelContent(), nil, nil, func(ctx context.Context, q, b any) (any, error) {
-		return ep.LevelContent(ctx, q)
+		return ep.LevelContent(ctx)
 	}))
 	r.GET("/users/vip", servergin.Handle(k, SpecVipUserEpListUsers(), BindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.ListUsers(ctx, q.(eps.ListUsersReq))
