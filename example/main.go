@@ -56,6 +56,8 @@ func main() {
 		SystemEp: eps.SystemEp{},
 		UserEp:   eps.UserEp{Store: eps.NewUserStore()},
 		FileEp:   eps.FileEp{},
+		AdminEp:  eps.AdminEp{},  // Children 挂载树根（generate.go 声明 /admin + Auth）
+		AuditEp:  eps.AuditEp{},  // 子节点（/audit + AccessLog），路径 /api/admin/audit/events
 	}
 	apigen.RegisterAllGin(r.Group("/api"), k, epsAll)
 

@@ -64,31 +64,76 @@ func (r *Reader) MultipartForm() (*multipart.Form, error) {
 	return r.C.Request.MultipartForm, nil
 }
 
-func Adaptor(bindQ hinge.Binder, bindB hinge.Binder, h hinge.HandlerFunc) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
+// Sink hinge.Sink 实现（拦截器短路写出口径）：written 标志防短路后重复输出。
+type Sink struct {
+	C       *gin.Context
+	written bool
+}
+
+func (s *Sink) SetStatus(code int)               { s.C.Status(code) }
+func (s *Sink) SetHeader(k, v string)            { s.C.Header(k, v) }
+func (s *Sink) AddCookie(c *http.Cookie)         { http.SetCookie(s.C.Writer, c) }
+func (s *Sink) WriteJSON(status int, v any)      { s.written = true; s.C.JSON(status, v) }
+
+// WriteStream 二进制流（FileStream）：row 模板的极简形态不做 Range/条件请求，
+// 复制 Reader 全量输出；需要 Range 语义请用内置模板（内核 writeStreamFile）。
+func (s *Sink) WriteStream(f *hinge.FileStream) {
+	if f == nil || f.Reader == nil {
+		s.C.String(http.StatusInternalServerError, "invalid file stream")
+		return
+	}
+	s.written = true
+	if f.ContentType != "" {
+		s.C.Header("Content-Type", f.ContentType)
+	}
+	s.C.Status(http.StatusOK)
+	_, _ = io.Copy(s.C.Writer, f.Reader)
+}
+
+// Adaptor 极简管线（row 模板自足形态）：绑定 + 内核拦截链 + 输出。
+// 拦截链语义与内核 HandleWith 对齐：ICs 按声明序包裹（先根后叶的合成序由
+// 发射器保证），短路拦截器经 Sink 自行写出（written 防重复输出）；
+// 返回错误走 500。
+func Adaptor(ep hinge.Endpoint, bindQ hinge.Binder, bindB hinge.Binder, h hinge.HandlerFunc, ics ...hinge.Interceptor) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		var qv, bv any
 		if bindQ != nil {
-			v, err := bindQ(ctx, &Reader{C: ctx})
+			v, err := bindQ(c, &Reader{C: c})
 			if err != nil {
-				ctx.AbortWithError(http.StatusBadRequest, err)
+				c.AbortWithError(http.StatusBadRequest, err)
 				return
 			}
 			qv = v
 		}
 		if bindB != nil {
-			v, err := bindB(ctx, &Reader{C: ctx})
+			v, err := bindB(c, &Reader{C: c})
 			if err != nil {
-				ctx.AbortWithError(http.StatusBadRequest, err)
+				c.AbortWithError(http.StatusBadRequest, err)
 				return
 			}
 			bv = v
 		}
-		out, err := h(ctx, qv, bv)
-		if err != nil {
-			ctx.AbortWithError(http.StatusInternalServerError, err)
+		rd := &Reader{C: c}
+		sn := &Sink{C: c}
+		var out any
+		call := func(ctx context.Context) error {
+			var err error
+			out, err = h(ctx, qv, bv)
+			return err
+		}
+		for i := len(ics) - 1; i >= 0; i-- {
+			ic, next := ics[i], call
+			call = func(ctx context.Context) error {
+				return ic(ctx, ep, rd, sn, next)
+			}
+		}
+		if err := call(c.Request.Context()); err != nil {
+			c.AbortWithError(http.StatusInternalServerError, err)
 			return
 		}
-		ctx.JSON(http.StatusOK, out)
+		if !sn.written {
+			c.JSON(http.StatusOK, out)
+		}
 	}
 }
 
@@ -103,7 +148,7 @@ func Register{{.Name}}{{$.Target.Title}}(i gin.IRouter{{if not .IsPkg}}, ep {{.O
 {{- $isPkg := .IsPkg}}
 {{- $ownerAlias := .OwnerAlias}}
 {{- range .Eps}}
-	r.{{.Method}}("{{.Path}}"{{if ne .Args ""}}, {{.Args}}{{end}}, Adaptor({{.Binder}}, func(ctx context.Context, q, b any) (any, error) {
+	r.{{.Method}}("{{.Path}}"{{if ne .Args ""}}, {{.Args}}{{end}}, Adaptor({{.EPLit}}, {{.Binder}}, func(ctx context.Context, q, b any) (any, error) {
 		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{if not .TwoArg}}, b.({{$ownerAlias}}.{{.BName}}){{end}})
 	}{{.Extras}}))
 {{- end}}

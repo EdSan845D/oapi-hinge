@@ -9,6 +9,7 @@ import (
 	"github.com/EdSan845D/oapi-hinge/example/app/eps"
 	"github.com/EdSan845D/oapi-hinge/example/app/middleware"
 	"github.com/EdSan845D/oapi-hinge/gen"
+	"github.com/EdSan845D/oapi-hinge/hinge"
 )
 
 // EntryPointsConfig 程序化 Enterpoint 配置：gen.Run 同进程注入。
@@ -43,6 +44,21 @@ func EntryPointsConfig() []gen.EntryPointConfig {
 				},
 			},
 		},
+		{
+			// Children 挂载树演示：/admin（组根，纯挂载层）下挂 /audit 子节点。
+			// 挂载点前缀生成期烘焙进路由路径，运行时无嵌套 Group；
+			// 组级中间件/拦截器沿祖先链（先根后叶）继承。
+			Name:        "AdminEp",
+			Prefix:      "/admin",
+			Middlewares: []any{middleware.Auth}, // 组级框架原生中间件：作用于本节点及全部后代
+			Children: []gen.EntryPointConfig{
+				{
+					Name:         "AuditEp",
+					Prefix:       "/audit", // 挂载点相对父节点：最终 /api/admin/audit
+					Interceptors: []hinge.Interceptor{middleware.AccessLog}, // 内核拦截器：只作用于本节点
+				},
+			},
+		},
 	}
 }
 
@@ -58,14 +74,17 @@ func main() {
 		Module:  "github.com/EdSan845D/oapi-hinge/example",
 		Scan:    []string{"./app/eps", "./app/middleware"},
 		Out:     "./apigen",
-		Targets: []string{"gin.row"},
+		Targets: []string{"gin", "gin.row"}, // 内置 gin（内核管线）+ 自定义 row 模板（自足管线）双演示
 		Emitters: map[string]gen.EmitConfig{
 			"gin.row": {
 				Title:    "GinRow",
 				Template: tmplFilePath,
 			},
 		},
-		// EntryPoints: EntryPointsConfig(),
+		// 程序化配置（含 Children 挂载树演示）：启用后产物头部带 entrypoints:
+	// programmatic 标记，CLI gen/-check 拒绝执行（双入口产物漂移防护），
+	// 生成与门禁都走本入口（go run ./app / go run ./app -check）。
+	EntryPoints: EntryPointsConfig(),
 	}
 	if err := gen.Run(dir, cfg, *check); err != nil {
 		fmt.Fprintln(os.Stderr, "hinge:", err)

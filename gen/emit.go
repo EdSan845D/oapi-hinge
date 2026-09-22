@@ -846,8 +846,17 @@ type epData struct {
 	Path        string // 目标框架路径风格
 	Args        string // 路由调用剩余中间件参数（框架原生直挂，按 target 语义组装）
 	Extras      string // 内核拦截器实参串（Handle 变参尾段：", ic1, ic2"；空 = 无）
+	EPLit       string // hinge.Endpoint 字面量（自定义 Adaptor 需要端点上下文时用）
 	Spec        string // 端点描述变量名（Spec<Owner><Handler>）
 	Binder      string // 绑定器实参串（bindQ, bindB）
+}
+
+// epLiteral 发射 hinge.Endpoint 字面量：自定义模板的管线 helper 需要端点
+// 上下文时（如拦截链 ICs 需要 ep 实参）直接可用。PKGFlag owner（包级函数
+// 端点）清洗为包名。
+func epLiteral(ep *EndpointIR, fp string) string {
+	owner := strings.TrimPrefix(ep.Owner, PKGFlag)
+	return fmt.Sprintf("hinge.Endpoint{Owner: %q, Handler: %q, Method: %q, Path: %q}", owner, ep.Handler, ep.Method, fp)
 }
 
 // ownerData 一个 Enterpoint 的注册函数数据。
@@ -971,7 +980,7 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 				extras = ", " + strings.Join(icRefs, ", ")
 			}
 
-			ed := &epData{EndpointIR: ep, Path: frameworkPath(emiter, ep.FullPath), Spec: specRef, Binder: bindArgs, Extras: extras}
+			ed := &epData{EndpointIR: ep, Path: frameworkPath(emiter, ep.FullPath), Spec: specRef, Binder: bindArgs, Extras: extras, EPLit: epLiteral(ep, frameworkPath(emiter, ep.FullPath))}
 			switch target {
 			case "http":
 				// stdlib 无路由链：全部引用折叠进 Handle 变参（内核拦截链，
