@@ -21,6 +21,12 @@ type EndpointIR struct {
 	Method   string
 	RelPath  string
 	FullPath string
+	// Prefix oapi:prefix 注解原值（挂载链展平时作为节点子树基座前缀）。
+	Prefix string
+	// Parent oapi:parent 注解解析出的父 Enterpoint 结构体名（空 = 根挂载）。
+	// 同 owner 全端点共享；展平后祖先链前缀烘焙进 FullPath、祖先组级注解
+	// 中间件/拦截器进 MountMWs / MountICs。
+	Parent string
 
 	Summary     string
 	Description string
@@ -44,8 +50,13 @@ type EndpointIR struct {
 	// 注入 extra（先于方法级），需为 hinge.Interceptor 签名。
 	GroupICs []MWRef
 	// ConfigICs EntryPointConfig.Interceptors 运行时值反射出的源码引用
-	//（owner 全端点注入 extra，先于结构体级注解）。
+	//（per-ep 补充，owner 全端点 extra，先于结构体级注解；不沿 parent 链继承）。
 	ConfigICs []MWRef
+	// MountMWs / MountICs oapi:parent 挂载链沿祖先（先根后叶）继承的 struct 级
+	// oapi:middleware / oapi:interceptor 源码引用（不含自身）；发射时排在
+	// RouteMWs / ConfigICs 之前。仅 struct 级注解沿链继承，Config 补充不沿链。
+	MountMWs []MWRef
+	MountICs []MWRef
 
 	HasQ  bool
 	QName string
@@ -54,11 +65,11 @@ type EndpointIR struct {
 	HasB     bool
 	BName    string
 	BSet     *fieldSet
-	BodyKind string // json / raw / multipart（HasB 时有效）
+	BodyKind string // json / raw / multipart / form（HasB 时有效；form = application/x-www-form-urlencoded）
 
-	// RouteMWs EntryPointConfig.Middlewares 运行时值反射出的源码引用（owner 全端点继承）：
-	// 全部为框架原生中间件，发射为组级直挂；内核拦截器走 Interceptors → ConfigICs。
-	// RouteMWImports 为对应 import 路径。
+	// RouteMWs EntryPointConfig.Middlewares 运行时值反射出的源码引用（per-ep 补充，
+	// 不沿 parent 链继承）：全部为框架原生中间件，发射为组级直挂；内核拦截器
+	// 走 Interceptors → ConfigICs。RouteMWImports 为对应 import 路径。
 	RouteMWs       []RouteMWRef
 	RouteMWImports []string
 
@@ -70,7 +81,9 @@ type EndpointIR struct {
 	InTransformBPtr bool
 	ValidateB       bool
 	ValidateBPtr    bool
-	TwoArg          bool // func(ctx, Q) 简式
+	// ArgNums 业务入参数（不含 ctx）：0 = func(ctx) 无业务参；1 = func(ctx, Q)；
+	// 2 = func(ctx, Q, B)。模板据此决定 q / b 实参的发射。
+	ArgNums int
 
 	// 发射期回填：去重后的绑定器函数名（空 = 无绑定器）
 	qBinder string
@@ -88,13 +101,39 @@ var (
 	}
 )
 
+// bodyKindOf 由展平后的 B 字段集判定 body kind（不含校验）：
+//   - 含文件字段 → multipart（value/文件字段全部要求 form 标签，由调用方校验）
+//   - 全部字段 form 标签（无文件字段）→ form（application/x-www-form-urlencoded）
+//   - 其余（含字段标签混排）→ json（保持 JSON 语义）
+func bodyKindOf(fs *fieldSet) string {
+	hasFile := false
+	allForm := len(fs.Fields) > 0
+	for _, f := range fs.Fields {
+		if f.Class == classFile || f.Class == classFileSlice {
+			hasFile = true
+		}
+		if f.In != "form" {
+			allForm = false
+		}
+	}
+	switch {
+	case hasFile:
+		return "multipart"
+	case allForm:
+		return "form"
+	default:
+		return "json"
+	}
+}
+
 // structAnn 结构体级注解。
 type structAnn struct {
 	Prefix     string
+	Parent     string // oapi:parent：父 Enterpoint 结构体名（纯名，子声明式挂载；空 = 根挂载）
 	Tags       []string
 	TimeoutStr string
-	MWs        []string // oapi:middleware：框架原生中间件 → 组级直挂
-	ICs        []string // oapi:interceptor：内核拦截器 → owner 全端点 extra
+	MWs        []string // oapi:middleware：框架原生中间件 → 组级直挂（沿 parent 链继承给后代）
+	ICs        []string // oapi:interceptor：内核拦截器 → owner 全端点 extra（沿 parent 链继承给后代）
 }
 
 // MWRef 路由级源码引用中间件（oapi:middleware "pkg.Func" 形态）。
@@ -307,10 +346,138 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 		}
 		ownerPkg[ep.Owner] = ep.Pkg.ImportPath
 	}
-	// EntryPointConfig 二分通道（owner 全端点继承）：
+	// oapi:parent 挂载链展平（子声明式）：挂载关系由每个 Enterpoint 的 struct 级
+	// oapi:parent 注解声明（父 Enterpoint 结构体名，纯名），沿祖先链（先根后叶）合成——
+	//   FullPath   = 祖先链前缀（各节点 oapi:prefix 串联）+ 自身 FullPath；
+	//   MountMWs   = 祖先链各节点 struct 级 oapi:middleware（根→叶）；
+	//   MountICs   = 祖先链各节点 struct 级 oapi:interceptor（根→叶）。
+	// 运行时仍是同一张平铺端点表，无嵌套结构。Config 补充不沿链（per-ep）。
+	{
+		mountEps := map[string][]*EndpointIR{}
+		for _, ep := range b.eps {
+			mountEps[ep.Owner] = append(mountEps[ep.Owner], ep)
+		}
+		type mountBase struct {
+			prefix string  // 子树挂载前缀（祖先链 oapi:prefix 串联 + 自身）
+			mws    []MWRef // 祖先链（含自身）struct 级 oapi:middleware
+			ics    []MWRef // 祖先链（含自身）struct 级 oapi:interceptor
+		}
+		broken := map[string]bool{}
+		// 预检：悬空 / 自引用 / PKG 引用 / 成环（沿链行走，环上全链标记 broken）
+		mountOwners := make([]string, 0, len(mountEps))
+		for owner := range mountEps {
+			mountOwners = append(mountOwners, owner)
+		}
+		sort.Strings(mountOwners)
+		for _, owner := range mountOwners {
+			self := mountEps[owner][0]
+			if self.Parent == "" || broken[owner] {
+				continue
+			}
+			switch {
+			case self.Parent == owner:
+				b.errf("Enterpoint %s：oapi:parent 不能指向自身", owner)
+				broken[owner] = true
+			case strings.HasPrefix(self.Parent, PKGFlag):
+				b.errf("Enterpoint %s：oapi:parent %q 指向包级函数端点（不允许，父必须是 Enterpoint 结构体）", owner, self.Parent)
+				broken[owner] = true
+			}
+			if _, exists := mountEps[self.Parent]; !exists && !broken[owner] {
+				b.errf("Enterpoint %s：oapi:parent %q 未命中任何扫描到的 Enterpoint（检查拼写，或父结构体是否含 oapi:route 端点）", owner, self.Parent)
+				broken[owner] = true
+			}
+		}
+		for _, owner := range mountOwners {
+			if broken[owner] {
+				continue
+			}
+			seen := map[string]bool{}
+			cur := owner
+			for {
+				if seen[cur] {
+					chain := make([]string, 0, len(seen))
+					for o := range seen {
+						chain = append(chain, o)
+					}
+					sort.Strings(chain)
+					b.errf("Enterpoint %s：oapi:parent 链成环（涉及 %s），请检查 oapi:parent 声明", owner, strings.Join(chain, " → "))
+					for o := range seen {
+						broken[o] = true
+					}
+					break
+				}
+				seen[cur] = true
+				next := mountEps[cur][0].Parent
+				if next == "" {
+					break
+				}
+				if _, exists := mountEps[next]; !exists {
+					break // 悬空中间节点：悬空预检已诊断，行走终止（防越界）
+				}
+				cur = next
+			}
+		}
+		// 子树基座计算（memoized；broken 节点返回空基座，后代沿 broken 传播跳过应用）
+		bases := map[string]*mountBase{}
+		var baseOf func(owner string) *mountBase
+		baseOf = func(owner string) *mountBase {
+			if b, ok := bases[owner]; ok {
+				return b
+			}
+			eps, exists := mountEps[owner]
+			if !exists {
+				// 悬空防御：预检已诊断悬空，此处返回空基座（应用层因 broken 跳过）
+				ctx := &mountBase{}
+				bases[owner] = ctx
+				return ctx
+			}
+			self := eps[0]
+			var ctx *mountBase
+			if self.Parent == "" {
+				ctx = &mountBase{
+					prefix: self.Prefix,
+					mws:    append([]MWRef{}, self.GroupMWs...),
+					ics:    append([]MWRef{}, self.GroupICs...),
+				}
+			} else {
+				p := baseOf(self.Parent)
+				ctx = &mountBase{
+					prefix: joinRoutePath(p.prefix, self.Prefix),
+					mws:    append(append([]MWRef{}, p.mws...), self.GroupMWs...),
+					ics:    append(append([]MWRef{}, p.ics...), self.GroupICs...),
+				}
+			}
+			bases[owner] = ctx
+			return ctx
+		}
+		for _, owner := range mountOwners {
+			eps := mountEps[owner]
+			self := eps[0]
+			if self.Parent == "" || broken[owner] || broken[self.Parent] {
+				continue // 根挂载无展平动作；诊断节点跳过应用
+			}
+			p := baseOf(self.Parent) // 父的子树基座（祖先链 + 父自身）
+			for _, ep := range eps {
+				// 防呆：自身路径已含挂载前缀 = 注解写了全路径的常见笔误
+				if p.prefix != "" && (ep.FullPath == p.prefix || strings.HasPrefix(ep.FullPath, p.prefix+"/")) {
+					b.errf("%s.%s：路径 %q 已含挂载前缀 %q——oapi:prefix / oapi:route 相对挂载点声明，请去掉重叠段", ep.Owner, ep.Handler, ep.FullPath, p.prefix)
+					continue
+				}
+				ep.FullPath = joinRoutePath(p.prefix, ep.FullPath)
+				ep.MountMWs = append([]MWRef{}, p.mws...)
+				ep.MountICs = append([]MWRef{}, p.ics...)
+			}
+			if len(p.mws)+len(p.ics) > 0 {
+				fmt.Fprintf(os.Stderr, "hinge gen: 挂载 %s ← %s：前缀 %q，沿链继承中间件 %d / 拦截器 %d\n",
+					owner, self.Parent, p.prefix, len(p.mws), len(p.ics))
+			}
+		}
+	}
+	// EntryPointConfig 程序化补充（per-ep，不沿挂载链）：
 	//   Middlewares → 框架原生中间件，反射取名后发射为组级源码引用；
 	//   Interceptors → 内核拦截器，反射取名后发射为 extra 源码引用。
-	// gen.Run 与 generate.go 同进程，运行时值反射取名后发射为源码引用
+	// 两条通道不得混排。gen.Run 与 generate.go 同进程，运行时值反射取名后
+	// 发射为源码引用。
 	if len(entryPoints) > 0 {
 		byOwner := map[string]EntryPointConfig{}
 		for _, ec := range entryPoints {
@@ -319,11 +486,13 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 		// FuncDecls 消费跟踪：未命中任何端点的键 = 拼写/重构失配，覆写会静默失效，
 		// 块尾统一警告（P0-2）。
 		usedFuncDecls := map[FuncId]bool{}
+		configured := map[string]bool{}
 		for _, ep := range b.eps {
 			ec, ok := byOwner[ep.Owner]
 			if !ok {
 				continue
 			}
+			configured[ep.Owner] = true
 			if rm, ok := ec.FuncDecls[FuncId(funcIdOf(ep))]; ok {
 				usedFuncDecls[FuncId(funcIdOf(ep))] = true
 				if changed := applyRouteMeta(ep, rm); len(changed) > 0 {
@@ -366,8 +535,12 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 				ep.ConfigICs = append(ep.ConfigICs, MWRef{Qualifier: ref[:dot], Name: ref[dot+1:], Import: imp})
 			}
 		}
-		// 未命中的 FuncDecls 键警告：失配时覆写静默失效，必须可见
+		// 未命中警告：Config Name 拼错（补充静默失效）与 FuncDecls 键失配都必须可见
 		for _, ec := range entryPoints {
+			name := string(ec.Name)
+			if !configured[name] {
+				fmt.Fprintf(os.Stderr, "hinge gen: 警告：EntryPointConfig %q 未命中任何扫描到的 Enterpoint（检查 Name 拼写），配置未生效\n", name)
+			}
 			for key := range ec.FuncDecls {
 				if !usedFuncDecls[key] {
 					fmt.Fprintf(os.Stderr, "hinge gen: 警告：FuncDecls 键 %q 未命中任何端点（函数改名/移动后可能失配），覆写未生效\n", key)
@@ -392,6 +565,9 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 			b.verifyMWRef(byImport, ep, ref, "oapi:interceptor")
 		}
 		for _, ref := range ep.GroupICs {
+			b.verifyMWRef(byImport, ep, ref, "oapi:interceptor")
+		}
+		for _, ref := range ep.MountICs {
 			b.verifyMWRef(byImport, ep, ref, "oapi:interceptor")
 		}
 		for _, ref := range ep.ConfigICs {
@@ -423,17 +599,98 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 	return b.eps, nil
 }
 
+// methodEntry 有效方法集条目：md 为方法声明，declOwner 为声明所属类型名
+// （自身方法 = 查询类型；提升方法 = 嵌入类型名）。
+type methodEntry struct {
+	md        *ast.FuncDecl
+	declOwner string
+}
+
+// effectiveMethods 计算类型的有效方法集（与 Go 方法提升语义对齐）：
+// 自身方法 ∪ 匿名嵌入（递归）的同包导出结构体方法。声明序：自身在前、
+// 嵌入按字段序递归；同一声明类型只纳入一次（菱形嵌入去重）。
+// 跨包 / 接口 / 非结构体嵌入不参与（v1 同包约束，静默跳过）。
+func effectiveMethods(pkg *Package, owner string) []methodEntry {
+	seen := map[string]bool{}
+	var out []methodEntry
+	var walk func(t string)
+	walk = func(t string) {
+		if seen[t] {
+			return
+		}
+		seen[t] = true
+		for _, md := range pkg.methods[t] {
+			out = append(out, methodEntry{md: md, declOwner: t})
+		}
+		if si, ok := pkg.structOf(t); ok {
+			for _, sf := range si.st.Fields.List {
+				if len(sf.Names) != 0 {
+					continue
+				}
+				et := sf.Type
+				if se, ok := et.(*ast.StarExpr); ok {
+					et = se.X
+				}
+				id, ok := et.(*ast.Ident)
+				if !ok || !ast.IsExported(id.Name) || id.Name == t {
+					continue
+				}
+				if _, isStruct := pkg.structOf(id.Name); isStruct {
+					walk(id.Name)
+				}
+			}
+		}
+	}
+	walk(owner)
+	return out
+}
+
 func (b *irBuilder) buildPackage(pkg *Package) {
-	// 找出全部 Enterpoint：拥有 oapi:route 方法的接收者结构体
+	// 找出全部 Enterpoint：拥有 oapi:route 有效方法的接收者结构体
+	//（直接方法 + 端点集提升：嵌入 Enterpoint 的结构体继承其端点，亦为 owner）。
 	owners := map[string]bool{}
+	var direct []string
 	for recv, mds := range pkg.methods {
 		for _, md := range mds {
 			kv, _ := annotations(md.Doc)
 			for _, pair := range kv {
 				if pair[0] == "route" {
-					owners[recv] = true
+					if !owners[recv] {
+						owners[recv] = true
+						direct = append(direct, recv)
+					}
 					break
 				}
+			}
+		}
+	}
+	// 端点集提升传播：嵌入 Enterpoint 类型（直接/递归）的结构体同为 owner。
+	// 反向嵌入索引：被嵌入类型 → 嵌入方列表。
+	consumers := map[string][]string{}
+	for _, f := range pkg.Files {
+		for name, si := range f.structs {
+			for _, sf := range si.st.Fields.List {
+				if len(sf.Names) != 0 {
+					continue
+				}
+				et := sf.Type
+				if se, ok := et.(*ast.StarExpr); ok {
+					et = se.X
+				}
+				if id, ok := et.(*ast.Ident); ok && id.Name != name {
+					consumers[id.Name] = append(consumers[id.Name], name)
+				}
+			}
+		}
+	}
+	queue := append([]string{}, direct...)
+	for len(queue) > 0 {
+		t := queue[0]
+		queue = queue[1:]
+		for _, c := range consumers[t] {
+			if !owners[c] {
+				owners[c] = true
+				queue = append(queue, c)
 			}
 		}
 	}
@@ -462,6 +719,16 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 			switch key {
 			case "prefix":
 				sa.Prefix = value
+			case "parent":
+				if value == "" {
+					b.errf("Enterpoint %s：oapi:parent 值不能为空（父 Enterpoint 结构体名）", owner)
+					return
+				}
+				if value == owner {
+					b.errf("Enterpoint %s：oapi:parent 不能指向自身", owner)
+					return
+				}
+				sa.Parent = value
 			case "tag":
 				if value != "" {
 					sa.Tags = append(sa.Tags, value)
@@ -480,7 +747,7 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 					sa.ICs = append(sa.ICs, value)
 				}
 			default:
-				b.errf("Enterpoint %s：未知 struct 级注解 oapi:%s（允许 prefix/tag/timeout/middleware/interceptor）", owner, key)
+				b.errf("Enterpoint %s：未知 struct 级注解 oapi:%s（允许 prefix/parent/tag/timeout/middleware/interceptor）", owner, key)
 				return
 			}
 		}
@@ -491,7 +758,27 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 			return
 		}
 	}
-	for _, md := range pkg.methodsOf(owner) {
+	// 有效方法集（与 Go 方法提升语义对齐）：自身方法 ∪ 嵌入 Enterpoint 的提升方法。
+	// 提升端点：Owner = 本类型（spec/注册函数变体名，与被嵌入方天然不冲突），
+	// 路径用本类型的 oapi:prefix，方法级注解随方法走，struct 级注解不随（两身份解耦）。
+	methods := effectiveMethods(pkg, owner)
+	direct := map[string]bool{}
+	for _, me := range methods {
+		if me.declOwner == owner {
+			direct[me.md.Name.Name] = true
+		}
+	}
+	shadowWarned := map[string]bool{}
+	for _, me := range methods {
+		md := me.md
+		if me.declOwner != owner && direct[md.Name.Name] {
+			// 自身方法遮蔽提升端点（Go 遮蔽语义合法）：提升端点不发射，必须可见
+			if !shadowWarned[md.Name.Name] {
+				shadowWarned[md.Name.Name] = true
+				fmt.Fprintf(os.Stderr, "hinge gen: 警告：Enterpoint %s 的方法 %s 遮蔽了嵌入自 %s 的同名端点，后者不发射\n", owner, md.Name.Name, me.declOwner)
+			}
+			continue
+		}
 		// var routeMeta *RouteMeta
 		// if len(md.Recv.List) != 0 {
 		// 	md.Recv.List[0].Type
@@ -540,6 +827,8 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 		ep := &EndpointIR{
 			Owner:      owner,
 			Pkg:        pkg,
+			Prefix:     sa.Prefix,
+			Parent:     sa.Parent,
 			Handler:    md.Name.Name,
 			Summary:    firstNonEmpty(docLines...),
 			Tags:       append(append([]string{}, sa.Tags...), mTags...),
@@ -657,34 +946,36 @@ func (b *irBuilder) buildSignature(ep *EndpointIR, md *ast.FuncDecl) bool {
 	ep.RExpr = results[0].Type
 	ep.RSrcFile = srcFile
 	params := flattenFields(ft.Params)
-	if len(params) < 2 || len(params) > 3 {
-		b.errf("%s：签名必须为 func(ctx context.Context, Q[, B]) (R, error)，实际 %d 个参数", pos, len(params))
+	if len(params) < 1 || len(params) > 3 {
+		b.errf("%s：签名必须为 func(ctx context.Context) / func(ctx context.Context, Q) / func(ctx context.Context, Q, B) (R, error)，实际 %d 个参数", pos, len(params))
 		return false
 	}
 	if !isContextParam(params[0].Type, ep.Pkg) {
 		b.errf("%s：第一个参数必须为 context.Context", pos)
 		return false
 	}
-	ep.TwoArg = len(params) == 2
+	ep.ArgNums = len(params) - 1
 	// ---- Q ----
-	qExpr := params[1].Type
-	qName, qAny, err := classifyParam(qExpr, ep.Pkg, "Q")
-	if err != nil {
-		b.errf("%s：%v", pos, err)
-		return false
-	}
-	if !qAny {
-		ep.HasQ = true
-		ep.QName = qName
-		fs, ferr := resolveFields(ep.Pkg, qName, "", 0)
-		if ferr != nil {
-			b.errf("%s：%v", pos, ferr)
+	if len(params) >= 2 {
+		qExpr := params[1].Type
+		qName, qAny, err := classifyParam(qExpr, ep.Pkg, "Q")
+		if err != nil {
+			b.errf("%s：%v", pos, err)
 			return false
 		}
-		ep.QSet = fs
-		b.checkPathParams(ep)
-		ep.InTransformQ, ep.InTransformQPtr = methodShape(ep.Pkg, qName, "InTransform", true)
-		ep.ValidateQ, ep.ValidateQPtr = methodShape(ep.Pkg, qName, "Validate", false)
+		if !qAny {
+			ep.HasQ = true
+			ep.QName = qName
+			fs, ferr := resolveFields(ep.Pkg, qName, "", 0)
+			if ferr != nil {
+				b.errf("%s：%v", pos, ferr)
+				return false
+			}
+			ep.QSet = fs
+			b.checkPathParams(ep)
+			ep.InTransformQ, ep.InTransformQPtr = methodShape(ep.Pkg, qName, "InTransform", true)
+			ep.ValidateQ, ep.ValidateQPtr = methodShape(ep.Pkg, qName, "Validate", false)
+		}
 	}
 	// ---- B ----
 	if len(params) == 3 {
@@ -707,17 +998,19 @@ func (b *irBuilder) buildSignature(ep *EndpointIR, md *ast.FuncDecl) bool {
 					return false
 				}
 				ep.BSet = fs
-				ep.BodyKind = "json"
-				for _, f := range fs.Fields {
-					if f.Class == classFile || f.Class == classFileSlice {
-						ep.BodyKind = "multipart"
-						break
-					}
-				}
+				ep.BodyKind = bodyKindOf(fs)
 				if ep.BodyKind == "multipart" {
 					for _, f := range fs.Fields {
-						if (f.Class == classFile || f.Class == classFileSlice) && f.In != "form" {
-							b.errf("%s：multipart 字段 %s 必须声明 form 标签（否则文件静默丢失）", pos, f.GoName)
+						isFile := f.Class == classFile || f.Class == classFileSlice
+						switch {
+						case isFile && f.In != "form":
+							b.errf("%s：multipart 文件字段 %s 必须声明 form 标签（否则文件静默丢失）", pos, f.GoName)
+						case !isFile && f.In != "form":
+							src := f.In
+							if src == "" {
+								src = "无标签（JSON 语义）"
+							}
+							b.errf("%s：multipart body 字段 %s 当前为 %s；multipart value 只认 form 标签，query 入参请拆到 Q，JSON 字段请勿与 multipart 混排", pos, f.GoName, src)
 						}
 					}
 				}

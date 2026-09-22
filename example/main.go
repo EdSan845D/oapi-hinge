@@ -1,8 +1,9 @@
-//go:build !openapi
-
 // 运行时入口：v0.2 装配只剩 DI + 一行注册。
 // 业务侧没有路由注册代码——注册函数由 hinge gen 从 oapi:* 注解生成（apigen 包）。
+// OpenAPI 文档生成走独立入口 docs/（go run ./docs），运行时二进制零文档依赖。
 package main
+
+//go:generate go run ./app/generate.go
 
 import (
 	"errors"
@@ -51,10 +52,14 @@ func main() {
 	// 错误自带状态码（hinge.NotFound 等）始终优先。
 
 	// 装配：DI + 一行注册（gin / echo / http 各自的 RegisterAll 已生成）
+	store := eps.NewUserStore()
 	epsAll := apigen.All{
-		SystemEp: eps.SystemEp{},
-		UserEp:   eps.UserEp{Store: eps.NewUserStore()},
-		FileEp:   eps.FileEp{},
+		SystemEp:  eps.SystemEp{},
+		UserEp:    eps.UserEp{Store: store},
+		VipUserEp: eps.VipUserEp{UserEp: eps.UserEp{Store: store}}, // 嵌入 UserEp：与主列表共享 store
+		FileEp:    eps.FileEp{},
+		AdminEp:   eps.AdminEp{}, // oapi:parent 挂载链根（AdminEp /admin + AuditEp /audit）
+		AuditEp:   eps.AuditEp{},
 	}
 	apigen.RegisterAllGin(r.Group("/api"), k, epsAll)
 

@@ -1,5 +1,3 @@
-//go:build openapi
-
 package openapi
 
 import (
@@ -27,14 +25,20 @@ type docUser struct {
 func TestGenerateEscapeHatches(t *testing.T) {
 	eps := []hinge.EndpointDoc{
 		{
-			Owner: "t", Handler: "DocHeader",
-			Method: "GET", Path: "/doc/h", Summary: "header",
-			QType: hinge.Type[docHeaderReq](), RType: hinge.Type[map[string]string](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "DocHeader",
+				Method: "GET", Path: "/doc/h",
+			},
+			Summary: "header",
+			QType:   hinge.Type[docHeaderReq](), RType: hinge.Type[map[string]string](),
 		},
 		{
-			Owner: "t", Handler: "DocCreated",
-			Method: "POST", Path: "/doc/c", Summary: "created",
-			RType: hinge.Type[hinge.Response[docUser]](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "DocCreated",
+				Method: "POST", Path: "/doc/c",
+			},
+			Summary: "created",
+			RType:   hinge.Type[hinge.Response[docUser]](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
@@ -68,10 +72,13 @@ func TestGenerateEscapeHatches(t *testing.T) {
 func TestGenerateDefaultStatusCode(t *testing.T) {
 	eps := []hinge.EndpointDoc{
 		{
-			Owner: "t", Handler: "Create",
-			Method: "POST", Path: "/doc/create", Summary: "创建",
-			Status: http.StatusCreated,
-			RType:  hinge.Type[map[string]string](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "Create",
+				Method: "POST", Path: "/doc/create",
+				Status: http.StatusCreated,
+			},
+			Summary: "创建",
+			RType:   hinge.Type[map[string]string](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
@@ -92,9 +99,12 @@ func TestGenerateDefaultStatusCode(t *testing.T) {
 func TestGenerateCustomEnvelopeSchema(t *testing.T) {
 	eps := []hinge.EndpointDoc{
 		{
-			Owner: "t", Handler: "H",
-			Method: "GET", Path: "/doc/h", Summary: "header",
-			RType: hinge.Type[map[string]string](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "H",
+				Method: "GET", Path: "/doc/h",
+			},
+			Summary: "header",
+			RType:   hinge.Type[map[string]string](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
@@ -130,14 +140,20 @@ type docPathReq struct {
 func TestGeneratePathParamsFromQueryStruct(t *testing.T) {
 	eps := []hinge.EndpointDoc{
 		{
-			Owner: "t", Handler: "DocPath",
-			Method: "GET", Path: "/doc/users/{id}/{sub}", Summary: "路径参数",
-			QType: hinge.Type[docPathReq](), RType: hinge.Type[map[string]string](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "DocPath",
+				Method: "GET", Path: "/doc/users/{id}/{sub}",
+			},
+			Summary: "路径参数",
+			QType:   hinge.Type[docPathReq](), RType: hinge.Type[map[string]string](),
 		},
 		{
-			Owner: "t", Handler: "Health",
-			Method: "GET", Path: "/doc/health", Summary: "公开接口",
-			RType: hinge.Type[map[string]string](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "Health",
+				Method: "GET", Path: "/doc/health",
+			},
+			Summary: "公开接口",
+			RType:   hinge.Type[map[string]string](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
@@ -169,10 +185,13 @@ func TestGeneratePathParamsFromQueryStruct(t *testing.T) {
 func TestGenerateAuthAndExtensions(t *testing.T) {
 	eps := []hinge.EndpointDoc{
 		{
-			Owner: "t", Handler: "Admin",
-			Method: "GET", Path: "/doc/admin", Summary: "受保护接口",
-			MWRefs: []string{"example.com/app/middleware.BearerAuth"},
-			RType:  hinge.Type[map[string]string](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "Admin",
+				Method: "GET", Path: "/doc/admin",
+			},
+			Summary: "受保护接口",
+			MWRefs:  []string{"example.com/app/middleware.BearerAuth"},
+			RType:   hinge.Type[map[string]string](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
@@ -208,9 +227,12 @@ type docSliceReq struct {
 func TestGenerateSliceQueryParam(t *testing.T) {
 	eps := []hinge.EndpointDoc{
 		{
-			Owner: "t", Handler: "Tags",
-			Method: "GET", Path: "/doc/tags", Summary: "tags",
-			QType: hinge.Type[docSliceReq](), RType: hinge.Type[map[string]string](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "Tags",
+				Method: "GET", Path: "/doc/tags",
+			},
+			Summary: "tags",
+			QType:   hinge.Type[docSliceReq](), RType: hinge.Type[map[string]string](),
 		},
 	}
 	out := t.TempDir() + "/spec.yaml"
@@ -236,15 +258,21 @@ func TestGenerateMiddlewareDocHook(t *testing.T) {
 	const demoRef = "github.com/EdSan845D/oapi-hinge/openapi.demoSessionMW"
 	eps := []hinge.EndpointDoc{
 		{
-			Owner: "t", Handler: "Del",
-			Method: "DELETE", Path: "/doc/users/{id}", Summary: "删除",
-			RType:  hinge.Type[map[string]string](),
-			MWRefs: []string{demoRef},
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "Del",
+				Method: "DELETE", Path: "/doc/users/{id}",
+			},
+			Summary: "删除",
+			RType:   hinge.Type[map[string]string](),
+			MWRefs:  []string{demoRef},
 		},
 		{
-			Owner: "t", Handler: "Get",
-			Method: "GET", Path: "/doc/users/{id}", Summary: "详情（无该中间件）",
-			RType: hinge.Type[map[string]string](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "Get",
+				Method: "GET", Path: "/doc/users/{id}",
+			},
+			Summary: "详情（无该中间件）",
+			RType:   hinge.Type[map[string]string](),
 		},
 	}
 	RegisterMiddlewareDoc(demoSessionMW, func(op *openapi3.Operation) {
@@ -280,7 +308,7 @@ func TestUnmatchedMiddlewareHookWarning(t *testing.T) {
 	// demoSessionMW 已在 TestGenerateMiddlewareDocHook 注册并被消费；
 	// demoUnmatchedMW 从未被任何端点 MWRefs 引用，断言警告出现
 	_, warnings, err := buildDoc([]hinge.EndpointDoc{
-		{Owner: "t", Handler: "Plain", Method: "GET", Path: "/doc/plain", Summary: "无中间件", RType: hinge.Type[map[string]string]()},
+		{Endpoint: hinge.Endpoint{Owner: "t", Handler: "Plain", Method: "GET", Path: "/doc/plain"}, Summary: "无中间件", RType: hinge.Type[map[string]string]()},
 	})
 	if err != nil {
 		t.Fatal(err)

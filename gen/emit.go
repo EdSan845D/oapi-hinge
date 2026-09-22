@@ -176,7 +176,7 @@ func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 	for _, ep := range eps {
 		pkgAlias(is, taken, ep.Pkg.ImportPath, ep.Pkg.Name)
 	}
-specNames := make([]string, 0)
+	specNames := make([]string, 0)
 	var body strings.Builder
 	for _, ep := range eps {
 		specName := GenSpecName(ep)
@@ -244,7 +244,7 @@ func writeRuntimeSpecFields(b *strings.Builder, ep *EndpointIR) {
 }
 
 // emitDocs 文档侧端点描述函数（hinge.EndpointDoc）：只被 openapi 开发期文档入口
-// 调用（go run -tags openapi → openapi.Generate(AllDocSpecs())）。按需构造：
+// 调用（go run ./docs → openapi.Generate(AllDocSpecs())）。按需构造：
 // 运行时二进制不调用本文件的任何函数，链接器 deadcode 全量剥离 ——
 // Summary/Description 等文档字符串与 QType/BType/RType 类型描述零运行时开销。
 // 运行时字段不重复发射：内嵌 Endpoint 字段直接调用 specs_gen.go 的
@@ -675,8 +675,91 @@ func emitBBinder(b *strings.Builder, ep *EndpointIR, is *importSet, taken map[st
 		emitRequiredChecks(b, ep.BSet)
 		emitValidate(b, ep.ValidateB, ep.ValidateBPtr)
 		b.WriteString("\treturn v, nil\n")
+	case "form":
+		// application/x-www-form-urlencoded：value 全部来自 r.FormValues（PostForm），
+		// 错误立即返回（与 multipart value part 同语义）；必填缺失经 emitRequiredChecks 收集。
+		fmt.Fprintf(b, "\tbe := &hinge.BindError{}\n\tadd := be.AddField\n")
+		if len(requiredFields(ep.BSet)) == 0 {
+			b.WriteString("\t_ = add\n")
+		}
+		for _, a := range ep.BSet.Allocs {
+			rd2 := &renderer{pkg: ep.Pkg, ownerAlias: ownerAlias, src: a.SrcFile, is: is}
+			t, err := rd2.expr(ast.NewIdent(a.TypeName))
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(b, "\tif %s == nil {\n\t\t%s = new(%s)\n\t}\n", a.Access, a.Access, t)
+		}
+		for _, f := range ep.BSet.Fields {
+			if err := emitFormValueBlock(b, f, ep.Pkg, ownerAlias, is); err != nil {
+				return err
+			}
+		}
+		if ep.InTransformB {
+			recv := "v"
+			if ep.InTransformBPtr {
+				recv = "(&v)"
+			}
+			fmt.Fprintf(b, "\tif err := %s.InTransform(ctx); err != nil {\n\t\treturn v, err\n\t}\n", recv)
+		}
+		emitRequiredChecks(b, ep.BSet)
+		emitValidate(b, ep.ValidateB, ep.ValidateBPtr)
+		b.WriteString("\treturn v, nil\n")
 	default:
 		return fmt.Errorf("未知 body kind %q", ep.BodyKind)
+	}
+	return nil
+}
+
+// emitFormValueBlock urlencoded 表单体 value 字段（错误立即返回）。
+// 与 multipart value part 的差异仅在取值源：r.FormValues（PostForm）而非 fm.Value。
+func emitFormValueBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string, is *importSet) error {
+	rd := &renderer{pkg: pkg, ownerAlias: ownerAlias, src: f.SrcFile, is: is}
+	t, err := rd.expr(f.TypeExpr)
+	if err != nil {
+		return fmt.Errorf("字段 %s: %w", f.GoName, err)
+	}
+
+	var accessAssignmentStatement = func(f Field) {
+		b.WriteString("\t\t")
+		b.WriteString(f.Access)
+		switch f.Class {
+		case classScalar:
+			b.WriteString(" = x\n")
+		case classPtrScalar:
+			b.WriteString(" = &x\n")
+		case classSlice:
+			b.WriteString(" = xs\n")
+		}
+	}
+
+	fmt.Fprintf(b, "\tif vals, ok := r.FormValues(%q); ok && len(vals) > 0 && vals[0] != \"\" {\n", f.Source)
+	switch f.Class {
+	case classScalar, classPtrScalar:
+		fmt.Fprintf(b, "\t\tx, err := hinge.Parse[%s](vals[0], %q)\n", t, f.Source)
+	case classSlice:
+		src := "hinge.Flat(vals)"
+		if f.BaseKind == "string" {
+			src = "vals" // string 元素不拆逗号，整段原样解析
+		}
+		fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](%s, %q)\n", t, src, f.Source)
+	default:
+		return fmt.Errorf("form 字段 %s 类型不支持", f.GoName)
+	}
+	b.WriteString("\t\tif err != nil {\n\t\t\treturn v, err\n\t\t}\n")
+	accessAssignmentStatement(f)
+	b.WriteString("\t}\n")
+	if f.Def != "" {
+		fmt.Fprintf(b, "\tif %s {\n", zeroCmp(f))
+		switch f.Class {
+		case classSlice:
+			fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](%s, %q)\n", t, sliceDefSrc(f), f.Source)
+		default:
+			fmt.Fprintf(b, "\t\tx, err := hinge.Parse[%s](%s, %q)\n", t, strconv.Quote(f.Def), f.Source)
+		}
+		b.WriteString("\t\tif err != nil {\n\t\t\treturn v, err\n\t\t}\n")
+		accessAssignmentStatement(f)
+		b.WriteString("\t}\n")
 	}
 	return nil
 }
@@ -756,15 +839,24 @@ func frameworkPath(emiter EmitConfig, p string) string {
 //（title/path_style/template）+ 一份注册模板，无需改发射器；模板直接消费端点 IR。
 
 // epData 一条路由的发射数据：内嵌端点 IR（模板可直接访问 Method / Handler /
-// QName / BName / TwoArg / FullPath / RExpr 等全量字段），叠加按 target 派生的
+// QName / BName / ArgNums / FullPath / RExpr 等全量字段），叠加按 target 派生的
 // 发射态字段（路径风格、中间件实参、描述变量名、绑定器实参）。
 type epData struct {
-	*EndpointIR        // 端点 IR：Method / Handler / QName / BName / TwoArg / FullPath ...
+	*EndpointIR        // 端点 IR：Method / Handler / QName / BName / ArgNums / FullPath ...
 	Path        string // 目标框架路径风格
 	Args        string // 路由调用剩余中间件参数（框架原生直挂，按 target 语义组装）
 	Extras      string // 内核拦截器实参串（Handle 变参尾段：", ic1, ic2"；空 = 无）
+	EPLit       string // hinge.Endpoint 字面量（自定义 Adaptor 需要端点上下文时用）
 	Spec        string // 端点描述变量名（Spec<Owner><Handler>）
 	Binder      string // 绑定器实参串（bindQ, bindB）
+}
+
+// epLiteral 发射 hinge.Endpoint 字面量：自定义模板的管线 helper 需要端点
+// 上下文时（如拦截链 ICs 需要 ep 实参）直接可用。PKGFlag owner（包级函数
+// 端点）清洗为包名。
+func epLiteral(ep *EndpointIR, fp string) string {
+	owner := strings.TrimPrefix(ep.Owner, PKGFlag)
+	return fmt.Sprintf("hinge.Endpoint{Owner: %q, Handler: %q, Method: %q, Path: %q}", owner, ep.Handler, ep.Method, fp)
 }
 
 // ownerData 一个 Enterpoint 的注册函数数据。
@@ -842,7 +934,11 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 		od := &ownerData{Name: owner, IsPkg: isPkgOwner, OwnerAlias: taken[ep0.Pkg.ImportPath]}
 		// 组级引用：EntryPointConfig.Middlewares（框架原生）+ 结构体级 oapi:middleware。
 		// 无组概念的框架（http）不用 GroupArgs，引用由模板侧折叠进每条路由。
+		// 组级中间件链（执行序）：挂载链继承（祖先根→叶）→ Config 补充 → 自身 struct 注解
 		var groupRefs []string
+		for _, ref := range ep0.MountMWs {
+			groupRefs = append(groupRefs, mwSourceRef(is, taken, ref))
+		}
 		for _, rmw := range ep0.RouteMWs {
 			groupRefs = append(groupRefs, rmw.Ref)
 		}
@@ -862,16 +958,20 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 				bindArgs += ", nil"
 			}
 
+			// 调用括号由发射器统一追加：specRef = "SpecXxx()"，模板内 {{.Spec}} 为裸标识符
+			//（自定义模板请勿再手写 "()"，否则产生 SpecXxx()() 双调用编译错误）
 			specRef := GenSpecName(ep) + "()"
 			// 方法级注解引用：路由级直挂（组级之后、内核包装器之前）。
 			annoRefs := make([]string, 0, len(ep.AnnoMWs))
 			for _, ref := range ep.AnnoMWs {
 				annoRefs = append(annoRefs, mwSourceRef(is, taken, ref))
 			}
-			// 内核拦截器实参：EntryPointConfig.Interceptors（owner 级）→ 结构体级
-			// oapi:interceptor → 方法级 oapi:interceptor，声明序发射为 Handle
-			// 变参尾段（extra 进内核链）。
-			icRefs := make([]string, 0, len(ep0.ConfigICs)+len(ep0.GroupICs)+len(ep.AnnoICs))
+			// 内核拦截器实参：挂载链继承（祖先根→叶）→ Config 补充 → 结构体级 →
+			// 方法级，声明序发射为 Handle 变参尾段（extra 进内核链）。
+			icRefs := make([]string, 0, len(ep0.MountICs)+len(ep0.ConfigICs)+len(ep0.GroupICs)+len(ep.AnnoICs))
+			for _, ref := range ep0.MountICs {
+				icRefs = append(icRefs, mwSourceRef(is, taken, ref))
+			}
 			for _, ref := range ep0.ConfigICs {
 				icRefs = append(icRefs, mwSourceRef(is, taken, ref))
 			}
@@ -886,12 +986,15 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 				extras = ", " + strings.Join(icRefs, ", ")
 			}
 
-			ed := &epData{EndpointIR: ep, Path: frameworkPath(emiter, ep.FullPath), Spec: specRef, Binder: bindArgs, Extras: extras}
+			ed := &epData{EndpointIR: ep, Path: frameworkPath(emiter, ep.FullPath), Spec: specRef, Binder: bindArgs, Extras: extras, EPLit: epLiteral(ep, frameworkPath(emiter, ep.FullPath))}
 			switch target {
 			case "http":
 				// stdlib 无路由链：全部引用折叠进 Handle 变参（内核拦截链，
 				// AsInterceptors 装配期识别；类型不兼容 fail fast）。
-				raw := make([]string, 0, len(ep.RouteMWs)+len(ep0.GroupMWs)+len(annoRefs)+len(icRefs))
+				raw := make([]string, 0, len(ep.MountMWs)+len(ep.RouteMWs)+len(ep0.GroupMWs)+len(annoRefs)+len(icRefs))
+				for _, ref := range ep.MountMWs {
+					raw = append(raw, mwSourceRef(is, taken, ref))
+				}
 				for _, rmw := range ep.RouteMWs {
 					raw = append(raw, rmw.Ref)
 				}

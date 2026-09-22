@@ -24,6 +24,8 @@ import (
 //	go run ./app            # 生成
 //	go run ./app -check     # CI 门禁：产物过期即失败
 func EntryPointsConfig() []gen.EntryPointConfig {
+	// 挂载关系不经 Config：oapi:parent 注解是唯一事实源（见 app/eps/admin.go，
+	// AdminEp 组根 /admin + AuditEp oapi:parent AdminEp /audit）。
 	return []gen.EntryPointConfig{
 		{
 			Name: "SystemEp",
@@ -58,14 +60,17 @@ func main() {
 		Module:  "github.com/EdSan845D/oapi-hinge/example",
 		Scan:    []string{"./app/eps", "./app/middleware"},
 		Out:     "./apigen",
-		Targets: []string{"gin.row"},
+		Targets: []string{"gin", "gin.row"}, // 内置 gin（内核管线）+ 自定义 row 模板（自足管线）双演示
 		Emitters: map[string]gen.EmitConfig{
 			"gin.row": {
 				Title:    "GinRow",
 				Template: tmplFilePath,
 			},
 		},
-		// EntryPoints: EntryPointsConfig(),
+		// 程序化配置（含 Children 挂载树演示）：启用后产物头部带 entrypoints:
+		// programmatic 标记，CLI gen/-check 拒绝执行（双入口产物漂移防护），
+		// 生成与门禁都走本入口（go run ./app / go run ./app -check）。
+		EntryPoints: EntryPointsConfig(),
 	}
 	if err := gen.Run(dir, cfg, *check); err != nil {
 		fmt.Fprintln(os.Stderr, "hinge:", err)

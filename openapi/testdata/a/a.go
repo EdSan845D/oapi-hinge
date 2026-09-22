@@ -1,4 +1,4 @@
-// Package a 两阶段命名冲突测试用：与 b 包同名类型/函数（仅 -tags openapi 测试引用）。
+// Package a 两阶段命名冲突测试用：与 b 包同名类型/函数（仅 openapi 包测试引用）。
 // 同时作为「注释即文档」的注释样例。
 package a
 

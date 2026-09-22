@@ -1,5 +1,3 @@
-//go:build openapi
-
 package openapi
 
 import (
@@ -20,14 +18,20 @@ type genUploadReq struct {
 func TestGenerateBodyKinds(t *testing.T) {
 	eps := []hinge.EndpointDoc{
 		{
-			Owner: "t", Handler: "Raw",
-			Method: "POST", Path: "/raw", Summary: "原始字节体",
-			BType: hinge.Type[hinge.RawBody](), RType: hinge.Type[string](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "Raw",
+				Method: "POST", Path: "/raw",
+			},
+			Summary: "原始字节体",
+			BType:   hinge.Type[hinge.RawBody](), RType: hinge.Type[string](),
 		},
 		{
-			Owner: "t", Handler: "Upload",
-			Method: "POST", Path: "/up", Summary: "文件上传",
-			BType: hinge.Type[genUploadReq](), RType: hinge.Type[map[string]any](),
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "Upload",
+				Method: "POST", Path: "/up",
+			},
+			Summary: "文件上传",
+			BType:   hinge.Type[genUploadReq](), RType: hinge.Type[map[string]any](),
 		},
 	}
 	out := filepath.Join(t.TempDir(), "spec.yaml")
@@ -63,8 +67,10 @@ type genCookieReq struct {
 func TestCookieParameterDoc(t *testing.T) {
 	eps := []hinge.EndpointDoc{
 		{
-			Owner: "t", Handler: "Cookie",
-			Method: "GET", Path: "/c",
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "Cookie",
+				Method: "GET", Path: "/c",
+			},
 			QType: hinge.Type[genCookieReq](), RType: hinge.Type[map[string]string](),
 		},
 	}

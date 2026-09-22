@@ -1,9 +1,8 @@
 // Package eps 业务端点（Enterpoint）：oapi:* 注解 + 端点方法 = 全部路由声明。
 //
 // v0.2 范式：本包没有路由注册代码——
-//   - 路由注册：hinge gen 生成的 apigen 包（RegisterAllGin / Echo / HTTP）
-//   - 路径↔函数对应表：本包 hinge_gen_table.go（生成）
-//   - OpenAPI 文档：main_doc.go 消费 Endpoints() 表
+//   - 路由注册 / 绑定器 / 文档表：hinge gen 生成的 apigen 包
+//   - OpenAPI 文档：docs/main.go 消费 AllDocSpecs() 表
 //
 // 端点方法是普通函数：单元测试直接调用，无需启动 HTTP 服务器。
 // 删掉示例即可开始写自己的业务。
@@ -15,9 +14,13 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/EdSan845D/oapi-hinge/hinge"
 )
+
+// Paged 分页响应（业务自定义结构：框架不内置业务语义）
+type Paged[T any] struct {
+	Items []T   `json:"items"`
+	Total int64 `json:"total"`
+}
 
 // User 用户
 type User struct {

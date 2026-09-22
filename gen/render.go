@@ -217,6 +217,24 @@ func isHingeSelector(x ast.Expr, file *File, name string) bool {
 	return ok2 && p == hingeImportPath
 }
 
+// isFileHeaderExpr 判断是否文件类型选择器：hinge.FileHeader 或
+// multipart.FileHeader（标准库类型别名，二者同一类型，源码写法皆可）。
+func isFileHeaderExpr(x ast.Expr, file *File) bool {
+	if isHingeSelector(x, file, "FileHeader") {
+		return true
+	}
+	se, ok := x.(*ast.SelectorExpr)
+	if !ok || se.Sel.Name != "FileHeader" {
+		return false
+	}
+	id, ok := se.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	p, ok2 := file.importPathOf(id.Name)
+	return ok2 && p == "mime/multipart"
+}
+
 // isScalar 判断表达式是否为可解析标量（含 time.Time）；kind 返回种类名。
 func isScalar(x ast.Expr, file *File) (bool, string) {
 	switch t := x.(type) {
@@ -254,10 +272,10 @@ func classify(x ast.Expr, file *File) (fieldClass, ast.Expr, string, error) {
 		if ok, kind := isScalar(t.X, file); ok {
 			return classPtrScalar, t.X, kind, nil
 		}
-		if isHingeSelector(t.X, file, "FileHeader") {
+		if isFileHeaderExpr(t.X, file) {
 			return classFile, t.X, "", nil
 		}
-		return 0, nil, "", fmt.Errorf("不支持的指针字段类型（仅标量 / hinge.FileHeader）")
+		return 0, nil, "", fmt.Errorf("不支持的指针字段类型（仅标量 / hinge.FileHeader / multipart.FileHeader）")
 	case *ast.ArrayType:
 		if t.Len != nil {
 			return 0, nil, "", fmt.Errorf("不支持定长数组字段")
@@ -265,15 +283,15 @@ func classify(x ast.Expr, file *File) (fieldClass, ast.Expr, string, error) {
 		if ok, kind := isScalar(t.Elt, file); ok {
 			return classSlice, t.Elt, kind, nil
 		}
-		if se, ok := t.Elt.(*ast.StarExpr); ok && isHingeSelector(se.X, file, "FileHeader") {
+		if se, ok := t.Elt.(*ast.StarExpr); ok && isFileHeaderExpr(se.X, file) {
 			return classFileSlice, se.X, "", nil
 		}
-		return 0, nil, "", fmt.Errorf("不支持的切片字段类型（仅标量 / []*hinge.FileHeader）")
+		return 0, nil, "", fmt.Errorf("不支持的切片字段类型（仅标量 / []*hinge.FileHeader / []*multipart.FileHeader）")
 	default:
 		if ok, kind := isScalar(x, file); ok {
 			return classScalar, x, kind, nil
 		}
-		return 0, nil, "", fmt.Errorf("不支持的绑定字段类型（支持的形态：标量 / *标量 / []标量 / *hinge.FileHeader / []*hinge.FileHeader）")
+		return 0, nil, "", fmt.Errorf("不支持的绑定字段类型（支持的形态：标量 / *标量 / []标量 / *hinge.FileHeader（或 multipart.FileHeader） / []*hinge.FileHeader）")
 	}
 }
 
@@ -299,7 +317,7 @@ func resolveFields(pkg *Package, typeName, accessPrefix string, depth int) (*fie
 	}
 	si, ok := pkg.structOf(typeName)
 	if !ok {
-		return nil, fmt.Errorf("类型 %s 不在扫描包内（v0.2 约束：Q/B 必须是扫描目录内同包结构体）", typeName)
+		return nil, fmt.Errorf("类型 %s 不在扫描包内（约束：Q/B 必须是扫描目录内同包结构体；跨包模型请镜像同包结构体 + 转换，或把模型目录加入 scan）", typeName)
 	}
 	fs := &fieldSet{}
 	for _, sf := range si.st.Fields.List {

@@ -57,6 +57,14 @@ func (r *Reader) QueryValues(name string) ([]string, bool) {
 	return vals, len(vals) > 0
 }
 
+func (r *Reader) FormValues(name string) ([]string, bool) {
+	if err := r.R.ParseForm(); err != nil {
+		return nil, false
+	}
+	vals := r.R.PostForm[name]
+	return vals, len(vals) > 0
+}
+
 func (r *Reader) Header(name string) (string, bool) {
 	v := r.R.Header.Get(name)
 	return v, v != ""

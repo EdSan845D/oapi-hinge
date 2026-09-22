@@ -18,8 +18,8 @@ func Register{{.Name}}{{$.Target.Title}}(i *echo.Group, k *hinge.Kernel{{if not 
 {{- $isPkg := .IsPkg}}
 {{- $ownerAlias := .OwnerAlias}}
 {{- range .Eps}}
-	r.Add("{{.Method}}", "{{.Path}}", serverecho.Handle(k, {{.Spec}}(), {{.Binder}}, func(ctx context.Context, q, b any) (any, error) {
-		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{if not .TwoArg}}, b.({{$ownerAlias}}.{{.BName}}){{end}})
+	r.Add("{{.Method}}", "{{.Path}}", serverecho.Handle(k, {{.Spec}}, {{.Binder}}, func(ctx context.Context, q, b any) (any, error) {
+		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx{{if gt .ArgNums 0}}, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{end}}{{if eq .ArgNums 2}}, b.({{$ownerAlias}}.{{.BName}}){{end}})
 	}{{.Extras}}){{if ne .Args ""}}, {{.Args}}{{end}})
 {{- end}}
 }

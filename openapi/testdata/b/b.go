@@ -1,4 +1,4 @@
-// Package b 两阶段命名冲突测试用：与 a 包同名类型/函数（仅 -tags openapi 测试引用）。
+// Package b 两阶段命名冲突测试用：与 a 包同名类型/函数（仅 openapi 包测试引用）。
 package b
 
 import (

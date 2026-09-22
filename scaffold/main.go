@@ -8,7 +8,7 @@
 //	oapi-hinge create myapp --force            # 覆盖已存在的目录
 //
 // 生成产物：Enterpoint + oapi:* 注解端点 + hinge gen 代码生成（apigen 包）
-// + 原生 Gin 运行时 + 文档生成（-tags openapi 构建期隔离）。
+// + 原生 Gin 运行时 + 文档生成（docs/ 独立入口，按需 import 即隔离）。
 // 内置示例业务（用户 CRUD + 文件下载 + 健康检查），改 app/eps 下的示例即可开始写自己的业务。
 package main
 
@@ -211,7 +211,7 @@ func printNextSteps(project, mod, env string, noTidy bool) {
 	fmt.Println("下一步:")
 	fmt.Printf("  cd %s\n", project)
 	fmt.Printf("  %s=dev go run .                          # 启动（dev 模式跳过示例鉴权）\n", env)
-	fmt.Println("  go run -tags openapi . -out openapi.yaml   # 生成 OpenAPI 文档")
+	fmt.Println("  go run ./docs -out openapi.yaml         # 生成 OpenAPI 文档")
 	fmt.Println("  ./build.sh -r                          # release 构建")
 	fmt.Println()
 	fmt.Println("module:", mod)

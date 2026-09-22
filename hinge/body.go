@@ -29,7 +29,8 @@ func AsBindError(err error) *BindError {
 			Field: te.Field, In: "body", Msg: "类型错误，期望 " + te.Type.String(),
 		}}}
 	}
-	if _, ok := errors.AsType[*json.SyntaxError](err); ok {
+	var synErr *json.SyntaxError
+	if errors.As(err, &synErr) {
 		return &BindError{Fields: []BindFieldError{{
 			In: "body", Msg: "JSON 语法错误",
 		}}}
@@ -43,7 +44,8 @@ func WrapBindErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if be, ok := errors.AsType[*BindError](err); ok {
+	var be *BindError
+	if errors.As(err, &be) {
 		return be
 	}
 	return &BindError{Fields: []BindFieldError{{Msg: err.Error()}}}

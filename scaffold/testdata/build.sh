@@ -1,5 +1,5 @@
 #!/bin/bash
-# release 构建：静态编译（不含文档生成器，-tags openapi 独立构建）
+# release 构建：静态编译（不含文档生成器，文档走 docs/ 独立入口）
 #   ./build.sh -r   release 构建（bin/app）
 #   ./build.sh -s   生成 OpenAPI 文档（openapi.yaml）
 
@@ -10,7 +10,7 @@ case "$1" in
   echo "release build -> bin/app"
   ;;
 -s)
-  go run -tags openapi . -out openapi.yaml
+  go run ./docs -out openapi.yaml
   ;;
 *)
   echo "Usage: $0 [-r] release [-s] spec" 1>&2

@@ -51,7 +51,7 @@ func (ep UserEp) CreateUser(ctx context.Context, _ any, b CreateUserReq) (User, 
 }
 ```
 
-统一 Handler 模板：`func(ctx context.Context, Q[, B]) (R, error)`。无 body 方法允许省略 B 参数（2 参简式）。Q/B 用结构体标签声明来源（`path:` / `query:` / `header:` / `cookie:` / `form:` / `json`），支持 default、必填（binding/validate 双标签）、指针、切片、time.Time。
+统一 Handler 模板：`func(ctx context.Context, Q[, B]) (R, error)`。无业务参端点可省略 Q/B（`func(ctx context.Context) (R, error)`）；无 body 方法允许省略 B 参数（2 参简式）。Q/B 用结构体标签声明来源（`path:` / `query:` / `header:` / `cookie:` / `form:` / `json`），支持 default、必填（binding/validate 双标签）、指针、切片、time.Time。
 
 ### 注解
 
@@ -64,7 +64,6 @@ func (ep UserEp) CreateUser(ctx context.Context, _ any, b CreateUserReq) (User, 
 | `oapi:status` / `oapi:deprecated` / `oapi:envelope` | 方法 | 成功码 / 弃用 / 命名响应壳 |
 | `oapi:middleware` | 类型/方法 | **框架原生中间件**（第三方框架通道，值为 `pkg.Func` 函数引用，编译期校验）：类型级 → 组级中间件（scoped `Group("", mws...)`），方法级 → 路由直挂；作用于框架链、内核之外；无端点上下文。中间件引用尾段名命中文档侧 securitySchemes → 自动推导 security + 401 |
 | `oapi:interceptor` | 类型/方法 | **内核拦截器**（hinge.Interceptor 签名，值为 `pkg.Func` 函数引用，生成期签名校验）：类型级 → owner 全端点，方法级 → 本端点；发射为 `HandleWith` 的 extra 实参，进内核拦截链（correlation/timeout 之后、bind 之前），持端点上下文与统一错误链，跨框架可移植 |
-| ~~`oapi:auth` / `oapi:limit`~~ | — | **已移除**（v0.2 二分：框架原生用 `oapi:middleware`，内核拦截器用 `oapi:interceptor`，值均为函数引用，不支持裸名） |
 
 ### 代码生成
 
@@ -82,10 +81,10 @@ go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen -check # CI 门禁：产物
 
 | 文件 | 内容 |
 |---|---|
-| `apigen/specs_gen.go` | 端点描述变量（hinge.Endpoint）+ `All` 聚合器 |
+| `apigen/specs_gen.go` | 端点描述函数（hinge.Endpoint，按需构造，导入零分配）+ `All` 聚合器 |
 | `apigen/binders_gen.go` | 类型化绑定器（按 Q/B 类型去重，请求期零反射） |
+| `apigen/docs_gen.go` | 文档描述函数（hinge.EndpointDoc，按需构造；仅 `docs/` 文档入口消费） |
 | `apigen/register_<t>_gen.go` | 各框架注册函数 + `RegisterAll<Target>`（模板发射；`emiters.<t>.template` 可换自定义模板接入新框架） |
-| `<包>/hinge_gen_table.go` | `Enterpoint()` 守卫 + `Endpoints()` 路径↔函数对应表 |
 
 生成期即做诊断：路径冲突、path 参数与 Q 字段一致性、策略未声明、multipart 字段缺 form 标签、双前缀笔误等。
 
@@ -115,6 +114,65 @@ gen.Config{
 FuncDecls 支持覆写 Summary / Description / Tags / DefaultStatusCode / Envelope / Deprecated（*bool 三态），
 零值字段保持注解不变；命中端点在生成日志输出覆写提示（如 `注：SystemEp.Health 被 EntryPointConfig.FuncDecls 覆写：summary, deprecated=true`），
 保证代码定义的覆写可见。路由（Method/Path）以注解为唯一事实源，不参与覆写。
+
+### 挂载链：oapi:parent 注解
+
+大型项目的路由组织用 oapi:parent 注解组装成链，生成期展平——运行时仍是同一张平铺端点表，三个适配器零改动。
+挂载关系写在 ep 自己头上，与 prefix/middleware/interceptor 相邻，与“注解唯一事实源”同一哲学：
+
+```go
+// oapi:prefix /admin                     // 挂载链根：组根 Enterpoint（oapi:route 省路径即组根）
+// oapi:middleware middleware.Auth        // 组级中间件：沿链继承给全部后代
+// oapi:tag 管理
+type AdminEp struct{ gen.EntryPoint }
+
+// oapi:route GET
+func (ep AdminEp) Index(ctx context.Context, _ any) (map[string]string, error) { ... }
+
+// oapi:parent AdminEp                    // 挂到 AdminEp 下（纯名引用）
+// oapi:prefix /audit                     // 自身前缀与父链串联 → /admin/audit
+// oapi:interceptor middleware.AccessLog  // 自身拦截器：只作用于本节点
+type AuditEp struct{}
+
+// oapi:route GET /events
+func (ep AuditEp) ListEvents(ctx context.Context, q AuditQ) (Paged[AuditEvent], error) { ... }
+```
+
+沿祖先链（先根后叶）生成期合成：**路径** = 各节点 oapi:prefix 串联 + 方法路径（自身路径已含父链前缀是常见
+笔误，生成期诊断）；**组级中间件 / 拦截器**沿链继承（根→叶，与 Group 嵌套执行序一致），Config 补充
+（Middlewares / Interceptors / FuncDecls）不沿链（per-ep）。约束：parent 悬空 / 成环 / 指向包级函数端点
+均生成期诊断；同一 ep 至多一个 parent（子声明式天然单挂载）。纯前缀层用组根 Enterpoint 表达
+（oapi:route 省路径即组根）。
+
+### 端点集提升：Enterpoint 嵌入
+
+嵌入一个 Enterpoint 类型，其全部端点以嵌入方为 owner 克隆发射（与 Go 方法提升语义对齐）——复用一组
+端点开新前缀零重复：
+
+```go
+// oapi:prefix /users
+// oapi:middleware middleware.Auth
+type UserEp struct{ Store *UserStore }
+
+// oapi:route GET
+func (ep UserEp) List(ctx context.Context, q ListQ) (Paged[User], error) { ... }
+
+// oapi:prefix /users/vip                     // 新前缀
+// oapi:middleware middleware.Auth            // 嵌入方自己的组级中间件
+type VipUserEp struct {
+    UserEp                                   // 嵌入：UserEp 的全部端点提升到本类型
+    Level int
+}
+
+// oapi:route GET /panel
+func (ep VipUserEp) LevelContent(ctx context.Context, _ any) (map[string]string, error) { ... }
+// → /users（独立照旧）+ /users/vip、/users/vip/{id}（提升）+ /users/vip/panel（自身）
+```
+
+提升端点：Owner = 嵌入方类型（spec/注册函数变体名，如 `SpecVipUserEpList`，与被嵌入方天然不冲突）、
+路径用嵌入方前缀、**方法级注解随方法走、struct 级注解不随**（两个身份解耦）；binder 按 Q 类型去重共享。
+自身方法可遮蔽同名提升端点（Go 遮蔽语义，生成期警告）。与 oapi:parent 正交可组合。嵌入仅为复用字段时
+请提取非 EP 结构体，避免误触发提升。
 
 ### 装配：DI + 一行注册
 
@@ -149,24 +207,28 @@ echo / 原生 http 各有对称的 `RegisterAllEcho` / `RegisterAllHTTP`——�
 | `serverhttp` | **独立子模块**（tag `serverhttp/vX.Y.Z`）：标准库 http 适配器（零第三方依赖） |
 | `validator` | **独立子模块**（tag `validator/vX.Y.Z`）：go-playground 接入（可选依赖） |
 | `gen` + `cmd/hinge` | 代码生成器：AST 注解解析 → IR → 绑定器/注册器/表发射 |
-| `openapi` | OpenAPI 3.1 生成器，消费文档描述表（`//go:build openapi` 隔离，release 零开发依赖） |
+| `openapi` | OpenAPI 3.1 生成器，消费文档描述表（按需 import 即隔离，release 零开发依赖） |
 | `scaffold` | 项目脚手架（`oapi-hinge create myapp`） |
 
 ## OpenAPI 文档
 
+文档生成器按需 import 即隔离：只有 `docs/` 独立入口（example 与脚手架项目自带）import `openapi` 包，
+运行时二进制（main.go）不引用即不链接任何文档依赖。
+
 ```go
-//go:build openapi
-// main_doc.go：go run -tags openapi . -out openapi.yaml
-func collect(epss ...hinge.Enterpoint) []hinge.Endpoint {
-	var out []hinge.Endpoint
-	for _, ep := range epss {
-		out = append(out, ep.Endpoints()...)
-	}
-	return out
+// docs/main.go：go run ./docs -out openapi.yaml
+if err := openapi.Generate(
+	*out,
+	apigen.AllDocSpecs(), // 文档描述表（docs_gen.go，hinge gen 生成、按需构造）
+	openapi.OptionWithDocInfo(info),
+	openapi.OptionWithServer(servers),
+	openapi.OptionWithSourceComments(), // 注释即文档：字段/结构体注释进描述
+); err != nil {
+	panic(err)
 }
 ```
 
-`Endpoints()` 表即「路径↔函数对应关系」的唯一检视入口，conformance 测试与文档都从它派生。
+`AllDocSpecs()` 即「端点→文档描述」的唯一检视入口，文档规范从它派生。
 
 ### 中间件文档钩子
 
@@ -175,8 +237,7 @@ func collect(epss ...hinge.Enterpoint) []hinge.Endpoint {
 文档生成时按引用配对调用钩子：
 
 ```go
-//go:build openapi
-// main_doc.go
+// docs/main.go
 openapi.RegisterMiddlewareDoc(middleware.Auth, func(op *openapi3.Operation) {
 	op.Security = &openapi3.SecurityRequirements{{"BearerAuth": {}}}
 	op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
@@ -200,7 +261,7 @@ openapi.RegisterMiddlewareDoc(middleware.ParseHeaderWithInfo, func(op *openapi3.
 - **入参转换 / 出参加工**：`InTransform(ctx) error` / `OutTransform(ctx) error` 接口由生成绑定器与内核自动调用（零反射）；
 - **校验器**：生成绑定器内置 required 检查 + `Validate()` 直调；`validator.Playground()` 接入完整规则（可选依赖）；
 - **拦截器**：`hinge.Interceptor` 具名包级函数，`oapi:interceptor` 注解 / `EntryPointConfig.Interceptors` 直接引用（无注册表）；短路时自行经 Sink 写出并返回 nil，返回错误走统一错误链；
-- **中间件文档钩子**：`openapi.RegisterMiddlewareDoc(fn, hook)`（openapi tag），按函数引用为引用了该中间件的端点定制 security/参数/响应，见「中间件文档钩子」。
+- **中间件文档钩子**：`openapi.RegisterMiddlewareDoc(fn, hook)`，按函数引用为引用了该中间件的端点定制 security/参数/响应，见「中间件文档钩子」。
 
 ### 发布（多模块锁步）
 

@@ -7,7 +7,6 @@ package apigen
 
 import (
 	"context"
-
 	eps "github.com/EdSan845D/oapi-hinge/example/app/eps"
 	middleware "github.com/EdSan845D/oapi-hinge/example/app/middleware"
 	"github.com/EdSan845D/oapi-hinge/hinge"
@@ -15,12 +14,28 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// RegisterAdminEpGin 把 AdminEp 的全部端点挂到 Gin。
+func RegisterAdminEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.AdminEp) {
+	r := i.Group("", middleware.Auth)
+	r.GET("/admin", servergin.Handle(k, SpecAdminEpIndex(), nil, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.Index(ctx)
+	}))
+}
+
+// RegisterAuditEpGin 把 AuditEp 的全部端点挂到 Gin。
+func RegisterAuditEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.AuditEp) {
+	r := i.Group("", middleware.Auth)
+	r.GET("/admin/audit/events", servergin.Handle(k, SpecAuditEpListEvents(), BindQAuditQ, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.ListEvents(ctx, q.(eps.AuditQ))
+	}, middleware.AccessLog))
+}
+
 // RegisterFileEpGin 把 FileEp 的全部端点挂到 Gin。
 func RegisterFileEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.FileEp) {
 	r := i
 	r.GET("/files/:name", servergin.Handle(k, SpecFileEpDownloadSample(), BindQDownloadSampleReq, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.DownloadSample(ctx, q.(eps.DownloadSampleReq))
-	}, middleware.BearerAuth))
+	}))
 }
 
 // RegisterPKG_epsGin 把 PKG_eps 的全部端点挂到 Gin。
@@ -35,8 +50,8 @@ func RegisterPKG_epsGin(i gin.IRouter, k *hinge.Kernel) {
 func RegisterSystemEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.SystemEp) {
 	r := i.Group("", middleware.Auth)
 	r.GET("/health", servergin.Handle(k, SpecSystemEpHealth(), nil, nil, func(ctx context.Context, q, b any) (any, error) {
-		return ep.Health(ctx, q)
-	}, middleware.AccessLog))
+		return ep.Health(ctx)
+	}))
 }
 
 // RegisterUserEpGin 把 UserEp 的全部端点挂到 Gin。
@@ -62,10 +77,39 @@ func RegisterUserEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.UserEp) {
 	}))
 }
 
+// RegisterVipUserEpGin 把 VipUserEp 的全部端点挂到 Gin。
+func RegisterVipUserEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.VipUserEp) {
+	r := i.Group("", middleware.Auth)
+	r.PATCH("/users/vip/:id/password", servergin.Handle(k, SpecVipUserEpChangePassword(), BindQChangePasswordReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.ChangePassword(ctx, q.(eps.ChangePasswordReq))
+	}))
+	r.POST("/users/vip", servergin.Handle(k, SpecVipUserEpCreateUser(), nil, BindBCreateUserReq, func(ctx context.Context, q, b any) (any, error) {
+		return ep.CreateUser(ctx, q, b.(eps.CreateUserReq))
+	}))
+	r.DELETE("/users/vip/:id", middleware.ParseHeaderWithInfo, servergin.Handle(k, SpecVipUserEpDeleteUser(), BindQDeleteUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.DeleteUser(ctx, q.(eps.DeleteUserReq))
+	}))
+	r.GET("/users/vip/:id", servergin.Handle(k, SpecVipUserEpGetUser(), BindQGetUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.GetUser(ctx, q.(eps.GetUserReq))
+	}))
+	r.GET("/users/vip/panel", servergin.Handle(k, SpecVipUserEpLevelContent(), nil, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.LevelContent(ctx)
+	}))
+	r.GET("/users/vip", servergin.Handle(k, SpecVipUserEpListUsers(), BindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.ListUsers(ctx, q.(eps.ListUsersReq))
+	}))
+	r.PUT("/users/vip/:id/extra", servergin.Handle(k, SpecVipUserEpUpdateExtra(), BindQGetUserReq, BindBExtraBody, func(ctx context.Context, q, b any) (any, error) {
+		return ep.UpdateExtra(ctx, q.(eps.GetUserReq), b.(eps.ExtraBody))
+	}))
+}
+
 // RegisterAllGin 一次装配全部端点（Gin）。
 func RegisterAllGin(i gin.IRouter, k *hinge.Kernel, all All) {
+	RegisterAdminEpGin(i, k, all.AdminEp)
+	RegisterAuditEpGin(i, k, all.AuditEp)
 	RegisterFileEpGin(i, k, all.FileEp)
 	RegisterPKG_epsGin(i, k)
 	RegisterSystemEpGin(i, k, all.SystemEp)
 	RegisterUserEpGin(i, k, all.UserEp)
+	RegisterVipUserEpGin(i, k, all.VipUserEp)
 }

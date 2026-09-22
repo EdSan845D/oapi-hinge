@@ -133,7 +133,7 @@ type EntryPoint interface {
 
 // Ptr 返回 v 的指针：RouteMeta.Deprecated 三态覆写用
 // （nil = 不覆盖 / Ptr(true) = 置位 / Ptr(false) = 清除）。
-func Ptr[T any](v T) *T { return new(v) }
+func Ptr[T any](v T) *T { return &v }
 
 type RouteMeta struct {
 	// Method / Path 程序化路由覆写：预留字段，暂未消费——路由以注解为唯一事实源。
@@ -151,9 +151,8 @@ type RouteMeta struct {
 }
 
 type EntryPointConfig struct {
-	Name   EntryId
-	Prefix string
-	Tags   []string
+	Name EntryId
+	Tags []string
 	// Middlewares 组级框架原生中间件（运行时值 → 反射取名 → 源码引用，
 	// 发射为 scoped Group 直挂）。元素必须为框架原生中间件类型；
 	// 内核拦截器请放 Interceptors——两条通道不得混排。
@@ -165,6 +164,8 @@ type EntryPointConfig struct {
 	// FuncDecls 字段级程序化覆写：键为 FuncIdentity(fn) 派生的函数标识
 	//（如 "eps.SystemEp.Health"），值为按字段合并的覆写元数据（非零字段才生效）。
 	// 命中的端点在生成期输出覆写提示，保证代码定义的覆写可见。
+	// 挂载关系不经 Config：oapi:parent 注解是唯一事实源（子声明式，沿祖先链
+	// 生成期展平；Middlewares/Interceptors 为 per-ep 补充，不沿挂载链）。
 	FuncDecls map[FuncId]RouteMeta
 }
 
