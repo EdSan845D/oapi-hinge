@@ -64,7 +64,6 @@ func (ep UserEp) CreateUser(ctx context.Context, _ any, b CreateUserReq) (User, 
 | `oapi:status` / `oapi:deprecated` / `oapi:envelope` | 方法 | 成功码 / 弃用 / 命名响应壳 |
 | `oapi:middleware` | 类型/方法 | **框架原生中间件**（第三方框架通道，值为 `pkg.Func` 函数引用，编译期校验）：类型级 → 组级中间件（scoped `Group("", mws...)`），方法级 → 路由直挂；作用于框架链、内核之外；无端点上下文。中间件引用尾段名命中文档侧 securitySchemes → 自动推导 security + 401 |
 | `oapi:interceptor` | 类型/方法 | **内核拦截器**（hinge.Interceptor 签名，值为 `pkg.Func` 函数引用，生成期签名校验）：类型级 → owner 全端点，方法级 → 本端点；发射为 `HandleWith` 的 extra 实参，进内核拦截链（correlation/timeout 之后、bind 之前），持端点上下文与统一错误链，跨框架可移植 |
-| ~~`oapi:auth` / `oapi:limit`~~ | — | **已移除**（v0.2 二分：框架原生用 `oapi:middleware`，内核拦截器用 `oapi:interceptor`，值均为函数引用，不支持裸名） |
 
 ### 代码生成
 
@@ -115,6 +114,28 @@ gen.Config{
 FuncDecls 支持覆写 Summary / Description / Tags / DefaultStatusCode / Envelope / Deprecated（*bool 三态），
 零值字段保持注解不变；命中端点在生成日志输出覆写提示（如 `注：SystemEp.Health 被 EntryPointConfig.FuncDecls 覆写：summary, deprecated=true`），
 保证代码定义的覆写可见。路由（Method/Path）以注解为唯一事实源，不参与覆写。
+
+### 挂载树：EntryPointConfig.Children
+
+大型项目的路由组织用 Children 组装成树，生成期展平——运行时仍是同一张平铺端点表，三个适配器零改动：
+
+```go
+EntryPoints: []gen.EntryPointConfig{
+    {
+        Name: "ApiV1Ep", Prefix: "/api/v1",        // 组根 Enterpoint（oapi:route GET 省路径即组根）
+        Middlewares: []any{middleware.Trace},
+        Children: []gen.EntryPointConfig{
+            {Name: "UserEp", Interceptors: []hinge.Interceptor{middleware.Auth}}, // → /api/v1/users/*
+            {Name: "OrderEp", Prefix: "/orders"},  // → /api/v1/orders/*
+        },
+    },
+}
+```
+
+沿祖先链（先根后叶）合成：**Prefix** 是挂载点、相对父节点串联（`oapi:prefix` 是节点固有子前缀，
+已体现在路径里；注解路径已含挂载点是常见笔误，生成期诊断）；**Middlewares / Interceptors** 根→叶顺序拼接
+（与 Group 嵌套执行序一致）；**FuncDecls / Tags 不继承**。约束：`Name` 必填且必须命中扫描到的
+Enterpoint；同一 owner 只允许挂载一处（spec 名/注册函数名按 owner 派生，多实例冲突）。
 
 ### 装配：DI + 一行注册
 

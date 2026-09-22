@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/EdSan845D/oapi-hinge/hinge"
 )
 
 // EndpointIR：一个端点的中间表示（注解 + 签名 + 字段全部解析后的产物），
@@ -332,72 +334,107 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 		}
 		ownerPkg[ep.Owner] = ep.Pkg.ImportPath
 	}
-	// EntryPointConfig 二分通道（owner 全端点继承）：
-	//   Middlewares → 框架原生中间件，反射取名后发射为组级源码引用；
-	//   Interceptors → 内核拦截器，反射取名后发射为 extra 源码引用。
-	// gen.Run 与 generate.go 同进程，运行时值反射取名后发射为源码引用
+	// EntryPointConfig 挂载树展平（Children 先序遍历）：路由树在声明期组装、生成期展平，
+	// 运行时仍是同一张平铺端点表。沿祖先链（先根后叶）合成：
+	//   Prefix       挂载点前缀相对父节点串联（oapi:prefix 为节点固有子前缀，已在 FullPath）；
+	//   Middlewares  → 框架原生中间件，根→叶顺序拼接后反射取名、组级直挂（与 Group 嵌套执行序一致）；
+	//   Interceptors → 内核拦截器，根→叶拼接后发射为 HandleWith 的 extra 实参（先于结构体/方法级注解）。
+	// 两条通道不得混排。FuncDecls / Tags 不继承。gen.Run 与 generate.go 同进程，
+	// 运行时值反射取名后发射为源码引用。
 	if len(entryPoints) > 0 {
-		byOwner := map[string]EntryPointConfig{}
-		for _, ec := range entryPoints {
-			byOwner[string(ec.Name)] = ec
+		ownerEps := map[string][]*EndpointIR{}
+		for _, ep := range b.eps {
+			ownerEps[ep.Owner] = append(ownerEps[ep.Owner], ep)
 		}
 		// FuncDecls 消费跟踪：未命中任何端点的键 = 拼写/重构失配，覆写会静默失效，
-		// 块尾统一警告（P0-2）。
+		// 节点内统一警告（P0-2）。
 		usedFuncDecls := map[FuncId]bool{}
-		for _, ep := range b.eps {
-			ec, ok := byOwner[ep.Owner]
+		mounted := map[string]string{} // owner → 挂载树路径（同 owner 多挂载诊断）
+		var walk func(ec EntryPointConfig, prefix string, mws []any, ics []hinge.Interceptor, path string)
+		walk = func(ec EntryPointConfig, prefix string, mws []any, ics []hinge.Interceptor, path string) {
+			if ec.Prefix != "" {
+				prefix = joinRoutePath(prefix, ec.Prefix)
+			}
+			// 拷贝隔离：兄弟子树不得共享底层数组
+			mws = append(append([]any{}, mws...), ec.Middlewares...)
+			ics = append(append([]hinge.Interceptor{}, ics...), ec.Interceptors...)
+			owner := string(ec.Name)
+			if path == "" {
+				path = owner
+			} else {
+				path += " > " + owner
+			}
+			eps, ok := ownerEps[owner]
 			if !ok {
-				continue
+				b.errf("EntryPointConfig 挂载节点 %q（%s）未命中任何扫描到的 Enterpoint：检查 Name 拼写，或该结构体是否含 oapi:route 端点", owner, path)
+				return
 			}
-			if rm, ok := ec.FuncDecls[FuncId(funcIdOf(ep))]; ok {
-				usedFuncDecls[FuncId(funcIdOf(ep))] = true
-				if changed := applyRouteMeta(ep, rm); len(changed) > 0 {
-					fmt.Fprintf(os.Stderr, "hinge gen: 注：%s.%s 被 EntryPointConfig.FuncDecls 覆写：%s\n",
-						ep.Owner, ep.Handler, strings.Join(changed, ", "))
+			if prev, dup := mounted[owner]; dup {
+				b.errf("Enterpoint %s 被 Children 树挂载多处（%s 与 %s）：spec 名/注册函数名按 owner 派生，多实例互相冲突", owner, prev, path)
+				return
+			}
+			mounted[owner] = path
+			for _, ep := range eps {
+				// 挂载点防呆：注解路径已含挂载点前缀是常见笔误（oapi:prefix/route 相对挂载点声明）
+				if prefix != "" && (ep.FullPath == prefix || strings.HasPrefix(ep.FullPath, prefix+"/")) {
+					b.errf("%s.%s：路径 %q 已含挂载点前缀 %q——oapi:prefix / oapi:route 相对挂载点声明，请去掉重叠段", ep.Owner, ep.Handler, ep.FullPath, prefix)
+				} else if prefix != "" {
+					ep.FullPath = joinRoutePath(prefix, ep.FullPath)
+				}
+				if rm, ok := ec.FuncDecls[FuncId(funcIdOf(ep))]; ok {
+					usedFuncDecls[FuncId(funcIdOf(ep))] = true
+					if changed := applyRouteMeta(ep, rm); len(changed) > 0 {
+						fmt.Fprintf(os.Stderr, "hinge gen: 注：%s.%s 被 EntryPointConfig.FuncDecls 覆写：%s\n",
+							ep.Owner, ep.Handler, strings.Join(changed, ", "))
+					}
+				}
+				for i, mw := range mws {
+					ref, imp, isIC, err := middlewareRef(mw)
+					if err != nil {
+						b.errf("挂载节点 %s Middlewares[%d]: %v", path, i, err)
+						continue
+					}
+					if ref == "nil" {
+						continue // nil 值不发射
+					}
+					if isIC {
+						b.errf("挂载节点 %s Middlewares[%d]: hinge.Interceptor 请放 EntryPointConfig.Interceptors（两条通道不得混排：Middlewares = 框架原生 → 组级直挂，Interceptors = 内核拦截器 → extra）", path, i)
+						continue
+					}
+					ep.RouteMWs = append(ep.RouteMWs, RouteMWRef{Ref: ref, Import: imp})
+					if imp != "" {
+						ep.RouteMWImports = append(ep.RouteMWImports, imp)
+					}
+				}
+				for i, ic := range ics {
+					ref, imp, isIC, err := middlewareRef(ic)
+					if err != nil {
+						b.errf("挂载节点 %s Interceptors[%d]: %v", path, i, err)
+						continue
+					}
+					if ref == "nil" {
+						continue // nil 值不发射
+					}
+					if !isIC {
+						b.errf("挂载节点 %s Interceptors[%d]: 值不是 hinge.Interceptor（框架原生中间件请放 Middlewares）", path, i)
+						continue
+					}
+					dot := strings.LastIndex(ref, ".")
+					ep.ConfigICs = append(ep.ConfigICs, MWRef{Qualifier: ref[:dot], Name: ref[dot+1:], Import: imp})
 				}
 			}
-			for i, mw := range ec.Middlewares {
-				ref, imp, isIC, err := middlewareRef(mw)
-				if err != nil {
-					b.errf("Enterpoint %s Middlewares[%d]: %v", ep.Owner, i, err)
-					continue
-				}
-				if ref == "nil" {
-					continue // nil 值不发射
-				}
-				if isIC {
-					b.errf("Enterpoint %s Middlewares[%d]: hinge.Interceptor 请放 EntryPointConfig.Interceptors（两条通道不得混排：Middlewares = 框架原生 → 组级直挂，Interceptors = 内核拦截器 → extra）", ep.Owner, i)
-					continue
-				}
-				ep.RouteMWs = append(ep.RouteMWs, RouteMWRef{Ref: ref, Import: imp})
-				if imp != "" {
-					ep.RouteMWImports = append(ep.RouteMWImports, imp)
-				}
-			}
-			for i, ic := range ec.Interceptors {
-				ref, imp, isIC, err := middlewareRef(ic)
-				if err != nil {
-					b.errf("Enterpoint %s Interceptors[%d]: %v", ep.Owner, i, err)
-					continue
-				}
-				if ref == "nil" {
-					continue // nil 值不发射
-				}
-				if !isIC {
-					b.errf("Enterpoint %s Interceptors[%d]: 值不是 hinge.Interceptor（框架原生中间件请放 Middlewares）", ep.Owner, i)
-					continue
-				}
-				dot := strings.LastIndex(ref, ".")
-				ep.ConfigICs = append(ep.ConfigICs, MWRef{Qualifier: ref[:dot], Name: ref[dot+1:], Import: imp})
-			}
-		}
-		// 未命中的 FuncDecls 键警告：失配时覆写静默失效，必须可见
-		for _, ec := range entryPoints {
+			// 未命中的 FuncDecls 键警告：失配时覆写静默失效，必须可见
 			for key := range ec.FuncDecls {
 				if !usedFuncDecls[key] {
 					fmt.Fprintf(os.Stderr, "hinge gen: 警告：FuncDecls 键 %q 未命中任何端点（函数改名/移动后可能失配），覆写未生效\n", key)
 				}
 			}
+			for _, child := range ec.Children {
+				walk(child, prefix, mws, ics, path)
+			}
+		}
+		for _, root := range entryPoints {
+			walk(root, "", nil, nil, "")
 		}
 	}
 	// 路由级/组级引用的存在性校验：引用目标在扫描包内时核对包级函数名
