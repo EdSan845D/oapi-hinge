@@ -839,10 +839,10 @@ func frameworkPath(emiter EmitConfig, p string) string {
 //（title/path_style/template）+ 一份注册模板，无需改发射器；模板直接消费端点 IR。
 
 // epData 一条路由的发射数据：内嵌端点 IR（模板可直接访问 Method / Handler /
-// QName / BName / TwoArg / FullPath / RExpr 等全量字段），叠加按 target 派生的
+// QName / BName / ArgNums / FullPath / RExpr 等全量字段），叠加按 target 派生的
 // 发射态字段（路径风格、中间件实参、描述变量名、绑定器实参）。
 type epData struct {
-	*EndpointIR        // 端点 IR：Method / Handler / QName / BName / TwoArg / FullPath ...
+	*EndpointIR        // 端点 IR：Method / Handler / QName / BName / ArgNums / FullPath ...
 	Path        string // 目标框架路径风格
 	Args        string // 路由调用剩余中间件参数（框架原生直挂，按 target 语义组装）
 	Extras      string // 内核拦截器实参串（Handle 变参尾段：", ic1, ic2"；空 = 无）

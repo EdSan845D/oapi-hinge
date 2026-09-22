@@ -16,7 +16,7 @@ func minimalEndpoint() *EndpointIR {
 		Method:   "GET",
 		FullPath: "/ping",
 		Pkg:      &Package{ImportPath: "example.com/app", Name: "app"},
-		TwoArg:   true,
+		ArgNums:  1,
 		RExpr:    ast.NewIdent("string"),
 	}
 }

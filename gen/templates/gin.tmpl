@@ -19,7 +19,7 @@ func Register{{.Name}}{{$.Target.Title}}(i gin.IRouter, k *hinge.Kernel{{if not 
 {{- $ownerAlias := .OwnerAlias}}
 {{- range .Eps}}
 	r.{{.Method}}("{{.Path}}"{{if ne .Args ""}}, {{.Args}}{{end}}, servergin.Handle(k, {{.Spec}}, {{.Binder}}, func(ctx context.Context, q, b any) (any, error) {
-		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx{{if not .NoArgs}}, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{if and (not .TwoArg) (not .NoArgs)}}, b.({{$ownerAlias}}.{{.BName}}){{end}}{{end}})
+		return {{if $isPkg}}{{$ownerAlias}}{{else}}ep{{end}}.{{.Handler}}(ctx{{if gt .ArgNums 0}}, q{{if ne .QName ""}}.({{$ownerAlias}}.{{.QName}}){{end}}{{end}}{{if eq .ArgNums 2}}, b.({{$ownerAlias}}.{{.BName}}){{end}})
 	}{{.Extras}}))
 {{- end}}
 }

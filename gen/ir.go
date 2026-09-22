@@ -81,9 +81,9 @@ type EndpointIR struct {
 	InTransformBPtr bool
 	ValidateB       bool
 	ValidateBPtr    bool
-	TwoArg          bool // func(ctx, Q) 简式
-	// NoArgs func(ctx) 无业务参形态（无 Q 无 B）：生成调用表达式时不传 q/b。
-	NoArgs bool
+	// ArgNums 业务入参数（不含 ctx）：0 = func(ctx) 无业务参；1 = func(ctx, Q)；
+	// 2 = func(ctx, Q, B)。模板据此决定 q / b 实参的发射。
+	ArgNums int
 
 	// 发射期回填：去重后的绑定器函数名（空 = 无绑定器）
 	qBinder string
@@ -944,8 +944,7 @@ func (b *irBuilder) buildSignature(ep *EndpointIR, md *ast.FuncDecl) bool {
 		b.errf("%s：第一个参数必须为 context.Context", pos)
 		return false
 	}
-	ep.TwoArg = len(params) == 2
-	ep.NoArgs = len(params) == 1
+	ep.ArgNums = len(params) - 1
 	// ---- Q ----
 	if len(params) >= 2 {
 		qExpr := params[1].Type
