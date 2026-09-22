@@ -1,6 +1,6 @@
 module github.com/EdSan845D/oapi-hinge
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/getkin/kin-openapi v0.149.0
