@@ -24,7 +24,7 @@ func RegisterAdminEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.AdminEp) {
 
 // RegisterAuditEpGin 把 AuditEp 的全部端点挂到 Gin。
 func RegisterAuditEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.AuditEp) {
-	r := i.Group("", middleware.Auth)
+	r := i
 	r.GET("/admin/audit/events", servergin.Handle(k, SpecAuditEpListEvents(), BindQAuditQ, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.ListEvents(ctx, q.(eps.AuditQ))
 	}, middleware.AccessLog))

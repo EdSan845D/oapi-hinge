@@ -115,27 +115,34 @@ FuncDecls 支持覆写 Summary / Description / Tags / DefaultStatusCode / Envelo
 零值字段保持注解不变；命中端点在生成日志输出覆写提示（如 `注：SystemEp.Health 被 EntryPointConfig.FuncDecls 覆写：summary, deprecated=true`），
 保证代码定义的覆写可见。路由（Method/Path）以注解为唯一事实源，不参与覆写。
 
-### 挂载树：EntryPointConfig.Children
+### 挂载链：oapi:parent 注解
 
-大型项目的路由组织用 Children 组装成树，生成期展平——运行时仍是同一张平铺端点表，三个适配器零改动：
+大型项目的路由组织用 oapi:parent 注解组装成链，生成期展平——运行时仍是同一张平铺端点表，三个适配器零改动。
+挂载关系写在 ep 自己头上，与 prefix/middleware/interceptor 相邻，与“注解唯一事实源”同一哲学：
 
 ```go
-EntryPoints: []gen.EntryPointConfig{
-    {
-        Name: "ApiV1Ep", Prefix: "/api/v1",        // 组根 Enterpoint（oapi:route GET 省路径即组根）
-        Middlewares: []any{middleware.Trace},
-        Children: []gen.EntryPointConfig{
-            {Name: "UserEp", Interceptors: []hinge.Interceptor{middleware.Auth}}, // → /api/v1/users/*
-            {Name: "OrderEp", Prefix: "/orders"},  // → /api/v1/orders/*
-        },
-    },
-}
+// oapi:prefix /admin                     // 挂载链根：组根 Enterpoint（oapi:route 省路径即组根）
+// oapi:middleware middleware.Auth        // 组级中间件：沿链继承给全部后代
+// oapi:tag 管理
+type AdminEp struct{ gen.EntryPoint }
+
+// oapi:route GET
+func (ep AdminEp) Index(ctx context.Context, _ any) (map[string]string, error) { ... }
+
+// oapi:parent AdminEp                    // 挂到 AdminEp 下（纯名引用）
+// oapi:prefix /audit                     // 自身前缀与父链串联 → /admin/audit
+// oapi:interceptor middleware.AccessLog  // 自身拦截器：只作用于本节点
+type AuditEp struct{}
+
+// oapi:route GET /events
+func (ep AuditEp) ListEvents(ctx context.Context, q AuditQ) (Paged[AuditEvent], error) { ... }
 ```
 
-沿祖先链（先根后叶）合成：**Prefix** 是挂载点、相对父节点串联（`oapi:prefix` 是节点固有子前缀，
-已体现在路径里；注解路径已含挂载点是常见笔误，生成期诊断）；**Middlewares / Interceptors** 根→叶顺序拼接
-（与 Group 嵌套执行序一致）；**FuncDecls / Tags 不继承**。约束：`Name` 必填且必须命中扫描到的
-Enterpoint；同一 owner 只允许挂载一处（spec 名/注册函数名按 owner 派生，多实例冲突）。
+沿祖先链（先根后叶）生成期合成：**路径** = 各节点 oapi:prefix 串联 + 方法路径（自身路径已含父链前缀是常见
+笔误，生成期诊断）；**组级中间件 / 拦截器**沿链继承（根→叶，与 Group 嵌套执行序一致），Config 补充
+（Middlewares / Interceptors / FuncDecls）不沿链（per-ep）。约束：parent 悬空 / 成环 / 指向包级函数端点
+均生成期诊断；同一 ep 至多一个 parent（子声明式天然单挂载）。纯前缀层用组根 Enterpoint 表达
+（oapi:route 省路径即组根）。
 
 ### 装配：DI + 一行注册
 

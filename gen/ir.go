@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/EdSan845D/oapi-hinge/hinge"
 )
 
 // EndpointIR：一个端点的中间表示（注解 + 签名 + 字段全部解析后的产物），
@@ -23,6 +21,12 @@ type EndpointIR struct {
 	Method   string
 	RelPath  string
 	FullPath string
+	// Prefix oapi:prefix 注解原值（挂载链展平时作为节点子树基座前缀）。
+	Prefix string
+	// Parent oapi:parent 注解解析出的父 Enterpoint 结构体名（空 = 根挂载）。
+	// 同 owner 全端点共享；展平后祖先链前缀烘焙进 FullPath、祖先组级注解
+	// 中间件/拦截器进 MountMWs / MountICs。
+	Parent string
 
 	Summary     string
 	Description string
@@ -46,8 +50,13 @@ type EndpointIR struct {
 	// 注入 extra（先于方法级），需为 hinge.Interceptor 签名。
 	GroupICs []MWRef
 	// ConfigICs EntryPointConfig.Interceptors 运行时值反射出的源码引用
-	//（owner 全端点注入 extra，先于结构体级注解）。
+	//（per-ep 补充，owner 全端点 extra，先于结构体级注解；不沿 parent 链继承）。
 	ConfigICs []MWRef
+	// MountMWs / MountICs oapi:parent 挂载链沿祖先（先根后叶）继承的 struct 级
+	// oapi:middleware / oapi:interceptor 源码引用（不含自身）；发射时排在
+	// RouteMWs / ConfigICs 之前。仅 struct 级注解沿链继承，Config 补充不沿链。
+	MountMWs []MWRef
+	MountICs []MWRef
 
 	HasQ  bool
 	QName string
@@ -58,9 +67,9 @@ type EndpointIR struct {
 	BSet     *fieldSet
 	BodyKind string // json / raw / multipart / form（HasB 时有效；form = application/x-www-form-urlencoded）
 
-	// RouteMWs EntryPointConfig.Middlewares 运行时值反射出的源码引用（owner 全端点继承）：
-	// 全部为框架原生中间件，发射为组级直挂；内核拦截器走 Interceptors → ConfigICs。
-	// RouteMWImports 为对应 import 路径。
+	// RouteMWs EntryPointConfig.Middlewares 运行时值反射出的源码引用（per-ep 补充，
+	// 不沿 parent 链继承）：全部为框架原生中间件，发射为组级直挂；内核拦截器
+	// 走 Interceptors → ConfigICs。RouteMWImports 为对应 import 路径。
 	RouteMWs       []RouteMWRef
 	RouteMWImports []string
 
@@ -118,10 +127,11 @@ func bodyKindOf(fs *fieldSet) string {
 // structAnn 结构体级注解。
 type structAnn struct {
 	Prefix     string
+	Parent     string // oapi:parent：父 Enterpoint 结构体名（纯名，子声明式挂载；空 = 根挂载）
 	Tags       []string
 	TimeoutStr string
-	MWs        []string // oapi:middleware：框架原生中间件 → 组级直挂
-	ICs        []string // oapi:interceptor：内核拦截器 → owner 全端点 extra
+	MWs        []string // oapi:middleware：框架原生中间件 → 组级直挂（沿 parent 链继承给后代）
+	ICs        []string // oapi:interceptor：内核拦截器 → owner 全端点 extra（沿 parent 链继承给后代）
 }
 
 // MWRef 路由级源码引用中间件（oapi:middleware "pkg.Func" 形态）。
@@ -334,107 +344,196 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 		}
 		ownerPkg[ep.Owner] = ep.Pkg.ImportPath
 	}
-	// EntryPointConfig 挂载树展平（Children 先序遍历）：路由树在声明期组装、生成期展平，
-	// 运行时仍是同一张平铺端点表。沿祖先链（先根后叶）合成：
-	//   Prefix       挂载点前缀相对父节点串联（oapi:prefix 为节点固有子前缀，已在 FullPath）；
-	//   Middlewares  → 框架原生中间件，根→叶顺序拼接后反射取名、组级直挂（与 Group 嵌套执行序一致）；
-	//   Interceptors → 内核拦截器，根→叶拼接后发射为 HandleWith 的 extra 实参（先于结构体/方法级注解）。
-	// 两条通道不得混排。FuncDecls / Tags 不继承。gen.Run 与 generate.go 同进程，
-	// 运行时值反射取名后发射为源码引用。
-	if len(entryPoints) > 0 {
-		ownerEps := map[string][]*EndpointIR{}
+	// oapi:parent 挂载链展平（子声明式）：挂载关系由每个 Enterpoint 的 struct 级
+	// oapi:parent 注解声明（父 Enterpoint 结构体名，纯名），沿祖先链（先根后叶）合成——
+	//   FullPath   = 祖先链前缀（各节点 oapi:prefix 串联）+ 自身 FullPath；
+	//   MountMWs   = 祖先链各节点 struct 级 oapi:middleware（根→叶）；
+	//   MountICs   = 祖先链各节点 struct 级 oapi:interceptor（根→叶）。
+	// 运行时仍是同一张平铺端点表，无嵌套结构。Config 补充不沿链（per-ep）。
+	{
+		mountEps := map[string][]*EndpointIR{}
 		for _, ep := range b.eps {
-			ownerEps[ep.Owner] = append(ownerEps[ep.Owner], ep)
+			mountEps[ep.Owner] = append(mountEps[ep.Owner], ep)
+		}
+		type mountBase struct {
+			prefix string  // 子树挂载前缀（祖先链 oapi:prefix 串联 + 自身）
+			mws    []MWRef // 祖先链（含自身）struct 级 oapi:middleware
+			ics    []MWRef // 祖先链（含自身）struct 级 oapi:interceptor
+		}
+		broken := map[string]bool{}
+		// 预检：悬空 / 自引用 / PKG 引用 / 成环（沿链行走，环上全链标记 broken）
+		mountOwners := make([]string, 0, len(mountEps))
+		for owner := range mountEps {
+			mountOwners = append(mountOwners, owner)
+		}
+		sort.Strings(mountOwners)
+		for _, owner := range mountOwners {
+			self := mountEps[owner][0]
+			if self.Parent == "" || broken[owner] {
+				continue
+			}
+			switch {
+			case self.Parent == owner:
+				b.errf("Enterpoint %s：oapi:parent 不能指向自身", owner)
+				broken[owner] = true
+			case strings.HasPrefix(self.Parent, PKGFlag):
+				b.errf("Enterpoint %s：oapi:parent %q 指向包级函数端点（不允许，父必须是 Enterpoint 结构体）", owner, self.Parent)
+				broken[owner] = true
+			}
+			if _, exists := mountEps[self.Parent]; !exists && !broken[owner] {
+				b.errf("Enterpoint %s：oapi:parent %q 未命中任何扫描到的 Enterpoint（检查拼写，或父结构体是否含 oapi:route 端点）", owner, self.Parent)
+				broken[owner] = true
+			}
+		}
+		for _, owner := range mountOwners {
+			if broken[owner] {
+				continue
+			}
+			seen := map[string]bool{}
+			cur := owner
+			for {
+				if seen[cur] {
+					chain := make([]string, 0, len(seen))
+					for o := range seen {
+						chain = append(chain, o)
+					}
+					sort.Strings(chain)
+					b.errf("Enterpoint %s：oapi:parent 链成环（涉及 %s），请检查 oapi:parent 声明", owner, strings.Join(chain, " → "))
+					for o := range seen {
+						broken[o] = true
+					}
+					break
+				}
+				seen[cur] = true
+				next := mountEps[cur][0].Parent
+				if next == "" {
+					break
+				}
+				cur = next
+			}
+		}
+		// 子树基座计算（memoized；broken 节点返回空基座，后代沿 broken 传播跳过应用）
+		bases := map[string]*mountBase{}
+		var baseOf func(owner string) *mountBase
+		baseOf = func(owner string) *mountBase {
+			if b, ok := bases[owner]; ok {
+				return b
+			}
+			self := mountEps[owner][0]
+			var ctx *mountBase
+			if self.Parent == "" {
+				ctx = &mountBase{
+					prefix: self.Prefix,
+					mws:    append([]MWRef{}, self.GroupMWs...),
+					ics:    append([]MWRef{}, self.GroupICs...),
+				}
+			} else {
+				p := baseOf(self.Parent)
+				ctx = &mountBase{
+					prefix: joinRoutePath(p.prefix, self.Prefix),
+					mws:    append(append([]MWRef{}, p.mws...), self.GroupMWs...),
+					ics:    append(append([]MWRef{}, p.ics...), self.GroupICs...),
+				}
+			}
+			bases[owner] = ctx
+			return ctx
+		}
+		for _, owner := range mountOwners {
+			eps := mountEps[owner]
+			self := eps[0]
+			if self.Parent == "" || broken[owner] || broken[self.Parent] {
+				continue // 根挂载无展平动作；诊断节点跳过应用
+			}
+			p := baseOf(self.Parent) // 父的子树基座（祖先链 + 父自身）
+			for _, ep := range eps {
+				// 防呆：自身路径已含挂载前缀 = 注解写了全路径的常见笔误
+				if p.prefix != "" && (ep.FullPath == p.prefix || strings.HasPrefix(ep.FullPath, p.prefix+"/")) {
+					b.errf("%s.%s：路径 %q 已含挂载前缀 %q——oapi:prefix / oapi:route 相对挂载点声明，请去掉重叠段", ep.Owner, ep.Handler, ep.FullPath, p.prefix)
+					continue
+				}
+				ep.FullPath = joinRoutePath(p.prefix, ep.FullPath)
+				ep.MountMWs = append([]MWRef{}, p.mws...)
+				ep.MountICs = append([]MWRef{}, p.ics...)
+			}
+			if len(p.mws)+len(p.ics) > 0 {
+				fmt.Fprintf(os.Stderr, "hinge gen: 挂载 %s ← %s：前缀 %q，沿链继承中间件 %d / 拦截器 %d\n",
+					owner, self.Parent, p.prefix, len(p.mws), len(p.ics))
+			}
+		}
+	}
+	// EntryPointConfig 程序化补充（per-ep，不沿挂载链）：
+	//   Middlewares → 框架原生中间件，反射取名后发射为组级源码引用；
+	//   Interceptors → 内核拦截器，反射取名后发射为 extra 源码引用。
+	// 两条通道不得混排。gen.Run 与 generate.go 同进程，运行时值反射取名后
+	// 发射为源码引用。
+	if len(entryPoints) > 0 {
+		byOwner := map[string]EntryPointConfig{}
+		for _, ec := range entryPoints {
+			byOwner[string(ec.Name)] = ec
 		}
 		// FuncDecls 消费跟踪：未命中任何端点的键 = 拼写/重构失配，覆写会静默失效，
-		// 节点内统一警告（P0-2）。
+		// 块尾统一警告（P0-2）。
 		usedFuncDecls := map[FuncId]bool{}
-		mounted := map[string]string{} // owner → 挂载树路径（同 owner 多挂载诊断）
-		var walk func(ec EntryPointConfig, prefix string, mws []any, ics []hinge.Interceptor, path string)
-		walk = func(ec EntryPointConfig, prefix string, mws []any, ics []hinge.Interceptor, path string) {
-			if ec.Prefix != "" {
-				prefix = joinRoutePath(prefix, ec.Prefix)
-			}
-			// 拷贝隔离：兄弟子树不得共享底层数组
-			mws = append(append([]any{}, mws...), ec.Middlewares...)
-			ics = append(append([]hinge.Interceptor{}, ics...), ec.Interceptors...)
-			owner := string(ec.Name)
-			if path == "" {
-				path = owner
-			} else {
-				path += " > " + owner
-			}
-			eps, ok := ownerEps[owner]
+		configured := map[string]bool{}
+		for _, ep := range b.eps {
+			ec, ok := byOwner[ep.Owner]
 			if !ok {
-				b.errf("EntryPointConfig 挂载节点 %q（%s）未命中任何扫描到的 Enterpoint：检查 Name 拼写，或该结构体是否含 oapi:route 端点", owner, path)
-				return
+				continue
 			}
-			if prev, dup := mounted[owner]; dup {
-				b.errf("Enterpoint %s 被 Children 树挂载多处（%s 与 %s）：spec 名/注册函数名按 owner 派生，多实例互相冲突", owner, prev, path)
-				return
-			}
-			mounted[owner] = path
-			for _, ep := range eps {
-				// 挂载点防呆：注解路径已含挂载点前缀是常见笔误（oapi:prefix/route 相对挂载点声明）
-				if prefix != "" && (ep.FullPath == prefix || strings.HasPrefix(ep.FullPath, prefix+"/")) {
-					b.errf("%s.%s：路径 %q 已含挂载点前缀 %q——oapi:prefix / oapi:route 相对挂载点声明，请去掉重叠段", ep.Owner, ep.Handler, ep.FullPath, prefix)
-				} else if prefix != "" {
-					ep.FullPath = joinRoutePath(prefix, ep.FullPath)
-				}
-				if rm, ok := ec.FuncDecls[FuncId(funcIdOf(ep))]; ok {
-					usedFuncDecls[FuncId(funcIdOf(ep))] = true
-					if changed := applyRouteMeta(ep, rm); len(changed) > 0 {
-						fmt.Fprintf(os.Stderr, "hinge gen: 注：%s.%s 被 EntryPointConfig.FuncDecls 覆写：%s\n",
-							ep.Owner, ep.Handler, strings.Join(changed, ", "))
-					}
-				}
-				for i, mw := range mws {
-					ref, imp, isIC, err := middlewareRef(mw)
-					if err != nil {
-						b.errf("挂载节点 %s Middlewares[%d]: %v", path, i, err)
-						continue
-					}
-					if ref == "nil" {
-						continue // nil 值不发射
-					}
-					if isIC {
-						b.errf("挂载节点 %s Middlewares[%d]: hinge.Interceptor 请放 EntryPointConfig.Interceptors（两条通道不得混排：Middlewares = 框架原生 → 组级直挂，Interceptors = 内核拦截器 → extra）", path, i)
-						continue
-					}
-					ep.RouteMWs = append(ep.RouteMWs, RouteMWRef{Ref: ref, Import: imp})
-					if imp != "" {
-						ep.RouteMWImports = append(ep.RouteMWImports, imp)
-					}
-				}
-				for i, ic := range ics {
-					ref, imp, isIC, err := middlewareRef(ic)
-					if err != nil {
-						b.errf("挂载节点 %s Interceptors[%d]: %v", path, i, err)
-						continue
-					}
-					if ref == "nil" {
-						continue // nil 值不发射
-					}
-					if !isIC {
-						b.errf("挂载节点 %s Interceptors[%d]: 值不是 hinge.Interceptor（框架原生中间件请放 Middlewares）", path, i)
-						continue
-					}
-					dot := strings.LastIndex(ref, ".")
-					ep.ConfigICs = append(ep.ConfigICs, MWRef{Qualifier: ref[:dot], Name: ref[dot+1:], Import: imp})
+			configured[ep.Owner] = true
+			if rm, ok := ec.FuncDecls[FuncId(funcIdOf(ep))]; ok {
+				usedFuncDecls[FuncId(funcIdOf(ep))] = true
+				if changed := applyRouteMeta(ep, rm); len(changed) > 0 {
+					fmt.Fprintf(os.Stderr, "hinge gen: 注：%s.%s 被 EntryPointConfig.FuncDecls 覆写：%s\n",
+						ep.Owner, ep.Handler, strings.Join(changed, ", "))
 				}
 			}
-			// 未命中的 FuncDecls 键警告：失配时覆写静默失效，必须可见
+			for i, mw := range ec.Middlewares {
+				ref, imp, isIC, err := middlewareRef(mw)
+				if err != nil {
+					b.errf("Enterpoint %s Middlewares[%d]: %v", ep.Owner, i, err)
+					continue
+				}
+				if ref == "nil" {
+					continue // nil 值不发射
+				}
+				if isIC {
+					b.errf("Enterpoint %s Middlewares[%d]: hinge.Interceptor 请放 EntryPointConfig.Interceptors（两条通道不得混排：Middlewares = 框架原生 → 组级直挂，Interceptors = 内核拦截器 → extra）", ep.Owner, i)
+					continue
+				}
+				ep.RouteMWs = append(ep.RouteMWs, RouteMWRef{Ref: ref, Import: imp})
+				if imp != "" {
+					ep.RouteMWImports = append(ep.RouteMWImports, imp)
+				}
+			}
+			for i, ic := range ec.Interceptors {
+				ref, imp, isIC, err := middlewareRef(ic)
+				if err != nil {
+					b.errf("Enterpoint %s Interceptors[%d]: %v", ep.Owner, i, err)
+					continue
+				}
+				if ref == "nil" {
+					continue // nil 值不发射
+				}
+				if !isIC {
+					b.errf("Enterpoint %s Interceptors[%d]: 值不是 hinge.Interceptor（框架原生中间件请放 Middlewares）", ep.Owner, i)
+					continue
+				}
+				dot := strings.LastIndex(ref, ".")
+				ep.ConfigICs = append(ep.ConfigICs, MWRef{Qualifier: ref[:dot], Name: ref[dot+1:], Import: imp})
+			}
+		}
+		// 未命中警告：Config Name 拼错（补充静默失效）与 FuncDecls 键失配都必须可见
+		for _, ec := range entryPoints {
+			name := string(ec.Name)
+			if !configured[name] {
+				fmt.Fprintf(os.Stderr, "hinge gen: 警告：EntryPointConfig %q 未命中任何扫描到的 Enterpoint（检查 Name 拼写），配置未生效\n", name)
+			}
 			for key := range ec.FuncDecls {
 				if !usedFuncDecls[key] {
 					fmt.Fprintf(os.Stderr, "hinge gen: 警告：FuncDecls 键 %q 未命中任何端点（函数改名/移动后可能失配），覆写未生效\n", key)
 				}
 			}
-			for _, child := range ec.Children {
-				walk(child, prefix, mws, ics, path)
-			}
-		}
-		for _, root := range entryPoints {
-			walk(root, "", nil, nil, "")
 		}
 	}
 	// 路由级/组级引用的存在性校验：引用目标在扫描包内时核对包级函数名
@@ -454,6 +553,9 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 			b.verifyMWRef(byImport, ep, ref, "oapi:interceptor")
 		}
 		for _, ref := range ep.GroupICs {
+			b.verifyMWRef(byImport, ep, ref, "oapi:interceptor")
+		}
+		for _, ref := range ep.MountICs {
 			b.verifyMWRef(byImport, ep, ref, "oapi:interceptor")
 		}
 		for _, ref := range ep.ConfigICs {
@@ -524,6 +626,16 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 			switch key {
 			case "prefix":
 				sa.Prefix = value
+			case "parent":
+				if value == "" {
+					b.errf("Enterpoint %s：oapi:parent 值不能为空（父 Enterpoint 结构体名）", owner)
+					return
+				}
+				if value == owner {
+					b.errf("Enterpoint %s：oapi:parent 不能指向自身", owner)
+					return
+				}
+				sa.Parent = value
 			case "tag":
 				if value != "" {
 					sa.Tags = append(sa.Tags, value)
@@ -542,7 +654,7 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 					sa.ICs = append(sa.ICs, value)
 				}
 			default:
-				b.errf("Enterpoint %s：未知 struct 级注解 oapi:%s（允许 prefix/tag/timeout/middleware/interceptor）", owner, key)
+				b.errf("Enterpoint %s：未知 struct 级注解 oapi:%s（允许 prefix/parent/tag/timeout/middleware/interceptor）", owner, key)
 				return
 			}
 		}
@@ -602,6 +714,8 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 		ep := &EndpointIR{
 			Owner:      owner,
 			Pkg:        pkg,
+			Prefix:     sa.Prefix,
+			Parent:     sa.Parent,
 			Handler:    md.Name.Name,
 			Summary:    firstNonEmpty(docLines...),
 			Tags:       append(append([]string{}, sa.Tags...), mTags...),

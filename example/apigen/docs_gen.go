@@ -39,9 +39,9 @@ func DocSpecAdminEpIndex() hinge.EndpointDoc {
 func DocSpecAuditEpListEvents() hinge.EndpointDoc {
 	return hinge.EndpointDoc{
 		Endpoint: SpecAuditEpListEvents(),
-		Summary:  "审计事件列表（两级挂载演示：/admin（父挂载点）+ /audit（本节点挂载点）+ /events）",
+		Summary:  "审计事件列表(两级挂载演示:/admin(父挂载点)+ /audit(本节点挂载点)+ /events)",
 		Tags:     []string{"审计"},
-		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth", "github.com/EdSan845D/oapi-hinge/example/app/middleware.AccessLog"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.AccessLog"},
 		QType:    hinge.Type[eps.AuditQ](),
 		RType:    hinge.Type[eps.Paged[eps.AuditEvent]](),
 	}

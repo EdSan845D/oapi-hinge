@@ -36,32 +36,35 @@ func parseTestPkg(t *testing.T, dir string, sources ...string) *Package {
 	return p
 }
 
-// ---- 具名包级函数（middlewareRef 反射取名的对象）----
+// ---- 测试用业务源码（oapi:parent 注解形态）----
+//
+// mw "example.com/mw" 为假引用包：不在扫描包列表，verifyMWRef 跳过核对，
+// 只验证引用解析与挂载链继承。
 
-// TraceMW 框架原生中间件形态（http 适配器风格）。
-func TraceMW(next http.Handler) http.Handler { return next }
-
-// AuthIC 内核拦截器形态（hinge.Interceptor：5 参 1 返）。
-func AuthIC(ctx context.Context, ep hinge.Endpoint, r hinge.RequestReader, s hinge.Sink, next func(context.Context) error) error {
-	return next(ctx)
-}
-
-// AuditIC 第二个内核拦截器（顺序断言用）。
-func AuditIC(ctx context.Context, ep hinge.Endpoint, r hinge.RequestReader, s hinge.Sink, next func(context.Context) error) error {
-	return next(ctx)
-}
-
-// ---- 测试用业务源码 ----
-
-// mountSrc 三个 Enterpoint：ApiV1Ep（组根，纯挂载层）、UserEp（注解固有前缀）、OrderEp（挂载点前缀）。
 const mountSrc = `package app
 
-import "context"
+import (
+	"context"
 
-type ApiV1Ep struct{}
+	mw "example.com/mw"
+)
+
+// oapi:prefix /admin
+// oapi:middleware mw.TraceMW
+type AdminEp struct{}
 
 // oapi:route GET
-func (ep ApiV1Ep) Index(ctx context.Context, _ any) (map[string]string, error) {
+func (ep AdminEp) Index(ctx context.Context, _ any) (map[string]string, error) {
+	return nil, nil
+}
+
+// oapi:parent AdminEp
+// oapi:prefix /audit
+// oapi:interceptor mw.AuthIC
+type AuditEp struct{}
+
+// oapi:route GET /events
+func (ep AuditEp) ListEvents(ctx context.Context, q ListEventsQ) (map[string]any, error) {
 	return nil, nil
 }
 
@@ -69,39 +72,83 @@ func (ep ApiV1Ep) Index(ctx context.Context, _ any) (map[string]string, error) {
 type UserEp struct{}
 
 // oapi:route GET
-func (ep UserEp) List(ctx context.Context, q ListUsersQ) ([]User, error) {
+func (ep UserEp) List(ctx context.Context, q ListQ) ([]string, error) {
 	return nil, nil
 }
 
-// oapi:route GET /{id}
-func (ep UserEp) Get(ctx context.Context, q GetUserQ) (User, error) {
-	return User{}, nil
-}
-
-type OrderEp struct{}
-
-// oapi:route GET
-func (ep OrderEp) List(ctx context.Context, q ListOrdersQ) (map[string]any, error) {
-	return nil, nil
-}
-
-type ListUsersQ struct {
+type ListEventsQ struct {
 	Page int ` + "`query:\"page\"`" + `
 }
 
-type GetUserQ struct {
-	ID string ` + "`path:\"id\"`" + `
-}
-
-type ListOrdersQ struct {
-	Status string ` + "`query:\"status\"`" + `
-}
-
-type User struct {
-	ID   string ` + "`json:\"id\"`" + `
-	Name string ` + "`json:\"name\"`" + `
+type ListQ struct {
+	Page int ` + "`query:\"page\"`" + `
 }
 `
+
+const chainSrc = `package app
+
+import (
+	"context"
+
+	mw "example.com/mw"
+)
+
+// oapi:parent AuditEp
+// oapi:prefix /export
+// oapi:middleware mw.RateLimit
+type ExportEp struct{}
+
+// oapi:route GET
+func (ep ExportEp) Dump(ctx context.Context, q ListEventsQ) (map[string]any, error) {
+	return nil, nil
+}
+`
+
+const cycleSrc = `package app
+
+import "context"
+
+// oapi:parent BEp
+type AEp struct{}
+
+// oapi:route GET
+func (ep AEp) H(ctx context.Context, _ any) (string, error) { return "", nil }
+
+// oapi:parent AEp
+type BEp struct{}
+
+// oapi:route GET
+func (ep BEp) H(ctx context.Context, _ any) (string, error) { return "", nil }
+`
+
+// overlapSrc 方法级注解写全路径（与父链前缀重叠）的场景。
+const overlapSrc = `package app
+
+import "context"
+
+// oapi:prefix /admin
+type AdminEp struct{}
+
+// oapi:route GET
+func (ep AdminEp) Index(ctx context.Context, _ any) (map[string]string, error) {
+	return nil, nil
+}
+
+// oapi:parent AdminEp
+type AuditEp struct{}
+
+// oapi:route GET /admin/audit
+func (ep AuditEp) List(ctx context.Context, _ any) (map[string]any, error) {
+	return nil, nil
+}
+`
+
+// cfgMW / cfgIC Config 补充用具名函数（middlewareRef 反射判定形态）。
+func cfgMW(next http.Handler) http.Handler { return next }
+
+func cfgIC(ctx context.Context, ep hinge.Endpoint, r hinge.RequestReader, s hinge.Sink, next func(context.Context) error) error {
+	return next(ctx)
+}
 
 func mustBuildIR(t *testing.T, cfg []EntryPointConfig) []*EndpointIR {
 	t.Helper()
@@ -136,27 +183,6 @@ func wantErr(t *testing.T, cfg []EntryPointConfig, substrings ...string) {
 	}
 }
 
-// overlapSrc 方法级注解写全路径（与挂载点重叠）的场景。
-const overlapSrc = `package app
-
-import "context"
-
-type UserEp struct{}
-
-// oapi:route GET /users/list
-func (ep UserEp) List(ctx context.Context, q ListUsersQ) ([]User, error) {
-	return nil, nil
-}
-
-type ListUsersQ struct {
-	Page int ` + "`query:\"page\"`" + `
-}
-
-type User struct {
-	ID string ` + "`json:\"id\"`" + `
-}
-`
-
 func wantErrSrc(t *testing.T, src string, cfg []EntryPointConfig, substrings ...string) {
 	t.Helper()
 	_, err := buildIR([]*Package{parseTestPkg(t, "app", src)}, cfg)
@@ -172,127 +198,130 @@ func wantErrSrc(t *testing.T, src string, cfg []EntryPointConfig, substrings ...
 
 // ---- 用例 ----
 
-// TestMountTreeFlat 树展平主链路：路径沿祖先链拼接、中间件/拦截器沿树继承。
-func TestMountTreeFlat(t *testing.T) {
-	eps := mustBuildIR(t, []EntryPointConfig{
-		{
-			Name: "ApiV1Ep", Prefix: "/api/v1", Middlewares: []any{TraceMW},
-			Children: []EntryPointConfig{
-				{Name: "UserEp", Interceptors: []hinge.Interceptor{AuthIC}},
-				{Name: "OrderEp", Prefix: "/orders"},
-			},
-		},
-	})
+// TestMountAnnotationFlat 注解挂载链主链路：路径沿祖先链拼接、
+// struct 级中间件/拦截器沿链继承（先根后叶）进 Mount 字段。
+func TestMountAnnotationFlat(t *testing.T) {
+	eps := mustBuildIR(t, nil)
 
 	cases := []struct {
 		owner, handler, fullPath string
-		mws                      []string
-		ics                      []string
+		mountMWs                 []string
+		mountICs                 []string
 	}{
-		{"ApiV1Ep", "Index", "/api/v1", []string{"gen.TraceMW"}, nil},
-		{"UserEp", "List", "/api/v1/users", []string{"gen.TraceMW"}, []string{"gen.AuthIC"}},
-		{"UserEp", "Get", "/api/v1/users/{id}", []string{"gen.TraceMW"}, []string{"gen.AuthIC"}},
-		{"OrderEp", "List", "/api/v1/orders", []string{"gen.TraceMW"}, nil},
+		{"AdminEp", "Index", "/admin", nil, nil},
+		// AuditEp 的 AuthIC 是自身注解拦截器 → 在 GroupICs（不在祖先链 MountICs）
+		{"AuditEp", "ListEvents", "/admin/audit/events", []string{"TraceMW"}, nil},
+		{"UserEp", "List", "/users", nil, nil},
 	}
 	for _, c := range cases {
 		ep := findEp(t, eps, c.owner, c.handler)
 		if ep.FullPath != c.fullPath {
 			t.Errorf("%s.%s FullPath = %q, want %q", c.owner, c.handler, ep.FullPath, c.fullPath)
 		}
-		if len(ep.RouteMWs) != len(c.mws) {
-			t.Errorf("%s.%s RouteMWs = %v, want %v", c.owner, c.handler, ep.RouteMWs, c.mws)
+		if len(ep.MountMWs) != len(c.mountMWs) {
+			t.Errorf("%s.%s MountMWs = %v, want %v", c.owner, c.handler, ep.MountMWs, c.mountMWs)
 		}
-		for i, want := range c.mws {
-			if ep.RouteMWs[i].Ref != want {
-				t.Errorf("%s.%s RouteMWs[%d] = %q, want %q", c.owner, c.handler, i, ep.RouteMWs[i].Ref, want)
+		for i, want := range c.mountMWs {
+			if ep.MountMWs[i].Name != want {
+				t.Errorf("%s.%s MountMWs[%d] = %q, want %q", c.owner, c.handler, i, ep.MountMWs[i].Name, want)
 			}
 		}
-		if len(ep.ConfigICs) != len(c.ics) {
-			t.Errorf("%s.%s ConfigICs = %v, want %v", c.owner, c.handler, ep.ConfigICs, c.ics)
+		if len(ep.MountICs) != len(c.mountICs) {
+			t.Errorf("%s.%s MountICs = %v, want %v", c.owner, c.handler, ep.MountICs, c.mountICs)
 		}
-		for i, want := range c.ics {
-			if ep.ConfigICs[i].Name != strings.SplitN(want, ".", 2)[1] {
-				t.Errorf("%s.%s ConfigICs[%d] = %q, want %q", c.owner, c.handler, i, ep.ConfigICs[i].Name, want)
+		if c.owner == "AuditEp" {
+			if len(ep.GroupICs) != 1 || ep.GroupICs[0].Name != "AuthIC" {
+				t.Errorf("AuditEp GroupICs = %v, want [AuthIC]（自身注解拦截器在 GroupICs）", ep.GroupICs)
+			}
+		}
+		for i, want := range c.mountICs {
+			if ep.MountICs[i].Name != want {
+				t.Errorf("%s.%s MountICs[%d] = %q, want %q", c.owner, c.handler, i, ep.MountICs[i].Name, want)
 			}
 		}
 	}
 }
 
-// TestMountInterceptorOrder 拦截器沿树先根后叶：祖先 Config ICs 先于叶节点、
-// 叶节点 Config ICs 先于结构体/方法级注解（结构体级注解已含于 UserEp 之外的源码，此处只验 Config 链）。
-func TestMountInterceptorOrder(t *testing.T) {
-	eps := mustBuildIR(t, []EntryPointConfig{
-		{
-			Name: "ApiV1Ep", Prefix: "/api/v1", Interceptors: []hinge.Interceptor{AuditIC},
-			Children: []EntryPointConfig{
-				{Name: "UserEp", Interceptors: []hinge.Interceptor{AuthIC}},
-			},
-		},
-	})
-	ep := findEp(t, eps, "UserEp", "List")
-	if len(ep.ConfigICs) != 2 || ep.ConfigICs[0].Name != "AuditIC" || ep.ConfigICs[1].Name != "AuthIC" {
-		t.Fatalf("ConfigICs 顺序错误 = %v，want [AuditIC AuthIC]", ep.ConfigICs)
+// TestMountChainThreeLevel 三级链：孙节点沿链继承祖父+父的中间件与拦截器，
+// 顺序先根后叶；路径三层串联。
+func TestMountChainThreeLevel(t *testing.T) {
+	eps, err := buildIR([]*Package{parseTestPkg(t, "app", mountSrc, chainSrc)}, nil)
+	if err != nil {
+		t.Fatalf("buildIR: %v", err)
+	}
+	ep := findEp(t, eps, "ExportEp", "Dump")
+	if ep.FullPath != "/admin/audit/export" {
+		t.Errorf("Dump FullPath = %q, want /admin/audit/export", ep.FullPath)
+	}
+	// 链：AdminEp(TraceMW) → AuditEp(AuthIC)；ExportEp 自身的 RateLimit 在自身组级，不入 Mount
+	if len(ep.MountMWs) != 1 || ep.MountMWs[0].Name != "TraceMW" {
+		t.Errorf("MountMWs = %v, want [TraceMW]", ep.MountMWs)
+	}
+	if len(ep.MountICs) != 1 || ep.MountICs[0].Name != "AuthIC" {
+		t.Errorf("MountICs = %v, want [AuthIC]", ep.MountICs)
 	}
 }
 
-// TestMountLinearCompat 无 Children 的线性用法行为不变：挂载点作用于组根、
-// 未挂载的 Enterpoint 保持注解原样（v0.2.1 既有形态回归）。
+// TestMountLinearCompat 无 parent 注解的 ep 行为不变：Config 补充照常生效
+// （per-ep，不沿链），未配置的 ep 保持注解原样。
 func TestMountLinearCompat(t *testing.T) {
 	eps := mustBuildIR(t, []EntryPointConfig{
-		{Name: "OrderEp", Prefix: "/orders", Middlewares: []any{TraceMW}},
+		{Name: "UserEp", Middlewares: []any{cfgMW}},
 	})
-	// 挂载点作用于组根：FullPath=/ → /orders
-	if ep := findEp(t, eps, "OrderEp", "List"); ep.FullPath != "/orders" {
-		t.Errorf("List FullPath = %q, want /orders", ep.FullPath)
+	// Config 补充（per-ep）
+	if ep := findEp(t, eps, "UserEp", "List"); len(ep.RouteMWs) != 1 {
+		t.Errorf("UserEp RouteMWs = %v, want 1 项", ep.RouteMWs)
 	}
-	// 未挂载的 Enterpoint 不受影响
-	if ep := findEp(t, eps, "UserEp", "List"); ep.FullPath != "/users" {
-		t.Errorf("List FullPath = %q, want /users", ep.FullPath)
-	}
-	if ep := findEp(t, eps, "UserEp", "Get"); ep.FullPath != "/users/{id}" {
-		t.Errorf("Get FullPath = %q, want /users/{id}", ep.FullPath)
-	}
-	if ep := findEp(t, eps, "ApiV1Ep", "Index"); ep.FullPath != "/" {
-		t.Errorf("Index FullPath = %q, want /", ep.FullPath)
+	// 未配置的 ep 不受影响
+	if ep := findEp(t, eps, "AdminEp", "Index"); ep.FullPath != "/admin" || len(ep.RouteMWs) != 0 {
+		t.Errorf("AdminEp Index = %q mws=%v, want /admin 且无补充", ep.FullPath, ep.RouteMWs)
 	}
 }
 
-// TestMountFuncDeclsLeaf 叶节点 FuncDecls 覆写仅作用于本节点端点。
+// TestMountConfigPerEP Config 补充不沿挂载链：父节点的 Interceptors 只作用于
+// 自己，不传给子节点（链继承只属于注解）。
+func TestMountConfigPerEP(t *testing.T) {
+	eps := mustBuildIR(t, []EntryPointConfig{
+		{Name: "AdminEp", Interceptors: []hinge.Interceptor{cfgIC}},
+	})
+	if ep := findEp(t, eps, "AdminEp", "Index"); len(ep.ConfigICs) != 1 {
+		t.Errorf("AdminEp ConfigICs = %v, want 1 项", ep.ConfigICs)
+	}
+	if ep := findEp(t, eps, "AuditEp", "ListEvents"); len(ep.ConfigICs) != 0 {
+		t.Errorf("AuditEp ConfigICs = %v, want 0（Config 补充不沿链）", ep.ConfigICs)
+	}
+}
+
+// TestMountFuncDeclsLeaf FuncDecls 覆写仅作用于本节点端点。
 func TestMountFuncDeclsLeaf(t *testing.T) {
 	eps := mustBuildIR(t, []EntryPointConfig{
 		{
-			Name: "ApiV1Ep", Prefix: "/api/v1",
-			Children: []EntryPointConfig{
-				{Name: "UserEp", FuncDecls: map[FuncId]RouteMeta{
-					"app.UserEp.List": {Summary: "用户列表（覆写）"},
-				}},
+			Name: "AuditEp",
+			FuncDecls: map[FuncId]RouteMeta{
+				"app.AuditEp.ListEvents": {Summary: "审计事件（覆写）"},
 			},
 		},
 	})
-	ep := findEp(t, eps, "UserEp", "List")
-	if ep.Summary != "用户列表（覆写）" {
-		t.Errorf("List Summary = %q, want 覆写值", ep.Summary)
+	ep := findEp(t, eps, "AuditEp", "ListEvents")
+	if ep.Summary != "审计事件（覆写）" {
+		t.Errorf("ListEvents Summary = %q, want 覆写值", ep.Summary)
 	}
 }
 
-// TestMountDiagnostics 生成期诊断：Name 未命中 / 同 owner 多挂载 / 注解路径已含挂载点。
+// TestMountDiagnostics 生成期诊断：悬空 / 成环 / 自引用 / 前缀重叠。
 func TestMountDiagnostics(t *testing.T) {
-	t.Run("Name未命中", func(t *testing.T) {
-		wantErr(t, []EntryPointConfig{{Name: "NoSuchEp", Prefix: "/x"}},
-			"NoSuchEp", "未命中任何扫描到的 Enterpoint")
+	t.Run("悬空", func(t *testing.T) {
+		src := strings.Replace(mountSrc, "oapi:parent AdminEp", "oapi:parent NoSuchEp", 1)
+		wantErrSrc(t, src, nil, "NoSuchEp", "未命中任何扫描到的 Enterpoint")
 	})
-	t.Run("同owner多挂载", func(t *testing.T) {
-		wantErr(t, []EntryPointConfig{
-			{Name: "UserEp", Prefix: "/a"},
-			{Name: "ApiV1Ep", Prefix: "/api", Children: []EntryPointConfig{
-				{Name: "UserEp"},
-			}},
-		}, "UserEp", "挂载多处")
+	t.Run("成环", func(t *testing.T) {
+		wantErrSrc(t, cycleSrc, nil, "成环")
 	})
-	t.Run("注解路径已含挂载点", func(t *testing.T) {
-		// 方法级注解写了从根开始的全路径 /users/list，再挂到 /users 下 → 重叠报错
-		wantErrSrc(t, overlapSrc, []EntryPointConfig{
-			{Name: "UserEp", Prefix: "/users"},
-		}, "/users/list", "已含挂载点前缀", "相对挂载点声明")
+	t.Run("自引用", func(t *testing.T) {
+		src := strings.Replace(mountSrc, "oapi:parent AdminEp", "oapi:parent AuditEp", 1)
+		wantErrSrc(t, src, nil, "不能指向自身")
+	})
+	t.Run("前缀重叠", func(t *testing.T) {
+		wantErrSrc(t, overlapSrc, nil, "已含挂载前缀", "相对挂载点声明")
 	})
 }

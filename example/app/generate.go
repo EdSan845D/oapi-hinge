@@ -9,7 +9,6 @@ import (
 	"github.com/EdSan845D/oapi-hinge/example/app/eps"
 	"github.com/EdSan845D/oapi-hinge/example/app/middleware"
 	"github.com/EdSan845D/oapi-hinge/gen"
-	"github.com/EdSan845D/oapi-hinge/hinge"
 )
 
 // EntryPointsConfig 程序化 Enterpoint 配置：gen.Run 同进程注入。
@@ -25,6 +24,8 @@ import (
 //	go run ./app            # 生成
 //	go run ./app -check     # CI 门禁：产物过期即失败
 func EntryPointsConfig() []gen.EntryPointConfig {
+	// 挂载关系不经 Config：oapi:parent 注解是唯一事实源（见 app/eps/admin.go，
+	// AdminEp 组根 /admin + AuditEp oapi:parent AdminEp /audit）。
 	return []gen.EntryPointConfig{
 		{
 			Name: "SystemEp",
@@ -41,21 +42,6 @@ func EntryPointsConfig() []gen.EntryPointConfig {
 					Summary:     "健康检查（代码覆写示例）",
 					Description: "描述由 EntryPointConfig.FuncDecls 程序化覆写：非零字段覆盖注解值，生成日志会打印覆写提示。",
 					Deprecated:  gen.Ptr(true),
-				},
-			},
-		},
-		{
-			// Children 挂载树演示：/admin（组根，纯挂载层）下挂 /audit 子节点。
-			// 挂载点前缀生成期烘焙进路由路径，运行时无嵌套 Group；
-			// 组级中间件/拦截器沿祖先链（先根后叶）继承。
-			Name:        "AdminEp",
-			Prefix:      "/admin",
-			Middlewares: []any{middleware.Auth}, // 组级框架原生中间件：作用于本节点及全部后代
-			Children: []gen.EntryPointConfig{
-				{
-					Name:         "AuditEp",
-					Prefix:       "/audit", // 挂载点相对父节点：最终 /api/admin/audit
-					Interceptors: []hinge.Interceptor{middleware.AccessLog}, // 内核拦截器：只作用于本节点
 				},
 			},
 		},

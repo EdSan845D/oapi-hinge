@@ -151,9 +151,8 @@ type RouteMeta struct {
 }
 
 type EntryPointConfig struct {
-	Name   EntryId
-	Prefix string
-	Tags   []string
+	Name EntryId
+	Tags []string
 	// Middlewares 组级框架原生中间件（运行时值 → 反射取名 → 源码引用，
 	// 发射为 scoped Group 直挂）。元素必须为框架原生中间件类型；
 	// 内核拦截器请放 Interceptors——两条通道不得混排。
@@ -165,18 +164,9 @@ type EntryPointConfig struct {
 	// FuncDecls 字段级程序化覆写：键为 FuncIdentity(fn) 派生的函数标识
 	//（如 "eps.SystemEp.Health"），值为按字段合并的覆写元数据（非零字段才生效）。
 	// 命中的端点在生成期输出覆写提示，保证代码定义的覆写可见。
+	// 挂载关系不经 Config：oapi:parent 注解是唯一事实源（子声明式，沿祖先链
+	// 生成期展平；Middlewares/Interceptors 为 per-ep 补充，不沿挂载链）。
 	FuncDecls map[FuncId]RouteMeta
-	// Children 子挂载节点（递归）：路由树在声明期组装、生成期展平——运行时仍是
-	// 同一张平铺端点表，无嵌套结构。沿祖先链合成（先根后叶）：
-	//   Prefix       挂载点前缀，相对父节点串联（oapi:prefix 为节点固有子前缀，
-	//                已体现在 FullPath；注解路径已含挂载点是常见笔误，生成期诊断）；
-	//   Middlewares  框架原生中间件，根→叶顺序拼接后组级直挂（与 Group 嵌套执行序一致）；
-	//   Interceptors 内核拦截器，根→叶拼接后先于结构体/方法级注解；
-	//   FuncDecls / Tags 不继承（FuncDecls 键含 owner 名，叶子自管）。
-	// Name 必填且必须命中扫描到的 Enterpoint（未命中诊断）；同一 owner 只允许
-	// 挂载一处（spec/注册函数名按 owner 派生，多实例冲突，诊断禁止）。
-	// 纯前缀层用只有组根路由的 Enterpoint 表达（oapi:route GET 省路径即组根）。
-	Children []EntryPointConfig
 }
 
 const PKGFlag = "PKG_"
