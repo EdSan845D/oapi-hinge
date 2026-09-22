@@ -1,4 +1,4 @@
-﻿package eps
+package eps
 
 import (
 	"context"

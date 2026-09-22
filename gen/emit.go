@@ -934,7 +934,11 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 		od := &ownerData{Name: owner, IsPkg: isPkgOwner, OwnerAlias: taken[ep0.Pkg.ImportPath]}
 		// 组级引用：EntryPointConfig.Middlewares（框架原生）+ 结构体级 oapi:middleware。
 		// 无组概念的框架（http）不用 GroupArgs，引用由模板侧折叠进每条路由。
+		// 组级中间件链（执行序）：挂载链继承（祖先根→叶）→ Config 补充 → 自身 struct 注解
 		var groupRefs []string
+		for _, ref := range ep0.MountMWs {
+			groupRefs = append(groupRefs, mwSourceRef(is, taken, ref))
+		}
 		for _, rmw := range ep0.RouteMWs {
 			groupRefs = append(groupRefs, rmw.Ref)
 		}
@@ -962,10 +966,12 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 			for _, ref := range ep.AnnoMWs {
 				annoRefs = append(annoRefs, mwSourceRef(is, taken, ref))
 			}
-			// 内核拦截器实参：EntryPointConfig.Interceptors（owner 级）→ 结构体级
-			// oapi:interceptor → 方法级 oapi:interceptor，声明序发射为 Handle
-			// 变参尾段（extra 进内核链）。
-			icRefs := make([]string, 0, len(ep0.ConfigICs)+len(ep0.GroupICs)+len(ep.AnnoICs))
+			// 内核拦截器实参：挂载链继承（祖先根→叶）→ Config 补充 → 结构体级 →
+			// 方法级，声明序发射为 Handle 变参尾段（extra 进内核链）。
+			icRefs := make([]string, 0, len(ep0.MountICs)+len(ep0.ConfigICs)+len(ep0.GroupICs)+len(ep.AnnoICs))
+			for _, ref := range ep0.MountICs {
+				icRefs = append(icRefs, mwSourceRef(is, taken, ref))
+			}
 			for _, ref := range ep0.ConfigICs {
 				icRefs = append(icRefs, mwSourceRef(is, taken, ref))
 			}
@@ -985,7 +991,10 @@ func emitRegister(rootDir string, cfg Config, eps []*EndpointIR, target string) 
 			case "http":
 				// stdlib 无路由链：全部引用折叠进 Handle 变参（内核拦截链，
 				// AsInterceptors 装配期识别；类型不兼容 fail fast）。
-				raw := make([]string, 0, len(ep.RouteMWs)+len(ep0.GroupMWs)+len(annoRefs)+len(icRefs))
+				raw := make([]string, 0, len(ep.MountMWs)+len(ep.RouteMWs)+len(ep0.GroupMWs)+len(annoRefs)+len(icRefs))
+				for _, ref := range ep.MountMWs {
+					raw = append(raw, mwSourceRef(is, taken, ref))
+				}
 				for _, rmw := range ep.RouteMWs {
 					raw = append(raw, rmw.Ref)
 				}

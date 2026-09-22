@@ -68,9 +68,9 @@ func main() {
 			},
 		},
 		// 程序化配置（含 Children 挂载树演示）：启用后产物头部带 entrypoints:
-	// programmatic 标记，CLI gen/-check 拒绝执行（双入口产物漂移防护），
-	// 生成与门禁都走本入口（go run ./app / go run ./app -check）。
-	EntryPoints: EntryPointsConfig(),
+		// programmatic 标记，CLI gen/-check 拒绝执行（双入口产物漂移防护），
+		// 生成与门禁都走本入口（go run ./app / go run ./app -check）。
+		EntryPoints: EntryPointsConfig(),
 	}
 	if err := gen.Run(dir, cfg, *check); err != nil {
 		fmt.Fprintln(os.Stderr, "hinge:", err)

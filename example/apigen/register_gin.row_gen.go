@@ -154,7 +154,7 @@ func RegisterAdminEpGinRow(i gin.IRouter, ep eps.AdminEp) {
 
 // RegisterAuditEpGinRow 把 AuditEp 的全部端点挂到 GinRow。
 func RegisterAuditEpGinRow(i gin.IRouter, ep eps.AuditEp) {
-	r := i
+	r := i.Group("", middleware.Auth)
 	r.GET("/admin/audit/events", Adaptor(hinge.Endpoint{Owner: "AuditEp", Handler: "ListEvents", Method: "GET", Path: "/admin/audit/events"}, BindQAuditQ, nil, func(ctx context.Context, q, b any) (any, error) {
 		return ep.ListEvents(ctx, q.(eps.AuditQ))
 	}, middleware.AccessLog))

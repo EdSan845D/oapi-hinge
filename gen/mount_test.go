@@ -308,6 +308,33 @@ func TestMountFuncDeclsLeaf(t *testing.T) {
 	}
 }
 
+// TestEmitMountInheritedGroup 产物级回归：祖先组级中间件必须出现在后代注册函数
+// （防 IR→发射断链：MountMWs 填充正确但组装遗漏时，继承静默失效）。
+func TestEmitMountInheritedGroup(t *testing.T) {
+	pkg := parseTestPkg(t, "app", mountSrc)
+	cfg := Config{Module: "example.com/app", Out: "apigen", Pkg: "apigen", Scan: []string{"./app"}}
+	eps, err := buildIR([]*Package{pkg}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := emitRegister("", cfg, eps, "gin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// AuditEp 自身无注解中间件，其组级 TraceMW 应完全来自祖先 AdminEp 的继承
+	start := strings.Index(out, "func RegisterAuditEpGin")
+	if start < 0 {
+		t.Fatal("产物缺少 RegisterAuditEpGin")
+	}
+	body := out[start:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+	if !strings.Contains(body, `i.Group("", mw.TraceMW)`) {
+		t.Fatalf("AuditEp 注册函数缺少继承的祖先中间件 mw.TraceMW：\n%s", body)
+	}
+}
+
 // TestMountDiagnostics 生成期诊断：悬空 / 成环 / 自引用 / 前缀重叠。
 func TestMountDiagnostics(t *testing.T) {
 	t.Run("悬空", func(t *testing.T) {

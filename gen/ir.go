@@ -411,6 +411,9 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 				if next == "" {
 					break
 				}
+				if _, exists := mountEps[next]; !exists {
+					break // 悬空中间节点：悬空预检已诊断，行走终止（防越界）
+				}
 				cur = next
 			}
 		}
@@ -421,7 +424,14 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 			if b, ok := bases[owner]; ok {
 				return b
 			}
-			self := mountEps[owner][0]
+			eps, exists := mountEps[owner]
+			if !exists {
+				// 悬空防御：预检已诊断悬空，此处返回空基座（应用层因 broken 跳过）
+				ctx := &mountBase{}
+				bases[owner] = ctx
+				return ctx
+			}
+			self := eps[0]
 			var ctx *mountBase
 			if self.Parent == "" {
 				ctx = &mountBase{

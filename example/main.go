@@ -54,12 +54,12 @@ func main() {
 	// 装配：DI + 一行注册（gin / echo / http 各自的 RegisterAll 已生成）
 	store := eps.NewUserStore()
 	epsAll := apigen.All{
-		SystemEp: eps.SystemEp{},
-		UserEp:   eps.UserEp{Store: store},
+		SystemEp:  eps.SystemEp{},
+		UserEp:    eps.UserEp{Store: store},
 		VipUserEp: eps.VipUserEp{UserEp: eps.UserEp{Store: store}}, // 嵌入 UserEp：与主列表共享 store
-		FileEp:   eps.FileEp{},
-		AdminEp:  eps.AdminEp{},  // oapi:parent 挂载链根（AdminEp /admin + AuditEp /audit）
-		AuditEp:  eps.AuditEp{},
+		FileEp:    eps.FileEp{},
+		AdminEp:   eps.AdminEp{}, // oapi:parent 挂载链根（AdminEp /admin + AuditEp /audit）
+		AuditEp:   eps.AuditEp{},
 	}
 	apigen.RegisterAllGin(r.Group("/api"), k, epsAll)
 
