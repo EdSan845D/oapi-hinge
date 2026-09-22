@@ -2,8 +2,7 @@
 // 只负责「取值 + 写出」——请求管线（绑定/校验/调用/壳包装）全部在 hinge
 // 内核与生成代码中，本文件不含任何路由注册与业务装配逻辑。
 //
-// 形态与 servergin / serverhttp 适配器对称；旧版 Server 装配器
-// （echo.go / mount.go / bind.go）保留在原地，待主线分支统一清理。
+// 形态与 servergin / serverhttp 适配器对称。
 package serverecho
 
 import (
@@ -131,7 +130,6 @@ func (s *Sink) WriteStream(f *hinge.FileStream) { writeStreamFile(s.C, f) }
 // Reader 可 Seek 且 Size>0 时走 http.ServeContent——自动支持 Range/206 多段、
 // If-None-Match / If-Modified-Since / If-Range 条件请求与 416；其余情况回退
 // 全量/分块输出）。
-// 注：与旧版 mount.go 的 serveFile 并存（旧文件待分支上 git rm），故此处另取其名。
 func writeStreamFile(c echo.Context, f *hinge.FileStream) {
 	contentType := f.ContentType
 	if contentType == "" {

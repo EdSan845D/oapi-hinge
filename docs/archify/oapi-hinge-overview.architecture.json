@@ -1,50 +1,45 @@
-﻿{
+{
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
     "title": "oapi-hinge 框架总览",
     "locale": "zh-CN",
-    "viewBox": [1300, 780],
+    "output": "docs/archify/oapi-hinge-overview.architecture.html",
+    "viewBox": [1100, 590],
     "quality_profile": "showcase",
     "views": [
-      { "id": "request-path", "label": "请求路径", "focus": ["client", "gin", "servergin", "handlers", "contract"], "note": "客户端请求经 gin 引擎进入 servergin 管线，到达业务纯函数。" },
-      { "id": "docs-path", "label": "文档路径", "focus": ["registry", "openapi", "spec", "docsreader"], "note": "同一份路由注册表在构建期推导 OpenAPI 3.1。" },
-      { "id": "engines", "label": "双引擎", "focus": ["gin", "servergin", "serverecho", "echo"], "note": "同一注册表挂载到 gin 或 echo，业务代码零改动。" }
+      { "id": "request-path", "label": "请求路径", "focus": ["client", "engine", "adapter", "kernel", "endpoints"], "note": "请求经薄 transport 进入适配器，内核绑定器直调业务纯函数，请求期零反射。" },
+      { "id": "gen-path", "label": "生成路径", "focus": ["endpoints", "gencli", "apigen", "adapter"], "note": "hinge gen 解析注解发射四类产物，RegisterAll* 一行装配；挂载链与端点集提升在生成期合成。" },
+      { "id": "docs-path", "label": "文档路径", "focus": ["apigen", "openapi", "spec", "docsreader"], "note": "docs/ 独立入口消费同一张生成表，构建期推导 OpenAPI 3.1。" }
     ]
   },
   "components": [
-    { "id": "contract", "type": "backend", "label": "contract 契约层", "sublabel": "类型 · 错误 · 壳 · 绑定", "pos": [160, 190], "size": [140, 64], "tag": "零框架依赖" },
-    { "id": "handlers", "type": "backend", "label": "业务 Handler", "sublabel": "func(ctx, Q, B) 纯函数", "pos": [400, 190], "size": [140, 64] },
-    { "id": "servergin", "type": "backend", "label": "servergin", "sublabel": "gin 适配器", "pos": [640, 190], "size": [130, 60] },
-    { "id": "gin", "type": "external", "label": "gin", "sublabel": "HTTP 引擎", "pos": [840, 190], "size": [110, 60] },
-    { "id": "client", "type": "external", "label": "客户端", "sublabel": "浏览器 / Apifox", "pos": [1030, 190], "size": [120, 60] },
-    { "id": "registry", "type": "backend", "label": "路由注册表", "sublabel": "routes.All() · RouteMeta", "pos": [400, 380], "size": [150, 64], "tag": "单点真相" },
-    { "id": "openapi", "type": "backend", "label": "openapi 生成器", "sublabel": "按需 import 隔离", "pos": [640, 380], "size": [140, 60], "tag": "构建期" },
-    { "id": "spec", "type": "database", "label": "openapi.yaml", "sublabel": "OpenAPI 3.1", "pos": [840, 380], "size": [120, 60] },
-    { "id": "docsreader", "type": "external", "label": "Swagger / Apifox", "sublabel": "规范导入", "pos": [1030, 380], "size": [120, 60] },
-    { "id": "serverecho", "type": "backend", "label": "serverecho", "sublabel": "echo 适配器", "pos": [740, 540], "size": [130, 60] },
-    { "id": "echo", "type": "external", "label": "echo", "sublabel": "HTTP 引擎", "pos": [940, 540], "size": [110, 60] }
-  ],
-  "boundaries": [
-    { "kind": "region", "label": "消费项目（snapshot-browser 等）", "wraps": ["handlers", "registry"] },
-    { "kind": "region", "label": "oapi-hinge 单模块", "wraps": ["contract", "servergin", "openapi", "serverecho", "echo"] }
+    { "id": "client", "type": "external", "label": "客户端", "sublabel": "浏览器 / Apifox", "pos": [40, 140], "size": [100, 60] },
+    { "id": "engine", "type": "external", "label": "HTTP 引擎", "sublabel": "gin / echo / net/http", "pos": [215, 140], "size": [110, 60] },
+    { "id": "adapter", "type": "backend", "label": "框架适配器", "sublabel": "servergin · serverecho · serverhttp", "pos": [400, 140], "size": [160, 64], "tag": "独立子模块" },
+    { "id": "kernel", "type": "backend", "label": "hinge 运行时内核", "sublabel": "请求管线 · 错误链 · 响应壳", "pos": [620, 140], "size": [150, 64], "tag": "根模块·零框架依赖" },
+    { "id": "endpoints", "type": "backend", "label": "业务端点", "sublabel": "Enterpoint 纯函数 + 注解", "pos": [880, 140], "size": [170, 64], "tag": "消费项目" },
+    { "id": "gencli", "type": "backend", "label": "hinge gen 生成器", "sublabel": "AST 解析 → IR → 发射", "pos": [870, 350], "size": [190, 64], "tag": "cmd/hinge" },
+    { "id": "apigen", "type": "backend", "label": "生成产物 apigen/", "sublabel": "specs · binders · docs · register", "pos": [570, 350], "size": [200, 64], "tag": "生成期合成挂载链" },
+    { "id": "openapi", "type": "backend", "label": "openapi 生成器", "sublabel": "OpenAPI 3.1 · 构建期", "pos": [270, 350], "size": [170, 64], "tag": "按需 import" },
+    { "id": "spec", "type": "database", "label": "openapi.yaml", "sublabel": "规范产物", "pos": [280, 490], "size": [150, 60] },
+    { "id": "docsreader", "type": "external", "label": "Swagger / Apifox", "sublabel": "规范导入 · 在线预览", "pos": [540, 490], "size": [170, 60] }
   ],
   "connections": [
-    { "id": "client-gin", "from": "client", "to": "gin", "label": "HTTP 请求", "variant": "emphasis" },
-    { "id": "gin-servergin", "from": "gin", "to": "servergin", "label": "请求管线" },
-    { "id": "servergin-handlers", "from": "servergin", "to": "handlers", "label": "调用 Handler", "variant": "emphasis", "labelDy": -26 },
-    { "id": "handlers-contract", "from": "handlers", "to": "contract", "label": "Q/B/R 类型 · 错误 · 壳", "labelDy": 56 },
-    { "id": "handlers-registry", "from": "handlers", "to": "registry", "label": "注册 RouteMeta", "fromSide": "bottom", "toSide": "top" },
-    { "id": "registry-servergin", "from": "registry", "to": "servergin", "label": "Mount()", "labelAt": [640, 300] },
-    { "id": "registry-openapi", "from": "registry", "to": "openapi", "label": "Generate()", "variant": "dashed", "labelAt": [500, 470] },
-    { "id": "openapi-spec", "from": "openapi", "to": "spec", "label": "OpenAPI 3.1" },
-    { "id": "spec-docsreader", "from": "spec", "to": "docsreader", "label": "导入 / 在线预览", "labelDy": 54 },
-    { "id": "registry-serverecho", "from": "registry", "to": "serverecho", "label": "Mount()（echo 同款）", "variant": "dashed", "labelAt": [640, 560] },
-    { "id": "serverecho-echo", "from": "serverecho", "to": "echo", "label": "挂载" }
+    { "id": "client-engine", "from": "client", "to": "engine", "label": "HTTP 请求", "variant": "emphasis" },
+    { "id": "engine-adapter", "from": "engine", "to": "adapter", "label": "取值 + 写出" },
+    { "id": "adapter-kernel", "from": "adapter", "to": "kernel", "label": "请求管线", "variant": "emphasis" },
+    { "id": "kernel-endpoints", "from": "kernel", "to": "endpoints", "label": "绑定器直调 · 零反射", "variant": "emphasis" },
+    { "id": "endpoints-gencli", "from": "endpoints", "to": "gencli", "label": "注解唯一事实源", "labelDy": 24 },
+    { "id": "gencli-apigen", "from": "gencli", "to": "apigen", "label": "发射产物", "variant": "emphasis" },
+    { "id": "apigen-adapter", "from": "apigen", "to": "adapter", "label": "RegisterAll* 装配", "variant": "emphasis", "fromSide": "top", "toSide": "bottom" },
+    { "id": "apigen-openapi", "from": "apigen", "to": "openapi", "label": "AllDocSpecs()", "variant": "dashed" },
+    { "id": "openapi-spec", "from": "openapi", "to": "spec", "label": "OpenAPI 3.1", "labelDy": 24 },
+    { "id": "spec-docsreader", "from": "spec", "to": "docsreader", "label": "导入 / 预览" }
   ],
   "cards": [
-    { "dot": "cyan", "title": "单点真相", "items": ["routes.All() 同时驱动运行时挂载与文档生成", "改一处注册，行为与规范同步"] },
-    { "dot": "emerald", "title": "依赖边界", "items": ["contract 契约层零框架依赖", "业务层只写纯函数 Handler", "gin/echo 细节留在适配器内"] },
-    { "dot": "rose", "title": "构建期隔离", "items": ["openapi 包整体 按需 import 隔离 隔离", "release 二进制零文档依赖"] }
+    { "dot": "cyan", "title": "单点真相", "items": ["端点函数 + oapi:* 注解是路由的唯一事实源", "注册与文档消费同一张生成表，hinge gen -check 做 CI 门禁"] },
+    { "dot": "emerald", "title": "挂载链与端点集提升", "items": ["oapi:parent 沿祖先链生成期合成前缀与组级中间件/拦截器，运行时保持平铺", "嵌入 Enterpoint 即继承端点集，新前缀复用零重复（如 /users/vip）", "func(ctx) 无参签名与 urlencoded 表单体，健康检查不再需要占位参数"] },
+    { "dot": "rose", "title": "多模块边界", "items": ["根内核 go.mod 零框架依赖，gin/echo/http/go-playground 各自独立子模块", "openapi 按需 import 隔离，release 二进制零文档依赖", "validator.Playground() 可选接入，scaffold create 一键生成新项目"] }
   ]
 }

@@ -22,7 +22,7 @@ type docUser struct {
 	Name string `json:"name"`
 }
 
-func TestGenerateEscapeHatches(t *testing.T) {
+func TestGenerateHeaderParamAndEnvelopeDocs(t *testing.T) {
 	eps := []hinge.EndpointDoc{
 		{
 			Endpoint: hinge.Endpoint{
@@ -302,7 +302,7 @@ func TestGenerateMiddlewareDocHook(t *testing.T) {
 	}
 }
 
-// 未消费钩子警告：注册了但没有任何端点 MWRefs 引用 → buildDoc warnings（P0-2）
+// 未消费钩子警告：注册了但没有任何端点 MWRefs 引用 → buildDoc warnings
 func TestUnmatchedMiddlewareHookWarning(t *testing.T) {
 	RegisterMiddlewareDoc(demoUnmatchedMW, func(op *openapi3.Operation) {})
 	// demoSessionMW 已在 TestGenerateMiddlewareDocHook 注册并被消费；

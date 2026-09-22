@@ -8,8 +8,9 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// InterceptAsEcho 把单个内核拦截器适配为 echo 路由中间件节点（手写逃生口：
-// 生成代码对 oapi:interceptor 统一走 Handle 的 extra 变参进内核链，不经此包装）。
+// InterceptAsEcho 把单个内核拦截器适配为 echo 路由中间件节点，供手写装配的
+// 路由使用；生成代码对 oapi:interceptor 统一走 Handle 的 extra 变参进内核链，
+// 不经此包装。
 // next(ctx) 语义与 servergin.InterceptAsGin 对称。
 func InterceptAsEcho(ep hinge.Endpoint, in hinge.Interceptor) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {

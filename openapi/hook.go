@@ -28,7 +28,7 @@ type DocHook = func(op *openapi3.Operation)
 var mwHooks = map[string]DocHook{}
 
 // mwHookUsed 已被至少一个端点 MWRefs 消费的钩子键：Generate 结束时未消费的
-// 键 = 注册名与 MWRefs 失配（函数改名/移动），钩子静默失效，输出警告（P0-2）。
+// 键 = 注册名与 MWRefs 失配（函数改名/移动），钩子静默失效，输出警告。
 var mwHookUsed = map[string]bool{}
 
 // RegisterMiddlewareDoc 注册中间件文档钩子。fn 传中间件函数引用，

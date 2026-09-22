@@ -27,8 +27,9 @@ type OutTransformer interface {
 	OutTransform(context.Context) error
 }
 
-// TransformIn 入参转换（手动挂载逃生口使用；生成绑定器在生成期直接内联调用）。
-// v 为绑定后的入参值。
+// TransformIn 入参转换：v 为绑定后的入参值，实现 InTransformer 时调用其
+// InTransform。生成绑定器在生成期直接内联等价调用；手写装配（Kernel.Handle）
+// 用它保持同一转换语义。
 func TransformIn(ctx context.Context, v any) error {
 	if t, ok := v.(InTransformer); ok {
 		return t.InTransform(ctx)

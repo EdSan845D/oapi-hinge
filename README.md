@@ -59,6 +59,7 @@ func (ep UserEp) CreateUser(ctx context.Context, _ any, b CreateUserReq) (User, 
 |---|---|---|
 | `oapi:route` | 方法·必填 | `"<METHOD> <相对路径>"`，路径省略 = 组根 |
 | `oapi:prefix` | 类型 | 组前缀 |
+| `oapi:parent` | 类型 | 挂载到父 Enterpoint（纯名引用），前缀与组级中间件/拦截器沿祖先链生成期合成，见下文「挂载链」 |
 | `oapi:tag` | 类型/方法 | OpenAPI tag |
 | `oapi:timeout` | 类型/方法 | 超时声明，文档派生 x-timeout |
 | `oapi:status` / `oapi:deprecated` / `oapi:envelope` | 方法 | 成功码 / 弃用 / 命名响应壳 |
@@ -72,10 +73,10 @@ go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen        # 生成（纯注解
 go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen -check # CI 门禁：产物过期即失败
 ```
 
-> **程序化 EntryPoints 项目（generate.go 注入）**：CLI 生成会丢失 EntryPointConfig
->（组级中间件 / FuncDecls 覆写），已被禁止——产物头部带
-> `entrypoints: programmatic` 标记，CLI 检测到即报错引导。生成与门禁走项目内入口：
-> `go run ./app` 与 `go run ./app -check`（参考 example/app/generate.go）。
+> **程序化 EntryPoints 项目**：CLI 生成无法携带 EntryPointConfig（组级中间件 /
+> FuncDecls 覆写），故被禁止——此类项目产物头部带 `entrypoints: programmatic`
+> 标记，CLI 检测到即报错。生成与门禁走项目内入口 `go run ./app [-check]`
+> （见 example/app/generate.go）。
 
 产物（按 `hinge.gen.yaml` 的 targets 按需生成）：
 
@@ -118,7 +119,7 @@ FuncDecls 支持覆写 Summary / Description / Tags / DefaultStatusCode / Envelo
 ### 挂载链：oapi:parent 注解
 
 大型项目的路由组织用 oapi:parent 注解组装成链，生成期展平——运行时仍是同一张平铺端点表，三个适配器零改动。
-挂载关系写在 ep 自己头上，与 prefix/middleware/interceptor 相邻，与“注解唯一事实源”同一哲学：
+挂载关系写在 ep 自己头上，与 prefix/middleware/interceptor 相邻——路由声明仍然只有注解一个事实源：
 
 ```go
 // oapi:prefix /admin                     // 挂载链根：组根 Enterpoint（oapi:route 省路径即组根）
@@ -276,7 +277,7 @@ openapi.RegisterMiddlewareDoc(middleware.ParseHeaderWithInfo, func(op *openapi3.
 
 ## 手写挂载
 
-手写逃生口：直接构造 `hinge.Endpoint` + `Binder` + `HandlerFunc` 调 `Kernel.Handle`，即可在任意框架上挂载动态路由。
+框架的扩展点（escape hatch）：不经注解与生成器，直接构造 `hinge.Endpoint` + `Binder` + `HandlerFunc` 调 `Kernel.Handle`，即可在任意框架上手动挂载动态路由。
 
 ## License
 

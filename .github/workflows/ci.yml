@@ -32,7 +32,7 @@ jobs:
       - name: Test
         run: go test ./...
 
-      # example 独立模块：程序化 EntryPoints 生成 + 门禁（CLI 已禁止该场景，见 P0-1）
+      # example 独立模块：程序化 EntryPoints 生成 + 门禁（该场景 CLI 已禁止，走项目内入口）
       - name: Example (programmatic entrypoint)
         run: |
           cd example

@@ -484,7 +484,7 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 			byOwner[string(ec.Name)] = ec
 		}
 		// FuncDecls 消费跟踪：未命中任何端点的键 = 拼写/重构失配，覆写会静默失效，
-		// 块尾统一警告（P0-2）。
+		// 块尾统一警告。
 		usedFuncDecls := map[FuncId]bool{}
 		configured := map[string]bool{}
 		for _, ep := range b.eps {

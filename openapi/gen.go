@@ -102,7 +102,7 @@ func buildDoc(eps []hinge.EndpointDoc, opts ...Option) (*openapi3.T, []string, e
 			warnings = append(warnings, "spec validation failed: "+verr.Error())
 		}
 	}
-	// 中间件文档钩子未消费警告：键与 MWRefs 失配（函数改名/移动）会静默失效（P0-2）
+	// 中间件文档钩子未消费警告：键与 MWRefs 失配（函数改名/移动）会静默失效。
 	for _, name := range unmatchedMiddlewareHooks() {
 		warnings = append(warnings, "middleware doc hook not matched by any endpoint MWRefs: "+name)
 	}

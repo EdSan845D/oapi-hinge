@@ -71,7 +71,7 @@ func TestTransformOutErrorShortCircuits(t *testing.T) {
 	}
 }
 
-// ---- TransformIn（手动逃生口）----
+// ---- TransformIn（手写装配路径）----
 
 type inTransformable struct{ ok bool }
 
