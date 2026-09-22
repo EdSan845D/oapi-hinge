@@ -1,8 +1,6 @@
-//go:build openapi
-
-// 开发期文档生成入口：go run -tags openapi ./example -out openapi.yaml
-// 消费文档描述表（AllDocSpecs()，docs_gen.go）——仅本入口链接文档元数据，
-// 运行时二进制（默认 tag）零文档开销的哲学不变。
+// 开发期文档生成入口：go run ./docs -out openapi.yaml（example 目录下执行）
+// 消费文档描述表（AllDocSpecs()，docs_gen.go）——仅本入口 import openapi 包，
+// 运行时二进制（main.go）不引用即不链接，零文档开销的哲学不变。
 package main
 
 import (
@@ -16,7 +14,6 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-//go:generate go run ./app/generate.go
 func main() {
 	out := flag.String("out", "openapi.yaml", "openapi 文档输出路径（.yaml/.yml -> YAML，.json -> JSON）")
 	flag.Parse()

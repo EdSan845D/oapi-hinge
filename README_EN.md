@@ -72,7 +72,7 @@ apigen.RegisterAllGin(r.Group("/api"), k, apigen.All{
 | `hinge` | Runtime kernel: Endpoint contract, framework-agnostic pipeline, error chain, envelopes, interceptor registry (zero reflection) |
 | `gen` + `cmd/hinge` | Code generator: AST annotation parsing → IR → emitters |
 | `servergin` / `serverecho` / `serverhttp` | Thin transports (~300 lines each) |
-| `openapi` | OpenAPI 3.1 generator consuming `Endpoints()` tables (build-tag isolated) |
+| `openapi` | OpenAPI 3.1 generator consuming doc-spec tables (import-time isolation: unreferenced binaries link none of it) |
 | `scaffold` | Project scaffolding (`oapi-hinge create myapp`) |
 
 ## Hand-written mounting

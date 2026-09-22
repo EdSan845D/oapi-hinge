@@ -2,7 +2,7 @@
 # opai-hinge 构建脚本（框架仓库：目标是 example 演示应用）
 #   -r  release：构建 bin/app，并校验 release 依赖链（不得包含文档生成器）
 #   -d  dev：本机调试构建
-#   -s  spec：生成 example 的 OpenAPI 文档（-tags openapi 独立构建）
+#   -s  spec：生成 example 的 OpenAPI 文档（docs/ 独立入口）
 #   -t  test：运行全部测试
 
 usage() {
@@ -26,10 +26,10 @@ case "$1" in
   (cd example && go build -o ../bin/app-dev .)
   ;;
 -s)
-  (cd example && go run -tags openapi . -out openapi.yaml)
+  (cd example && go run ./docs -out openapi.yaml)
   ;;
 -t)
-  go test ./... && go test -tags openapi ./...
+  go test ./...
   ;;
 *)
   usage

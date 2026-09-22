@@ -1,5 +1,3 @@
-//go:build openapi
-
 package openapi
 
 import (
@@ -13,8 +11,8 @@ import (
 // ============ 开发期文档注册机制 ============
 //
 // 与路由树 / handler 引用解耦（v0.2 端点表范式）：类型级 schema 覆盖、
-// 非模板路由补录、注释解析器注册。所有注册只应出现在 main_doc.go
-//（-tags openapi 构建），release 二进制零内容。
+// 非模板路由补录、注释解析器注册。所有注册只应出现在 docs/ 文档入口
+//（如 example/docs/main.go），release 二进制不引用即零内容。
 
 var (
 	regMu sync.Mutex

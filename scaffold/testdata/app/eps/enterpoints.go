@@ -36,9 +36,9 @@ type UserEp struct {
 
 // oapi:route GET
 // 用户列表（分页）
-func (ep UserEp) ListUsers(ctx context.Context, q ListUsersReq) (hinge.Paged[User], error) {
+func (ep UserEp) ListUsers(ctx context.Context, q ListUsersReq) (Paged[User], error) {
 	items, total := ep.Store.Page(q.Page, q.Size)
-	return hinge.Paged[User]{Items: items, Total: total}, nil
+	return Paged[User]{Items: items, Total: total}, nil
 }
 
 // oapi:route GET /{id}

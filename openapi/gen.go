@@ -1,10 +1,8 @@
-//go:build openapi
-
 // Package openapi 开发期 OpenAPI 文档生成器：从端点表（[]hinge.EndpointDoc）生成 OpenAPI 3.1 规范。
 // 纯 kin-openapi 实现：类型反射生成 schema（schema.go）、
-// 端点表扁平遍历生成 operation。仅 -tags openapi 构建，release 构建零开发期依赖。
+// 端点表扁平遍历生成 operation。按需 import 即隔离，release 构建零开发期依赖。
 //
-// 用法：go run -tags openapi . -out openapi.yaml
+// 用法：go run ./docs -out openapi.yaml（docs 入口示例见 example/ 与 scaffold 模板）
 package openapi
 
 import (

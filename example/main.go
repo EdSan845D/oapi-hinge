@@ -1,8 +1,9 @@
-//go:build !openapi
-
 // 运行时入口：v0.2 装配只剩 DI + 一行注册。
 // 业务侧没有路由注册代码——注册函数由 hinge gen 从 oapi:* 注解生成（apigen 包）。
+// OpenAPI 文档生成走独立入口 docs/（go run ./docs），运行时二进制零文档依赖。
 package main
+
+//go:generate go run ./app/generate.go
 
 import (
 	"errors"

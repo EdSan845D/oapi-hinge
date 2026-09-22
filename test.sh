@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# oapi-hinge 统一测试入口：全仓 build + vet + test（openapi 走 -tags openapi）
+# oapi-hinge 统一测试入口：全仓 build + vet + test（openapi 包测试默认覆盖）
 # 用法：./test.sh
 set -e
 cd "$(dirname "$0")"
@@ -14,10 +14,5 @@ echo "=== 适配器子模块（gin / echo / http / validator） ==="
 (cd serverecho && go build ./... && go vet ./... && go test ./...)
 (cd serverhttp && go build ./... && go vet ./... && go test ./...)
 (cd validator  && go build ./... && go vet ./...)
-
-echo "=== openapi（-tags openapi） ==="
-go build -tags openapi ./...
-go vet -tags openapi ./...
-go test -tags openapi ./...
 
 echo "ALL PASS"

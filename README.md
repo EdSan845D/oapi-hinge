@@ -84,7 +84,7 @@ go run github.com/EdSan845D/oapi-hinge/cmd/hinge gen -check # CI 门禁：产物
 |---|---|
 | `apigen/specs_gen.go` | 端点描述函数（hinge.Endpoint，按需构造，导入零分配）+ `All` 聚合器 |
 | `apigen/binders_gen.go` | 类型化绑定器（按 Q/B 类型去重，请求期零反射） |
-| `apigen/docs_gen.go` | 文档描述函数（hinge.EndpointDoc，按需构造；仅 `-tags openapi` 文档入口消费） |
+| `apigen/docs_gen.go` | 文档描述函数（hinge.EndpointDoc，按需构造；仅 `docs/` 文档入口消费） |
 | `apigen/register_<t>_gen.go` | 各框架注册函数 + `RegisterAll<Target>`（模板发射；`emiters.<t>.template` 可换自定义模板接入新框架） |
 
 生成期即做诊断：路径冲突、path 参数与 Q 字段一致性、策略未声明、multipart 字段缺 form 标签、双前缀笔误等。
@@ -149,24 +149,28 @@ echo / 原生 http 各有对称的 `RegisterAllEcho` / `RegisterAllHTTP`——�
 | `serverhttp` | **独立子模块**（tag `serverhttp/vX.Y.Z`）：标准库 http 适配器（零第三方依赖） |
 | `validator` | **独立子模块**（tag `validator/vX.Y.Z`）：go-playground 接入（可选依赖） |
 | `gen` + `cmd/hinge` | 代码生成器：AST 注解解析 → IR → 绑定器/注册器/表发射 |
-| `openapi` | OpenAPI 3.1 生成器，消费文档描述表（`//go:build openapi` 隔离，release 零开发依赖） |
+| `openapi` | OpenAPI 3.1 生成器，消费文档描述表（按需 import 即隔离，release 零开发依赖） |
 | `scaffold` | 项目脚手架（`oapi-hinge create myapp`） |
 
 ## OpenAPI 文档
 
+文档生成器按需 import 即隔离：只有 `docs/` 独立入口（example 与脚手架项目自带）import `openapi` 包，
+运行时二进制（main.go）不引用即不链接任何文档依赖。
+
 ```go
-//go:build openapi
-// main_doc.go：go run -tags openapi . -out openapi.yaml
-func collect(epss ...hinge.Enterpoint) []hinge.Endpoint {
-	var out []hinge.Endpoint
-	for _, ep := range epss {
-		out = append(out, ep.Endpoints()...)
-	}
-	return out
+// docs/main.go：go run ./docs -out openapi.yaml
+if err := openapi.Generate(
+	*out,
+	apigen.AllDocSpecs(), // 文档描述表（docs_gen.go，hinge gen 生成、按需构造）
+	openapi.OptionWithDocInfo(info),
+	openapi.OptionWithServer(servers),
+	openapi.OptionWithSourceComments(), // 注释即文档：字段/结构体注释进描述
+); err != nil {
+	panic(err)
 }
 ```
 
-`Endpoints()` 表即「路径↔函数对应关系」的唯一检视入口，conformance 测试与文档都从它派生。
+`AllDocSpecs()` 即「端点→文档描述」的唯一检视入口，文档规范从它派生。
 
 ### 中间件文档钩子
 
@@ -175,8 +179,7 @@ func collect(epss ...hinge.Enterpoint) []hinge.Endpoint {
 文档生成时按引用配对调用钩子：
 
 ```go
-//go:build openapi
-// main_doc.go
+// docs/main.go
 openapi.RegisterMiddlewareDoc(middleware.Auth, func(op *openapi3.Operation) {
 	op.Security = &openapi3.SecurityRequirements{{"BearerAuth": {}}}
 	op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
@@ -200,7 +203,7 @@ openapi.RegisterMiddlewareDoc(middleware.ParseHeaderWithInfo, func(op *openapi3.
 - **入参转换 / 出参加工**：`InTransform(ctx) error` / `OutTransform(ctx) error` 接口由生成绑定器与内核自动调用（零反射）；
 - **校验器**：生成绑定器内置 required 检查 + `Validate()` 直调；`validator.Playground()` 接入完整规则（可选依赖）；
 - **拦截器**：`hinge.Interceptor` 具名包级函数，`oapi:interceptor` 注解 / `EntryPointConfig.Interceptors` 直接引用（无注册表）；短路时自行经 Sink 写出并返回 nil，返回错误走统一错误链；
-- **中间件文档钩子**：`openapi.RegisterMiddlewareDoc(fn, hook)`（openapi tag），按函数引用为引用了该中间件的端点定制 security/参数/响应，见「中间件文档钩子」。
+- **中间件文档钩子**：`openapi.RegisterMiddlewareDoc(fn, hook)`，按函数引用为引用了该中间件的端点定制 security/参数/响应，见「中间件文档钩子」。
 
 ### 发布（多模块锁步）
 

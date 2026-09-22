@@ -114,8 +114,8 @@ func TestBodyKindOf(t *testing.T) {
 func TestEmitFormBinder(t *testing.T) {
 	ep := &EndpointIR{
 		Owner: "T", Handler: "ChangePin", Method: "POST", FullPath: "/pin",
-		Pkg:     &Package{ImportPath: "example.com/app", Name: "app"},
-		HasB:    true, BName: "PinReq", BodyKind: "form",
+		Pkg:  &Package{ImportPath: "example.com/app", Name: "app"},
+		HasB: true, BName: "PinReq", BodyKind: "form",
 		BSet: &fieldSet{Fields: []Field{
 			{GoName: "PinCode", Access: "v.PinCode", In: "form", Source: "pin_code", Class: classScalar, TypeExpr: ast.NewIdent("string"), BaseKind: "string", Required: true, JSONName: "PinCode"},
 			{GoName: "Tags", Access: "v.Tags", In: "form", Source: "tags", Class: classSlice, TypeExpr: ast.NewIdent("string"), BaseKind: "string", JSONName: "Tags"},

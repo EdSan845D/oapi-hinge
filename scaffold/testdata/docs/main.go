@@ -1,8 +1,6 @@
-//go:build openapi
-
-// 开发期文档生成入口：go run -tags openapi . -out openapi.yaml
-// 消费文档描述表（AllDocSpecs()，docs_gen.go）——仅本入口链接文档元数据，
-// 运行时二进制（默认 tag）零文档开销的哲学不变。
+// 开发期文档生成入口：go run ./docs -out openapi.yaml
+// 消费文档描述表（AllDocSpecs()，docs_gen.go）——仅本入口 import openapi 包，
+// 运行时二进制（main.go）不引用即不链接，零文档开销的哲学不变。
 package main
 
 import (

@@ -176,7 +176,7 @@ func emitSpecs(cfg Config, eps []*EndpointIR) (string, error) {
 	for _, ep := range eps {
 		pkgAlias(is, taken, ep.Pkg.ImportPath, ep.Pkg.Name)
 	}
-specNames := make([]string, 0)
+	specNames := make([]string, 0)
 	var body strings.Builder
 	for _, ep := range eps {
 		specName := GenSpecName(ep)
@@ -244,7 +244,7 @@ func writeRuntimeSpecFields(b *strings.Builder, ep *EndpointIR) {
 }
 
 // emitDocs 文档侧端点描述函数（hinge.EndpointDoc）：只被 openapi 开发期文档入口
-// 调用（go run -tags openapi → openapi.Generate(AllDocSpecs())）。按需构造：
+// 调用（go run ./docs → openapi.Generate(AllDocSpecs())）。按需构造：
 // 运行时二进制不调用本文件的任何函数，链接器 deadcode 全量剥离 ——
 // Summary/Description 等文档字符串与 QType/BType/RType 类型描述零运行时开销。
 // 运行时字段不重复发射：内嵌 Endpoint 字段直接调用 specs_gen.go 的
