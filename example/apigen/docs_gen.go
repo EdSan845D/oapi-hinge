@@ -23,6 +23,13 @@ func AllDocSpecs() []hinge.EndpointDoc {
 		DocSpecUserEpGetUser(),
 		DocSpecUserEpListUsers(),
 		DocSpecUserEpUpdateExtra(),
+		DocSpecVipUserEpChangePassword(),
+		DocSpecVipUserEpCreateUser(),
+		DocSpecVipUserEpDeleteUser(),
+		DocSpecVipUserEpGetUser(),
+		DocSpecVipUserEpLevelContent(),
+		DocSpecVipUserEpListUsers(),
+		DocSpecVipUserEpUpdateExtra(),
 	}
 }
 func DocSpecAdminEpIndex() hinge.EndpointDoc {
@@ -136,6 +143,83 @@ func DocSpecUserEpUpdateExtra() hinge.EndpointDoc {
 		Endpoint: SpecUserEpUpdateExtra(),
 		Summary:  "修改用户扩展信息（演示 any 类型的请求体绑定）",
 		Tags:     []string{"用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+		QType:    hinge.Type[eps.GetUserReq](),
+		BType:    hinge.Type[eps.ExtraBody](),
+		RType:    hinge.Type[eps.User](),
+	}
+}
+
+func DocSpecVipUserEpChangePassword() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecVipUserEpChangePassword(),
+		Summary:  "修改密码（出参脱敏演示：InTransform 规范化 + validate 标签 + OutTransform）",
+		Tags:     []string{"VIP用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+		QType:    hinge.Type[eps.ChangePasswordReq](),
+		RType:    hinge.Type[eps.MaskedUser](),
+	}
+}
+
+func DocSpecVipUserEpCreateUser() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecVipUserEpCreateUser(),
+		Summary:  "创建用户",
+		Tags:     []string{"VIP用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+		BType:    hinge.Type[eps.CreateUserReq](),
+		RType:    hinge.Type[eps.User](),
+	}
+}
+
+func DocSpecVipUserEpDeleteUser() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecVipUserEpDeleteUser(),
+		Summary:  "删除用户（Empty 响应：data 为 null）",
+		Tags:     []string{"VIP用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth", "github.com/EdSan845D/oapi-hinge/example/app/middleware.ParseHeaderWithInfo"},
+		QType:    hinge.Type[eps.DeleteUserReq](),
+		RType:    hinge.Type[hinge.Empty](),
+	}
+}
+
+func DocSpecVipUserEpGetUser() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecVipUserEpGetUser(),
+		Summary:  "用户详情",
+		Tags:     []string{"VIP用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+		QType:    hinge.Type[eps.GetUserReq](),
+		RType:    hinge.Type[eps.User](),
+	}
+}
+
+func DocSpecVipUserEpLevelContent() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecVipUserEpLevelContent(),
+		Summary:  "VIP 面板",
+		Tags:     []string{"VIP用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+		RType:    hinge.Type[map[string]string](),
+	}
+}
+
+func DocSpecVipUserEpListUsers() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecVipUserEpListUsers(),
+		Summary:  "用户列表（分页）",
+		Tags:     []string{"VIP用户"},
+		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
+		QType:    hinge.Type[eps.ListUsersReq](),
+		RType:    hinge.Type[eps.Paged[eps.User]](),
+	}
+}
+
+func DocSpecVipUserEpUpdateExtra() hinge.EndpointDoc {
+	return hinge.EndpointDoc{
+		Endpoint: SpecVipUserEpUpdateExtra(),
+		Summary:  "修改用户扩展信息（演示 any 类型的请求体绑定）",
+		Tags:     []string{"VIP用户"},
 		MWRefs:   []string{"github.com/EdSan845D/oapi-hinge/example/app/middleware.Auth"},
 		QType:    hinge.Type[eps.GetUserReq](),
 		BType:    hinge.Type[eps.ExtraBody](),

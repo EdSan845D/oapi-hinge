@@ -77,6 +77,32 @@ func RegisterUserEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.UserEp) {
 	}))
 }
 
+// RegisterVipUserEpGin 把 VipUserEp 的全部端点挂到 Gin。
+func RegisterVipUserEpGin(i gin.IRouter, k *hinge.Kernel, ep eps.VipUserEp) {
+	r := i.Group("", middleware.Auth)
+	r.PATCH("/users/vip/:id/password", servergin.Handle(k, SpecVipUserEpChangePassword(), BindQChangePasswordReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.ChangePassword(ctx, q.(eps.ChangePasswordReq))
+	}))
+	r.POST("/users/vip", servergin.Handle(k, SpecVipUserEpCreateUser(), nil, BindBCreateUserReq, func(ctx context.Context, q, b any) (any, error) {
+		return ep.CreateUser(ctx, q, b.(eps.CreateUserReq))
+	}))
+	r.DELETE("/users/vip/:id", middleware.ParseHeaderWithInfo, servergin.Handle(k, SpecVipUserEpDeleteUser(), BindQDeleteUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.DeleteUser(ctx, q.(eps.DeleteUserReq))
+	}))
+	r.GET("/users/vip/:id", servergin.Handle(k, SpecVipUserEpGetUser(), BindQGetUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.GetUser(ctx, q.(eps.GetUserReq))
+	}))
+	r.GET("/users/vip/panel", servergin.Handle(k, SpecVipUserEpLevelContent(), nil, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.LevelContent(ctx, q)
+	}))
+	r.GET("/users/vip", servergin.Handle(k, SpecVipUserEpListUsers(), BindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.ListUsers(ctx, q.(eps.ListUsersReq))
+	}))
+	r.PUT("/users/vip/:id/extra", servergin.Handle(k, SpecVipUserEpUpdateExtra(), BindQGetUserReq, BindBExtraBody, func(ctx context.Context, q, b any) (any, error) {
+		return ep.UpdateExtra(ctx, q.(eps.GetUserReq), b.(eps.ExtraBody))
+	}))
+}
+
 // RegisterAllGin 一次装配全部端点（Gin）。
 func RegisterAllGin(i gin.IRouter, k *hinge.Kernel, all All) {
 	RegisterAdminEpGin(i, k, all.AdminEp)
@@ -85,4 +111,5 @@ func RegisterAllGin(i gin.IRouter, k *hinge.Kernel, all All) {
 	RegisterPKG_epsGin(i, k)
 	RegisterSystemEpGin(i, k, all.SystemEp)
 	RegisterUserEpGin(i, k, all.UserEp)
+	RegisterVipUserEpGin(i, k, all.VipUserEp)
 }

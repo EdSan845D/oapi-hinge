@@ -207,6 +207,32 @@ func RegisterUserEpGinRow(i gin.IRouter, ep eps.UserEp) {
 	}))
 }
 
+// RegisterVipUserEpGinRow 把 VipUserEp 的全部端点挂到 GinRow。
+func RegisterVipUserEpGinRow(i gin.IRouter, ep eps.VipUserEp) {
+	r := i.Group("", middleware.Auth)
+	r.PATCH("/users/vip/:id/password", Adaptor(hinge.Endpoint{Owner: "VipUserEp", Handler: "ChangePassword", Method: "PATCH", Path: "/users/vip/:id/password"}, BindQChangePasswordReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.ChangePassword(ctx, q.(eps.ChangePasswordReq))
+	}))
+	r.POST("/users/vip", Adaptor(hinge.Endpoint{Owner: "VipUserEp", Handler: "CreateUser", Method: "POST", Path: "/users/vip"}, nil, BindBCreateUserReq, func(ctx context.Context, q, b any) (any, error) {
+		return ep.CreateUser(ctx, q, b.(eps.CreateUserReq))
+	}))
+	r.DELETE("/users/vip/:id", middleware.ParseHeaderWithInfo, Adaptor(hinge.Endpoint{Owner: "VipUserEp", Handler: "DeleteUser", Method: "DELETE", Path: "/users/vip/:id"}, BindQDeleteUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.DeleteUser(ctx, q.(eps.DeleteUserReq))
+	}))
+	r.GET("/users/vip/:id", Adaptor(hinge.Endpoint{Owner: "VipUserEp", Handler: "GetUser", Method: "GET", Path: "/users/vip/:id"}, BindQGetUserReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.GetUser(ctx, q.(eps.GetUserReq))
+	}))
+	r.GET("/users/vip/panel", Adaptor(hinge.Endpoint{Owner: "VipUserEp", Handler: "LevelContent", Method: "GET", Path: "/users/vip/panel"}, nil, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.LevelContent(ctx, q)
+	}))
+	r.GET("/users/vip", Adaptor(hinge.Endpoint{Owner: "VipUserEp", Handler: "ListUsers", Method: "GET", Path: "/users/vip"}, BindQListUsersReq, nil, func(ctx context.Context, q, b any) (any, error) {
+		return ep.ListUsers(ctx, q.(eps.ListUsersReq))
+	}))
+	r.PUT("/users/vip/:id/extra", Adaptor(hinge.Endpoint{Owner: "VipUserEp", Handler: "UpdateExtra", Method: "PUT", Path: "/users/vip/:id/extra"}, BindQGetUserReq, BindBExtraBody, func(ctx context.Context, q, b any) (any, error) {
+		return ep.UpdateExtra(ctx, q.(eps.GetUserReq), b.(eps.ExtraBody))
+	}))
+}
+
 // RegisterAllGinRow 一次装配全部端点（GinRow）。
 func RegisterAllGinRow(i gin.IRouter, all All) {
 	RegisterAdminEpGinRow(i, all.AdminEp)
@@ -215,4 +241,5 @@ func RegisterAllGinRow(i gin.IRouter, all All) {
 	RegisterPKG_epsGinRow(i)
 	RegisterSystemEpGinRow(i, all.SystemEp)
 	RegisterUserEpGinRow(i, all.UserEp)
+	RegisterVipUserEpGinRow(i, all.VipUserEp)
 }

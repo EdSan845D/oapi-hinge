@@ -144,6 +144,36 @@ func (ep AuditEp) ListEvents(ctx context.Context, q AuditQ) (Paged[AuditEvent], 
 均生成期诊断；同一 ep 至多一个 parent（子声明式天然单挂载）。纯前缀层用组根 Enterpoint 表达
 （oapi:route 省路径即组根）。
 
+### 端点集提升：Enterpoint 嵌入
+
+嵌入一个 Enterpoint 类型，其全部端点以嵌入方为 owner 克隆发射（与 Go 方法提升语义对齐）——复用一组
+端点开新前缀零重复：
+
+```go
+// oapi:prefix /users
+// oapi:middleware middleware.Auth
+type UserEp struct{ Store *UserStore }
+
+// oapi:route GET
+func (ep UserEp) List(ctx context.Context, q ListQ) (Paged[User], error) { ... }
+
+// oapi:prefix /users/vip                     // 新前缀
+// oapi:middleware middleware.Auth            // 嵌入方自己的组级中间件
+type VipUserEp struct {
+    UserEp                                   // 嵌入：UserEp 的全部端点提升到本类型
+    Level int
+}
+
+// oapi:route GET /panel
+func (ep VipUserEp) LevelContent(ctx context.Context, _ any) (map[string]string, error) { ... }
+// → /users（独立照旧）+ /users/vip、/users/vip/{id}（提升）+ /users/vip/panel（自身）
+```
+
+提升端点：Owner = 嵌入方类型（spec/注册函数变体名，如 `SpecVipUserEpList`，与被嵌入方天然不冲突）、
+路径用嵌入方前缀、**方法级注解随方法走、struct 级注解不随**（两个身份解耦）；binder 按 Q 类型去重共享。
+自身方法可遮蔽同名提升端点（Go 遮蔽语义，生成期警告）。与 oapi:parent 正交可组合。嵌入仅为复用字段时
+请提取非 EP 结构体，避免误触发提升。
+
 ### 装配：DI + 一行注册
 
 ```go

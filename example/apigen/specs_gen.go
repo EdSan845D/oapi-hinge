@@ -23,16 +23,24 @@ func AllSpecs() []hinge.Endpoint {
 		SpecUserEpGetUser(),
 		SpecUserEpListUsers(),
 		SpecUserEpUpdateExtra(),
+		SpecVipUserEpChangePassword(),
+		SpecVipUserEpCreateUser(),
+		SpecVipUserEpDeleteUser(),
+		SpecVipUserEpGetUser(),
+		SpecVipUserEpLevelContent(),
+		SpecVipUserEpListUsers(),
+		SpecVipUserEpUpdateExtra(),
 	}
 }
 
 // All 聚合全部 Enterpoint 实例（字段名 = 结构体名）。
 type All struct {
-	AdminEp  eps.AdminEp
-	AuditEp  eps.AuditEp
-	FileEp   eps.FileEp
-	SystemEp eps.SystemEp
-	UserEp   eps.UserEp
+	AdminEp   eps.AdminEp
+	AuditEp   eps.AuditEp
+	FileEp    eps.FileEp
+	SystemEp  eps.SystemEp
+	UserEp    eps.UserEp
+	VipUserEp eps.VipUserEp
 }
 
 func SpecAdminEpIndex() hinge.Endpoint {
@@ -132,5 +140,69 @@ func SpecUserEpUpdateExtra() hinge.Endpoint {
 		Handler: "UpdateExtra",
 		Method:  "PUT",
 		Path:    "/users/{id}/extra",
+	}
+}
+
+func SpecVipUserEpChangePassword() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "VipUserEp",
+		Handler: "ChangePassword",
+		Method:  "PATCH",
+		Path:    "/users/vip/{id}/password",
+	}
+}
+
+func SpecVipUserEpCreateUser() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "VipUserEp",
+		Handler: "CreateUser",
+		Method:  "POST",
+		Path:    "/users/vip",
+		Status:  201,
+	}
+}
+
+func SpecVipUserEpDeleteUser() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "VipUserEp",
+		Handler: "DeleteUser",
+		Method:  "DELETE",
+		Path:    "/users/vip/{id}",
+	}
+}
+
+func SpecVipUserEpGetUser() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "VipUserEp",
+		Handler: "GetUser",
+		Method:  "GET",
+		Path:    "/users/vip/{id}",
+	}
+}
+
+func SpecVipUserEpLevelContent() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "VipUserEp",
+		Handler: "LevelContent",
+		Method:  "GET",
+		Path:    "/users/vip/panel",
+	}
+}
+
+func SpecVipUserEpListUsers() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "VipUserEp",
+		Handler: "ListUsers",
+		Method:  "GET",
+		Path:    "/users/vip",
+	}
+}
+
+func SpecVipUserEpUpdateExtra() hinge.Endpoint {
+	return hinge.Endpoint{
+		Owner:   "VipUserEp",
+		Handler: "UpdateExtra",
+		Method:  "PUT",
+		Path:    "/users/vip/{id}/extra",
 	}
 }

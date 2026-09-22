@@ -587,17 +587,98 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 	return b.eps, nil
 }
 
+// methodEntry 有效方法集条目：md 为方法声明，declOwner 为声明所属类型名
+// （自身方法 = 查询类型；提升方法 = 嵌入类型名）。
+type methodEntry struct {
+	md        *ast.FuncDecl
+	declOwner string
+}
+
+// effectiveMethods 计算类型的有效方法集（与 Go 方法提升语义对齐）：
+// 自身方法 ∪ 匿名嵌入（递归）的同包导出结构体方法。声明序：自身在前、
+// 嵌入按字段序递归；同一声明类型只纳入一次（菱形嵌入去重）。
+// 跨包 / 接口 / 非结构体嵌入不参与（v1 同包约束，静默跳过）。
+func effectiveMethods(pkg *Package, owner string) []methodEntry {
+	seen := map[string]bool{}
+	var out []methodEntry
+	var walk func(t string)
+	walk = func(t string) {
+		if seen[t] {
+			return
+		}
+		seen[t] = true
+		for _, md := range pkg.methods[t] {
+			out = append(out, methodEntry{md: md, declOwner: t})
+		}
+		if si, ok := pkg.structOf(t); ok {
+			for _, sf := range si.st.Fields.List {
+				if len(sf.Names) != 0 {
+					continue
+				}
+				et := sf.Type
+				if se, ok := et.(*ast.StarExpr); ok {
+					et = se.X
+				}
+				id, ok := et.(*ast.Ident)
+				if !ok || !ast.IsExported(id.Name) || id.Name == t {
+					continue
+				}
+				if _, isStruct := pkg.structOf(id.Name); isStruct {
+					walk(id.Name)
+				}
+			}
+		}
+	}
+	walk(owner)
+	return out
+}
+
 func (b *irBuilder) buildPackage(pkg *Package) {
-	// 找出全部 Enterpoint：拥有 oapi:route 方法的接收者结构体
+	// 找出全部 Enterpoint：拥有 oapi:route 有效方法的接收者结构体
+	//（直接方法 + 端点集提升：嵌入 Enterpoint 的结构体继承其端点，亦为 owner）。
 	owners := map[string]bool{}
+	var direct []string
 	for recv, mds := range pkg.methods {
 		for _, md := range mds {
 			kv, _ := annotations(md.Doc)
 			for _, pair := range kv {
 				if pair[0] == "route" {
-					owners[recv] = true
+					if !owners[recv] {
+						owners[recv] = true
+						direct = append(direct, recv)
+					}
 					break
 				}
+			}
+		}
+	}
+	// 端点集提升传播：嵌入 Enterpoint 类型（直接/递归）的结构体同为 owner。
+	// 反向嵌入索引：被嵌入类型 → 嵌入方列表。
+	consumers := map[string][]string{}
+	for _, f := range pkg.Files {
+		for name, si := range f.structs {
+			for _, sf := range si.st.Fields.List {
+				if len(sf.Names) != 0 {
+					continue
+				}
+				et := sf.Type
+				if se, ok := et.(*ast.StarExpr); ok {
+					et = se.X
+				}
+				if id, ok := et.(*ast.Ident); ok && id.Name != name {
+					consumers[id.Name] = append(consumers[id.Name], name)
+				}
+			}
+		}
+	}
+	queue := append([]string{}, direct...)
+	for len(queue) > 0 {
+		t := queue[0]
+		queue = queue[1:]
+		for _, c := range consumers[t] {
+			if !owners[c] {
+				owners[c] = true
+				queue = append(queue, c)
 			}
 		}
 	}
@@ -665,7 +746,27 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 			return
 		}
 	}
-	for _, md := range pkg.methodsOf(owner) {
+	// 有效方法集（与 Go 方法提升语义对齐）：自身方法 ∪ 嵌入 Enterpoint 的提升方法。
+	// 提升端点：Owner = 本类型（spec/注册函数变体名，与被嵌入方天然不冲突），
+	// 路径用本类型的 oapi:prefix，方法级注解随方法走，struct 级注解不随（两身份解耦）。
+	methods := effectiveMethods(pkg, owner)
+	direct := map[string]bool{}
+	for _, me := range methods {
+		if me.declOwner == owner {
+			direct[me.md.Name.Name] = true
+		}
+	}
+	shadowWarned := map[string]bool{}
+	for _, me := range methods {
+		md := me.md
+		if me.declOwner != owner && direct[md.Name.Name] {
+			// 自身方法遮蔽提升端点（Go 遮蔽语义合法）：提升端点不发射，必须可见
+			if !shadowWarned[md.Name.Name] {
+				shadowWarned[md.Name.Name] = true
+				fmt.Fprintf(os.Stderr, "hinge gen: 警告：Enterpoint %s 的方法 %s 遮蔽了嵌入自 %s 的同名端点，后者不发射\n", owner, md.Name.Name, me.declOwner)
+			}
+			continue
+		}
 		// var routeMeta *RouteMeta
 		// if len(md.Recv.List) != 0 {
 		// 	md.Recv.List[0].Type

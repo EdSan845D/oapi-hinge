@@ -52,12 +52,14 @@ func main() {
 	// 错误自带状态码（hinge.NotFound 等）始终优先。
 
 	// 装配：DI + 一行注册（gin / echo / http 各自的 RegisterAll 已生成）
+	store := eps.NewUserStore()
 	epsAll := apigen.All{
 		SystemEp: eps.SystemEp{},
-		UserEp:   eps.UserEp{Store: eps.NewUserStore()},
+		UserEp:   eps.UserEp{Store: store},
+		VipUserEp: eps.VipUserEp{UserEp: eps.UserEp{Store: store}}, // 嵌入 UserEp：与主列表共享 store
 		FileEp:   eps.FileEp{},
-		AdminEp:  eps.AdminEp{},  // Children 挂载树根（generate.go 声明 /admin + Auth）
-		AuditEp:  eps.AuditEp{},  // 子节点（/audit + AccessLog），路径 /api/admin/audit/events
+		AdminEp:  eps.AdminEp{},  // oapi:parent 挂载链根（AdminEp /admin + AuditEp /audit）
+		AuditEp:  eps.AuditEp{},
 	}
 	apigen.RegisterAllGin(r.Group("/api"), k, epsAll)
 
