@@ -218,6 +218,60 @@ func TestGenerateAuthAndExtensions(t *testing.T) {
 	}
 }
 
+// 多鉴权 scheme：同端点声明的多个认证中间件须合并进同一 requirement（AND），
+// 而非命中首个即 break 丢弃其余。
+func TestGenerateAuthMultiScheme(t *testing.T) {
+	eps := []hinge.EndpointDoc{
+		{
+			Endpoint: hinge.Endpoint{
+				Owner: "t", Handler: "Dual",
+				Method: "GET", Path: "/doc/dual",
+			},
+			Summary: "双重鉴权",
+			MWRefs: []string{
+				"example.com/app/middleware.BearerAuth",
+				"example.com/app/middleware.ApiKeyAuth",
+			},
+			RType: hinge.Type[map[string]string](),
+		},
+	}
+	out := t.TempDir() + "/spec.yaml"
+	if err := Generate(out, eps, OptionWithSecurity(openapi3.SecuritySchemes{
+		"BearerAuth": &openapi3.SecuritySchemeRef{Value: openapi3.NewSecurityScheme().
+			WithType("http").WithScheme("bearer")},
+		"ApiKeyAuth": &openapi3.SecuritySchemeRef{Value: openapi3.NewSecurityScheme().
+			WithType("apiKey").WithName("X-Api-Key").WithIn("header")},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := openapi3.NewLoader().LoadFromData(data)
+	if err != nil {
+		t.Fatalf("解析生成的 spec 失败: %v", err)
+	}
+	item := doc.Paths.Find("/doc/dual")
+	if item == nil || item.Get == nil {
+		t.Fatalf("端点 /doc/dual 缺失:\n%s", string(data))
+	}
+	op := item.Get
+	if op.Security == nil || len(*op.Security) != 1 {
+		t.Fatalf("期望单个 requirement（AND 语义），got %+v", op.Security)
+	}
+	req := (*op.Security)[0]
+	if _, ok := req["BearerAuth"]; !ok {
+		t.Fatalf("requirement 缺少 BearerAuth: %+v", req)
+	}
+	if _, ok := req["ApiKeyAuth"]; !ok {
+		t.Fatalf("requirement 缺少 ApiKeyAuth（多方案被 break 丢弃）: %+v", req)
+	}
+	if _, ok := op.Responses.Map()["401"]; !ok {
+		t.Fatalf("401 响应缺失:\n%s", string(data))
+	}
+}
+
 // ---- 切片 query 参数：array schema（v0.2 移除 ParamBinder 注册表后的形态）----
 
 type docSliceReq struct {

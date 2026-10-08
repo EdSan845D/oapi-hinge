@@ -332,12 +332,28 @@ func (b *irBuilder) verifyICSignature(ep *EndpointIR, kind string, md *ast.FuncD
 }
 
 // buildIR 从扫描包构建全部端点 IR（含完整校验）。
+// 按阶段切分：逐包构建 → 跨包重名 → 挂载链展平 → Config 补充 → 引用校验 → 路由查重 → 聚合排序。
 func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR, error) {
 	b := &irBuilder{packages: packages, scanned: scanQualifiers(packages)}
 	for _, pkg := range packages {
 		b.buildPackage(pkg)
 	}
-	// 跨包同名 Enterpoint 检测：生成的注册函数/表按结构体名命名，重名会互相冲突
+	b.checkOwnerCollision()
+	b.flattenMountChains()
+	b.applyEntryPointConfig(entryPoints)
+	b.checkStreamStatus()
+	b.verifyAllMWRefs()
+	b.checkRouteConflicts()
+	if err := b.err(); err != nil {
+		return nil, err
+	}
+	b.sortEndpoints()
+	return b.eps, nil
+}
+
+// checkOwnerCollision 跨包同名 Enterpoint 检测：生成的注册函数/表按结构体名命名，
+// 重名会互相冲突。
+func (b *irBuilder) checkOwnerCollision() {
 	ownerPkg := map[string]string{}
 	for _, ep := range b.eps {
 		if prev, dup := ownerPkg[ep.Owner]; dup && prev != ep.Pkg.ImportPath {
@@ -346,212 +362,280 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 		}
 		ownerPkg[ep.Owner] = ep.Pkg.ImportPath
 	}
-	// oapi:parent 挂载链展平（子声明式）：挂载关系由每个 Enterpoint 的 struct 级
-	// oapi:parent 注解声明（父 Enterpoint 结构体名，纯名），沿祖先链（先根后叶）合成——
-	//   FullPath   = 祖先链前缀（各节点 oapi:prefix 串联）+ 自身 FullPath；
-	//   MountMWs   = 祖先链各节点 struct 级 oapi:middleware（根→叶）；
-	//   MountICs   = 祖先链各节点 struct 级 oapi:interceptor（根→叶）。
-	// 运行时仍是同一张平铺端点表，无嵌套结构。Config 补充不沿链（per-ep）。
-	{
-		mountEps := map[string][]*EndpointIR{}
-		for _, ep := range b.eps {
-			mountEps[ep.Owner] = append(mountEps[ep.Owner], ep)
+}
+
+// checkStreamStatus FileStream 响应的状态码护栏。
+//
+// 流成功码由适配器按 HTTP 语义自行决定：Reader 为 nil → 500；Size>0 可 Seek 时
+// 交给 http.ServeContent（据此派生 200/206/304/416）；其余固定 200。内核算出的
+// status 只传给 WriteJSON，WriteStream 无状态码形参——因此端点声明的成功码
+// （oapi:status 或 FuncDecls DefaultStatusCode）会被静默丢弃，且 OpenAPI 文档
+// 会把二进制成功响应挂到该声明值上（openapi successCode = ep.Status），
+// 造成文档与运行期不一致。此处 fail fast，避免两类来源的任何一种踩坑。
+func (b *irBuilder) checkStreamStatus() {
+	for _, ep := range b.eps {
+		if ep.Status == 0 || ep.Status == 200 {
+			continue
 		}
-		type mountBase struct {
-			prefix string  // 子树挂载前缀（祖先链 oapi:prefix 串联 + 自身）
-			mws    []MWRef // 祖先链（含自身）struct 级 oapi:middleware
-			ics    []MWRef // 祖先链（含自身）struct 级 oapi:interceptor
+		if isFileStreamResponse(ep.RExpr, ep.RSrcFile) {
+			b.errf("%s.%s：成功码 %d 不适用于 FileStream 响应——流成功码由适配器固定为 200/206/304（内核不向 WriteStream 传状态码），该声明会被静默丢弃并与生成的文档不一致", ep.Owner, ep.Handler, ep.Status)
 		}
-		broken := map[string]bool{}
-		// 预检：悬空 / 自引用 / PKG 引用 / 成环（沿链行走，环上全链标记 broken）
-		mountOwners := make([]string, 0, len(mountEps))
-		for owner := range mountEps {
-			mountOwners = append(mountOwners, owner)
+	}
+}
+
+// mountBase 挂载链展平的子树基座：祖先链（含自身）累积的前缀与中间件/拦截器。
+// prefix 为子树挂载前缀（祖先链 oapi:prefix 串联 + 自身）；
+// mws / ics 为祖先链（含自身）struct 级 oapi:middleware / oapi:interceptor。
+type mountBase struct {
+	prefix string
+	mws    []MWRef
+	ics    []MWRef
+}
+
+// mountBaseCache 子树基座的计算缓存（memoized 递归；避免同一祖先链被重复展开）。
+type mountBaseCache struct {
+	mountEps map[string][]*EndpointIR
+	bases    map[string]*mountBase
+}
+
+// baseOf 返回 owner 的子树基座（祖先链前缀 + 自身）。悬空节点返回空基座，
+// 后代沿 broken 传播在应用层跳过。
+func (c *mountBaseCache) baseOf(owner string) *mountBase {
+	if base, ok := c.bases[owner]; ok {
+		return base
+	}
+	eps, exists := c.mountEps[owner]
+	if !exists {
+		// 悬空防御：预检已诊断悬空，此处返回空基座（应用层因 broken 跳过）
+		base := &mountBase{}
+		c.bases[owner] = base
+		return base
+	}
+	self := eps[0]
+	var base *mountBase
+	if self.Parent == "" {
+		base = &mountBase{
+			prefix: self.Prefix,
+			mws:    append([]MWRef{}, self.GroupMWs...),
+			ics:    append([]MWRef{}, self.GroupICs...),
 		}
-		sort.Strings(mountOwners)
-		for _, owner := range mountOwners {
-			self := mountEps[owner][0]
-			if self.Parent == "" || broken[owner] {
+	} else {
+		p := c.baseOf(self.Parent)
+		base = &mountBase{
+			prefix: joinRoutePath(p.prefix, self.Prefix),
+			mws:    append(append([]MWRef{}, p.mws...), self.GroupMWs...),
+			ics:    append(append([]MWRef{}, p.ics...), self.GroupICs...),
+		}
+	}
+	c.bases[owner] = base
+	return base
+}
+
+// flattenMountChains oapi:parent 挂载链展平（子声明式）：挂载关系由每个 Enterpoint 的
+// struct 级 oapi:parent 注解声明（父 Enterpoint 结构体名，纯名），沿祖先链（先根后叶）合成——
+//
+//	FullPath = 祖先链前缀（各节点 oapi:prefix 串联）+ 自身 FullPath；
+//	MountMWs = 祖先链各节点 struct 级 oapi:middleware（根→叶）；
+//	MountICs = 祖先链各节点 struct 级 oapi:interceptor（根→叶）。
+//
+// 运行时仍是同一张平铺端点表，无嵌套结构。Config 补充不沿链（per-ep）。
+func (b *irBuilder) flattenMountChains() {
+	mountEps := map[string][]*EndpointIR{}
+	for _, ep := range b.eps {
+		mountEps[ep.Owner] = append(mountEps[ep.Owner], ep)
+	}
+	mountOwners := make([]string, 0, len(mountEps))
+	for owner := range mountEps {
+		mountOwners = append(mountOwners, owner)
+	}
+	sort.Strings(mountOwners)
+
+	// 预检（悬空 / 自引用 / PKG 引用）与成环检测：命中的节点标记 broken，
+	// 后续展平与应用阶段统一跳过。
+	broken := map[string]bool{}
+	b.precheckMountChains(mountOwners, mountEps, broken)
+	b.markMountCycles(mountOwners, mountEps, broken)
+
+	cache := &mountBaseCache{mountEps: mountEps, bases: map[string]*mountBase{}}
+	for _, owner := range mountOwners {
+		eps := mountEps[owner]
+		self := eps[0]
+		if self.Parent == "" || broken[owner] || broken[self.Parent] {
+			continue // 根挂载无展平动作；诊断节点跳过应用
+		}
+		p := cache.baseOf(self.Parent) // 父的子树基座（祖先链 + 父自身）
+		for _, ep := range eps {
+			// 防呆：自身路径已含挂载前缀 = 注解写了全路径的常见笔误
+			if p.prefix != "" && (ep.FullPath == p.prefix || strings.HasPrefix(ep.FullPath, p.prefix+"/")) {
+				b.errf("%s.%s：路径 %q 已含挂载前缀 %q——oapi:prefix / oapi:route 相对挂载点声明，请去掉重叠段", ep.Owner, ep.Handler, ep.FullPath, p.prefix)
 				continue
 			}
-			switch {
-			case self.Parent == owner:
-				b.errf("Enterpoint %s：oapi:parent 不能指向自身", owner)
-				broken[owner] = true
-			case strings.HasPrefix(self.Parent, PKGFlag):
-				b.errf("Enterpoint %s：oapi:parent %q 指向包级函数端点（不允许，父必须是 Enterpoint 结构体）", owner, self.Parent)
-				broken[owner] = true
+			ep.FullPath = joinRoutePath(p.prefix, ep.FullPath)
+			ep.MountMWs = append([]MWRef{}, p.mws...)
+			ep.MountICs = append([]MWRef{}, p.ics...)
+		}
+		if len(p.mws)+len(p.ics) > 0 {
+			fmt.Fprintf(os.Stderr, "hinge gen: 挂载 %s ← %s：前缀 %q，沿链继承中间件 %d / 拦截器 %d\n",
+				owner, self.Parent, p.prefix, len(p.mws), len(p.ics))
+		}
+	}
+}
+
+// precheckMountChains 挂载链预检：自引用、PKG 引用、悬空父节点。
+// 任一命中即标记 broken，防止后续展平阶段对无效链求值。
+func (b *irBuilder) precheckMountChains(mountOwners []string, mountEps map[string][]*EndpointIR, broken map[string]bool) {
+	for _, owner := range mountOwners {
+		self := mountEps[owner][0]
+		if self.Parent == "" || broken[owner] {
+			continue
+		}
+		switch {
+		case self.Parent == owner:
+			b.errf("Enterpoint %s：oapi:parent 不能指向自身", owner)
+			broken[owner] = true
+		case strings.HasPrefix(self.Parent, PKGFlag):
+			b.errf("Enterpoint %s：oapi:parent %q 指向包级函数端点（不允许，父必须是 Enterpoint 结构体）", owner, self.Parent)
+			broken[owner] = true
+		}
+		if _, exists := mountEps[self.Parent]; !exists && !broken[owner] {
+			b.errf("Enterpoint %s：oapi:parent %q 未命中任何扫描到的 Enterpoint（检查拼写，或父结构体是否含 oapi:route 端点）", owner, self.Parent)
+			broken[owner] = true
+		}
+	}
+}
+
+// markMountCycles 沿 parent 链行走检测成环；命中后把环上全链标记 broken，
+// 保证同一环只被报告一次、且不再参与展平。
+func (b *irBuilder) markMountCycles(mountOwners []string, mountEps map[string][]*EndpointIR, broken map[string]bool) {
+	for _, owner := range mountOwners {
+		if broken[owner] {
+			continue
+		}
+		seen := map[string]bool{}
+		cur := owner
+		for {
+			if seen[cur] {
+				chain := make([]string, 0, len(seen))
+				for o := range seen {
+					chain = append(chain, o)
+				}
+				sort.Strings(chain)
+				b.errf("Enterpoint %s：oapi:parent 链成环（涉及 %s），请检查 oapi:parent 声明", owner, strings.Join(chain, " → "))
+				for o := range seen {
+					broken[o] = true
+				}
+				break
 			}
-			if _, exists := mountEps[self.Parent]; !exists && !broken[owner] {
-				b.errf("Enterpoint %s：oapi:parent %q 未命中任何扫描到的 Enterpoint（检查拼写，或父结构体是否含 oapi:route 端点）", owner, self.Parent)
-				broken[owner] = true
+			seen[cur] = true
+			next := mountEps[cur][0].Parent
+			if next == "" {
+				break
+			}
+			if _, exists := mountEps[next]; !exists {
+				break // 悬空中间节点：悬空预检已诊断，行走终止（防越界）
+			}
+			cur = next
+		}
+	}
+}
+
+// applyEntryPointConfig EntryPointConfig 程序化补充（per-ep，不沿挂载链）：
+//
+//	Middlewares  → 框架原生中间件，反射取名后发射为组级源码引用；
+//	Interceptors → 内核拦截器，反射取名后发射为 extra 源码引用。
+//
+// 两条通道不得混排。gen.Run 与 generate.go 同进程，运行时值反射取名后发射为源码引用。
+func (b *irBuilder) applyEntryPointConfig(entryPoints []EntryPointConfig) {
+	if len(entryPoints) == 0 {
+		return
+	}
+	byOwner := map[string]EntryPointConfig{}
+	for _, ec := range entryPoints {
+		byOwner[string(ec.Name)] = ec
+	}
+	// FuncDecls 消费跟踪：未命中任何端点的键 = 拼写/重构失配，覆写会静默失效，
+	// 块尾统一警告。
+	usedFuncDecls := map[FuncId]bool{}
+	configured := map[string]bool{}
+	for _, ep := range b.eps {
+		ec, ok := byOwner[ep.Owner]
+		if !ok {
+			continue
+		}
+		configured[ep.Owner] = true
+		if rm, ok := ec.FuncDecls[FuncId(funcIdOf(ep))]; ok {
+			usedFuncDecls[FuncId(funcIdOf(ep))] = true
+			if changed := applyRouteMeta(ep, rm); len(changed) > 0 {
+				fmt.Fprintf(os.Stderr, "hinge gen: 注：%s.%s 被 EntryPointConfig.FuncDecls 覆写：%s\n",
+					ep.Owner, ep.Handler, strings.Join(changed, ", "))
 			}
 		}
-		for _, owner := range mountOwners {
-			if broken[owner] {
-				continue
-			}
-			seen := map[string]bool{}
-			cur := owner
-			for {
-				if seen[cur] {
-					chain := make([]string, 0, len(seen))
-					for o := range seen {
-						chain = append(chain, o)
-					}
-					sort.Strings(chain)
-					b.errf("Enterpoint %s：oapi:parent 链成环（涉及 %s），请检查 oapi:parent 声明", owner, strings.Join(chain, " → "))
-					for o := range seen {
-						broken[o] = true
-					}
-					break
-				}
-				seen[cur] = true
-				next := mountEps[cur][0].Parent
-				if next == "" {
-					break
-				}
-				if _, exists := mountEps[next]; !exists {
-					break // 悬空中间节点：悬空预检已诊断，行走终止（防越界）
-				}
-				cur = next
-			}
+		b.applyConfigMiddlewares(ep, ec)
+		b.applyConfigInterceptors(ep, ec)
+	}
+	// 未命中警告：Config Name 拼错（补充静默失效）与 FuncDecls 键失配都必须可见
+	for _, ec := range entryPoints {
+		name := string(ec.Name)
+		if !configured[name] {
+			fmt.Fprintf(os.Stderr, "hinge gen: 警告：EntryPointConfig %q 未命中任何扫描到的 Enterpoint（检查 Name 拼写），配置未生效\n", name)
 		}
-		// 子树基座计算（memoized；broken 节点返回空基座，后代沿 broken 传播跳过应用）
-		bases := map[string]*mountBase{}
-		var baseOf func(owner string) *mountBase
-		baseOf = func(owner string) *mountBase {
-			if b, ok := bases[owner]; ok {
-				return b
-			}
-			eps, exists := mountEps[owner]
-			if !exists {
-				// 悬空防御：预检已诊断悬空，此处返回空基座（应用层因 broken 跳过）
-				ctx := &mountBase{}
-				bases[owner] = ctx
-				return ctx
-			}
-			self := eps[0]
-			var ctx *mountBase
-			if self.Parent == "" {
-				ctx = &mountBase{
-					prefix: self.Prefix,
-					mws:    append([]MWRef{}, self.GroupMWs...),
-					ics:    append([]MWRef{}, self.GroupICs...),
-				}
-			} else {
-				p := baseOf(self.Parent)
-				ctx = &mountBase{
-					prefix: joinRoutePath(p.prefix, self.Prefix),
-					mws:    append(append([]MWRef{}, p.mws...), self.GroupMWs...),
-					ics:    append(append([]MWRef{}, p.ics...), self.GroupICs...),
-				}
-			}
-			bases[owner] = ctx
-			return ctx
-		}
-		for _, owner := range mountOwners {
-			eps := mountEps[owner]
-			self := eps[0]
-			if self.Parent == "" || broken[owner] || broken[self.Parent] {
-				continue // 根挂载无展平动作；诊断节点跳过应用
-			}
-			p := baseOf(self.Parent) // 父的子树基座（祖先链 + 父自身）
-			for _, ep := range eps {
-				// 防呆：自身路径已含挂载前缀 = 注解写了全路径的常见笔误
-				if p.prefix != "" && (ep.FullPath == p.prefix || strings.HasPrefix(ep.FullPath, p.prefix+"/")) {
-					b.errf("%s.%s：路径 %q 已含挂载前缀 %q——oapi:prefix / oapi:route 相对挂载点声明，请去掉重叠段", ep.Owner, ep.Handler, ep.FullPath, p.prefix)
-					continue
-				}
-				ep.FullPath = joinRoutePath(p.prefix, ep.FullPath)
-				ep.MountMWs = append([]MWRef{}, p.mws...)
-				ep.MountICs = append([]MWRef{}, p.ics...)
-			}
-			if len(p.mws)+len(p.ics) > 0 {
-				fmt.Fprintf(os.Stderr, "hinge gen: 挂载 %s ← %s：前缀 %q，沿链继承中间件 %d / 拦截器 %d\n",
-					owner, self.Parent, p.prefix, len(p.mws), len(p.ics))
+		for key := range ec.FuncDecls {
+			if !usedFuncDecls[key] {
+				fmt.Fprintf(os.Stderr, "hinge gen: 警告：FuncDecls 键 %q 未命中任何端点（函数改名/移动后可能失配），覆写未生效\n", key)
 			}
 		}
 	}
-	// EntryPointConfig 程序化补充（per-ep，不沿挂载链）：
-	//   Middlewares → 框架原生中间件，反射取名后发射为组级源码引用；
-	//   Interceptors → 内核拦截器，反射取名后发射为 extra 源码引用。
-	// 两条通道不得混排。gen.Run 与 generate.go 同进程，运行时值反射取名后
-	// 发射为源码引用。
-	if len(entryPoints) > 0 {
-		byOwner := map[string]EntryPointConfig{}
-		for _, ec := range entryPoints {
-			byOwner[string(ec.Name)] = ec
+}
+
+// applyConfigMiddlewares 发射 EntryPointConfig.Middlewares 为组级直挂引用。
+// 误放内核拦截器时报错并指引到 Interceptors。
+func (b *irBuilder) applyConfigMiddlewares(ep *EndpointIR, ec EntryPointConfig) {
+	for i, mw := range ec.Middlewares {
+		ref, imp, isIC, err := middlewareRef(mw)
+		if err != nil {
+			b.errf("Enterpoint %s Middlewares[%d]: %v", ep.Owner, i, err)
+			continue
 		}
-		// FuncDecls 消费跟踪：未命中任何端点的键 = 拼写/重构失配，覆写会静默失效，
-		// 块尾统一警告。
-		usedFuncDecls := map[FuncId]bool{}
-		configured := map[string]bool{}
-		for _, ep := range b.eps {
-			ec, ok := byOwner[ep.Owner]
-			if !ok {
-				continue
-			}
-			configured[ep.Owner] = true
-			if rm, ok := ec.FuncDecls[FuncId(funcIdOf(ep))]; ok {
-				usedFuncDecls[FuncId(funcIdOf(ep))] = true
-				if changed := applyRouteMeta(ep, rm); len(changed) > 0 {
-					fmt.Fprintf(os.Stderr, "hinge gen: 注：%s.%s 被 EntryPointConfig.FuncDecls 覆写：%s\n",
-						ep.Owner, ep.Handler, strings.Join(changed, ", "))
-				}
-			}
-			for i, mw := range ec.Middlewares {
-				ref, imp, isIC, err := middlewareRef(mw)
-				if err != nil {
-					b.errf("Enterpoint %s Middlewares[%d]: %v", ep.Owner, i, err)
-					continue
-				}
-				if ref == "nil" {
-					continue // nil 值不发射
-				}
-				if isIC {
-					b.errf("Enterpoint %s Middlewares[%d]: hinge.Interceptor 请放 EntryPointConfig.Interceptors（两条通道不得混排：Middlewares = 框架原生 → 组级直挂，Interceptors = 内核拦截器 → extra）", ep.Owner, i)
-					continue
-				}
-				ep.RouteMWs = append(ep.RouteMWs, RouteMWRef{Ref: ref, Import: imp})
-				if imp != "" {
-					ep.RouteMWImports = append(ep.RouteMWImports, imp)
-				}
-			}
-			for i, ic := range ec.Interceptors {
-				ref, imp, isIC, err := middlewareRef(ic)
-				if err != nil {
-					b.errf("Enterpoint %s Interceptors[%d]: %v", ep.Owner, i, err)
-					continue
-				}
-				if ref == "nil" {
-					continue // nil 值不发射
-				}
-				if !isIC {
-					b.errf("Enterpoint %s Interceptors[%d]: 值不是 hinge.Interceptor（框架原生中间件请放 Middlewares）", ep.Owner, i)
-					continue
-				}
-				dot := strings.LastIndex(ref, ".")
-				ep.ConfigICs = append(ep.ConfigICs, MWRef{Qualifier: ref[:dot], Name: ref[dot+1:], Import: imp})
-			}
+		if ref == "nil" {
+			continue // nil 值不发射
 		}
-		// 未命中警告：Config Name 拼错（补充静默失效）与 FuncDecls 键失配都必须可见
-		for _, ec := range entryPoints {
-			name := string(ec.Name)
-			if !configured[name] {
-				fmt.Fprintf(os.Stderr, "hinge gen: 警告：EntryPointConfig %q 未命中任何扫描到的 Enterpoint（检查 Name 拼写），配置未生效\n", name)
-			}
-			for key := range ec.FuncDecls {
-				if !usedFuncDecls[key] {
-					fmt.Fprintf(os.Stderr, "hinge gen: 警告：FuncDecls 键 %q 未命中任何端点（函数改名/移动后可能失配），覆写未生效\n", key)
-				}
-			}
+		if isIC {
+			b.errf("Enterpoint %s Middlewares[%d]: hinge.Interceptor 请放 EntryPointConfig.Interceptors（两条通道不得混排：Middlewares = 框架原生 → 组级直挂，Interceptors = 内核拦截器 → extra）", ep.Owner, i)
+			continue
+		}
+		ep.RouteMWs = append(ep.RouteMWs, RouteMWRef{Ref: ref, Import: imp})
+		if imp != "" {
+			ep.RouteMWImports = append(ep.RouteMWImports, imp)
 		}
 	}
-	// 路由级/组级引用的存在性校验：引用目标在扫描包内时核对包级函数名
-	//（签名兼容性交给编译器；这里只防手误拼错函数名）。
+}
+
+// applyConfigInterceptors 发射 EntryPointConfig.Interceptors 为 owner 全端点 extra 引用。
+// 误放框架原生中间件时报错并指引到 Middlewares。
+func (b *irBuilder) applyConfigInterceptors(ep *EndpointIR, ec EntryPointConfig) {
+	for i, ic := range ec.Interceptors {
+		ref, imp, isIC, err := middlewareRef(ic)
+		if err != nil {
+			b.errf("Enterpoint %s Interceptors[%d]: %v", ep.Owner, i, err)
+			continue
+		}
+		if ref == "nil" {
+			continue // nil 值不发射
+		}
+		if !isIC {
+			b.errf("Enterpoint %s Interceptors[%d]: 值不是 hinge.Interceptor（框架原生中间件请放 Middlewares）", ep.Owner, i)
+			continue
+		}
+		dot := strings.LastIndex(ref, ".")
+		ep.ConfigICs = append(ep.ConfigICs, MWRef{Qualifier: ref[:dot], Name: ref[dot+1:], Import: imp})
+	}
+}
+
+// verifyAllMWRefs 路由级/组级引用的存在性校验：引用目标在扫描包内时核对包级函数名
+// （签名兼容性交给编译器；这里只防手误拼错函数名）。
+func (b *irBuilder) verifyAllMWRefs() {
 	byImport := map[string]*Package{}
-	for _, p := range packages {
+	for _, p := range b.packages {
 		byImport[p.ImportPath] = p
 	}
 	for _, ep := range b.eps {
@@ -574,7 +658,10 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 			b.verifyMWRef(byImport, ep, ref, "oapi:interceptor")
 		}
 	}
-	// 全局查重：method+path
+}
+
+// checkRouteConflicts 全局查重：method+path 冲突即报错（生成的注册表按此键唯一）。
+func (b *irBuilder) checkRouteConflicts() {
 	seen := map[string]string{}
 	for _, ep := range b.eps {
 		key := ep.Method + " " + ep.FullPath
@@ -584,9 +671,18 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 		}
 		seen[key] = ep.Owner + "." + ep.Handler
 	}
-	if len(b.errs) > 0 {
-		return nil, fmt.Errorf("生成期校验失败（%d 项）：\n  - %s", len(b.errs), strings.Join(b.errs, "\n  - "))
+}
+
+// err 汇总生成期校验错误（全部解析完统一报告）。
+func (b *irBuilder) err() error {
+	if len(b.errs) == 0 {
+		return nil
 	}
+	return fmt.Errorf("生成期校验失败（%d 项）：\n  - %s", len(b.errs), strings.Join(b.errs, "\n  - "))
+}
+
+// sortEndpoints 稳定输出序：包目录 → Enterpoint 名 → 处理方法名。
+func (b *irBuilder) sortEndpoints() {
 	sort.Slice(b.eps, func(i, j int) bool {
 		if b.eps[i].Pkg.Dir != b.eps[j].Pkg.Dir {
 			return b.eps[i].Pkg.Dir < b.eps[j].Pkg.Dir
@@ -596,7 +692,6 @@ func buildIR(packages []*Package, entryPoints []EntryPointConfig) ([]*EndpointIR
 		}
 		return b.eps[i].Handler < b.eps[j].Handler
 	})
-	return b.eps, nil
 }
 
 // methodEntry 有效方法集条目：md 为方法声明，declOwner 为声明所属类型名
@@ -736,6 +831,10 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 			case "auth", "limit":
 				b.errf("Enterpoint %s：注解 oapi:%s 已移除（v0.2 二分：框架原生中间件用 oapi:middleware，内核拦截器用 oapi:interceptor，值均为函数引用）", owner, key)
 				return
+			case "intercepter":
+				// 拼写手误（interceptor 错位）：不作别名接受，fail fast 并给出更正提示。
+				b.errf("Enterpoint %s：注解 oapi:intercepter 拼写有误，应为 oapi:interceptor（内核拦截器，值为函数引用）", owner)
+				return
 			case "timeout":
 				sa.TimeoutStr = value
 			case "middleware":
@@ -779,10 +878,6 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 			}
 			continue
 		}
-		// var routeMeta *RouteMeta
-		// if len(md.Recv.List) != 0 {
-		// 	md.Recv.List[0].Type
-		// }
 		kv, docLines := annotations(md.Doc)
 		route := ""
 		ma := map[string]string{}
@@ -807,8 +902,12 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 				if value != "" {
 					mICs = append(mICs, value)
 				}
-			case "auth", "limit", "intercepter":
+			case "auth", "limit":
 				b.errf("%s.%s：注解 oapi:%s 已移除（v0.2 二分：框架原生中间件用 oapi:middleware，内核拦截器用 oapi:interceptor，值均为函数引用）", owner, md.Name.Name, key)
+			case "intercepter":
+				// 拼写手误（interceptor 错位）：不作别名接受，fail fast 并给出更正提示。
+				// 与上方"已移除注解"区分——它不是旧语法，误报"已移除"会误导用户去改语义。
+				b.errf("%s.%s：注解 oapi:intercepter 拼写有误，应为 oapi:interceptor（内核拦截器，值为函数引用）", owner, md.Name.Name)
 			case "timeout":
 				ma["timeout"] = value
 			case "status":
@@ -816,7 +915,13 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 			case "envelope":
 				ma["envelope"] = value
 			case "deprecated":
-				deprecated = true
+				// 单向标记（config.go：注解只能置位无法撤销）：只接受空值或 true。
+				// 此前任何值（含 false / 0 / 任意串）都被静默忽略并仍置位，与用户意图相反。
+				if value != "" && value != "true" {
+					b.errf("%s.%s：oapi:deprecated 为单向标记，只接受空值或 true（实际 %q）；如需清除请用 EntryPointConfig.FuncDecls 的 RouteMeta.Deprecated=gen.Ptr(false)", owner, md.Name.Name, value)
+				} else {
+					deprecated = true
+				}
 			default:
 				b.errf("%s.%s：未知方法级注解 oapi:%s（允许 route/tag/timeout/status/deprecated/envelope/middleware/interceptor）", owner, md.Name.Name, key)
 			}
@@ -876,7 +981,7 @@ func (b *irBuilder) buildOwner(pkg *Package, owner string) {
 }
 
 // buildRoute 解析 oapi:route 值并拼装完整路径。
-func (b *irBuilder) buildRoute(ep *EndpointIR, md *ast.FuncDecl, route, prefix string) bool {
+func (b *irBuilder) buildRoute(ep *EndpointIR, _ *ast.FuncDecl, route, prefix string) bool {
 	pos := ep.Owner + "." + ep.Handler
 	parts := strings.Fields(route)
 	if len(parts) == 0 || len(parts) > 2 {

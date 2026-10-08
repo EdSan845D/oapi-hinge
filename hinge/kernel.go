@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"reflect"
 )
 
 // Kernel 框架无关的请求管线内核。装配期（Handle）完成拦截器解析与
@@ -175,8 +174,10 @@ func (k *Kernel) serve(ctx context.Context, ep Endpoint, r RequestReader, s Sink
 		return
 	}
 
+	// 响应壳解包：类型化 nil（如 (*Response[T])(nil)）不解包——否则 nil 指针
+	// 方法调用 panic；按普通空出参走后续转换与壳写出（序列化为 null）。
 	status := success
-	if w, ok := out.(ResponseWrapper); ok {
+	if w, ok := out.(ResponseWrapper); ok && !isNilWrapper(w) {
 		if w.ResponseStatus() != 0 {
 			status = w.ResponseStatus()
 		}
@@ -217,16 +218,13 @@ func (k *Kernel) writeFail(s Sink, env Envelope, err error) {
 	s.WriteJSON(status, body)
 }
 
-// isNilValue 判断 any 是否为 nil（含底层为 nil 的指针/接口等）。
-// 仅用于跳过空 Q/B 的 Validate 兜底；主路径不经过这里。
-func isNilValue(v any) bool {
-	if v == nil {
-		return true
-	}
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return rv.IsNil()
+// isNilWrapper 判断 ResponseWrapper 是否为类型化 nil（如 (*Response[T])(nil)）。
+// 这类值满足接口断言但对 nil 指针调用方法会解引用 panic；由实现方通过
+// responseNil 自报（不引入反射，维持管线零反射契约）。未实现该接口者视为非 nil——
+// Response 值为值类型，正常路径本就非 nil。
+func isNilWrapper(w ResponseWrapper) bool {
+	if n, ok := w.(responseNil); ok {
+		return n.responseIsNil()
 	}
 	return false
 }

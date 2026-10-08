@@ -62,7 +62,7 @@ func (ep UserEp) CreateUser(ctx context.Context, _ any, b CreateUserReq) (User, 
 | `oapi:parent` | 类型 | 挂载到父 Enterpoint（纯名引用），前缀与组级中间件/拦截器沿祖先链生成期合成，见下文「挂载链」 |
 | `oapi:tag` | 类型/方法 | OpenAPI tag |
 | `oapi:timeout` | 类型/方法 | 超时声明，文档派生 x-timeout |
-| `oapi:status` / `oapi:deprecated` / `oapi:envelope` | 方法 | 成功码 / 弃用 / 命名响应壳 |
+| `oapi:status` / `oapi:deprecated` / `oapi:envelope` | 方法 | 成功码 / 弃用 / 命名响应壳。`oapi:deprecated` 为**单向标记**，只接受空值或 `true`（其它值生成期报错；清除弃用请用 `FuncDecls` 的 `RouteMeta.Deprecated = gen.Ptr(false)`）。`oapi:status` 不适用于 FileStream 响应——流成功码由适配器按 HTTP 语义固定为 200/206/304，声明非 200 生成期报错 |
 | `oapi:middleware` | 类型/方法 | **框架原生中间件**（第三方框架通道，值为 `pkg.Func` 函数引用，编译期校验）：类型级 → 组级中间件（scoped `Group("", mws...)`），方法级 → 路由直挂；作用于框架链、内核之外；无端点上下文。中间件引用尾段名命中文档侧 securitySchemes → 自动推导 security + 401 |
 | `oapi:interceptor` | 类型/方法 | **内核拦截器**（hinge.Interceptor 签名，值为 `pkg.Func` 函数引用，生成期签名校验）：类型级 → owner 全端点，方法级 → 本端点；发射为 `HandleWith` 的 extra 实参，进内核拦截链（correlation/timeout 之后、bind 之前），持端点上下文与统一错误链，跨框架可移植 |
 

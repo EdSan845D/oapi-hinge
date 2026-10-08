@@ -272,17 +272,22 @@ func addOperation(g *specGen, ep *hinge.EndpointDoc) {
 	// 鉴权中间件的文档语义：MWRefs 尾段名命中 OptionWithSecurity 注册的
 	// securityScheme → 推导 security + 401（框架中间件与内核拦截器两类引用
 	// 都参与；文档钩子后执行，可覆盖内置推导）。
+	// 多方案合并进同一 requirement（AND 语义：端点声明的认证中间件需全部满足），
+	// 逐条累积而非命中即 break——后者会丢弃除首个外的全部方案。
+	sec := openapi3.NewSecurityRequirement()
 	for _, ref := range ep.MWRefs {
 		seg := ref
 		if i := strings.LastIndex(seg, "."); i >= 0 {
 			seg = seg[i+1:]
 		}
 		if isSecurityScheme(seg) {
-			op.Security = &openapi3.SecurityRequirements{{seg: {}}}
-			op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
-				WithDescription("Unauthorized：token 缺失或无效")})
-			break
+			sec.Authenticate(seg)
 		}
+	}
+	if len(sec) > 0 {
+		op.Security = &openapi3.SecurityRequirements{sec}
+		op.Responses.Set("401", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+			WithDescription("Unauthorized：token 缺失或无效")})
 	}
 	// 中间件文档钩子：按 MWRefs 全限定引用配对（RegisterMiddlewareDoc 注册），
 	// 后于内置推导执行（同名钩子可覆盖内置 security/响应）。

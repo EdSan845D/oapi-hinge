@@ -235,6 +235,26 @@ func isFileHeaderExpr(x ast.Expr, file *File) bool {
 	return ok2 && p == "mime/multipart"
 }
 
+// isFileStreamResponse 判断响应类型是否（剥一层指针、或解一层 hinge.Response[T]
+// 定制壳后）为 hinge.FileStream。供流端点状态码护栏使用——流成功码由适配器
+// 按 HTTP 语义固定，端点声明的状态码不会生效。
+func isFileStreamResponse(x ast.Expr, file *File) bool {
+	if x == nil || file == nil {
+		return false
+	}
+	if p, ok := x.(*ast.StarExpr); ok {
+		x = p.X
+	}
+	if isHingeSelector(x, file, "FileStream") {
+		return true
+	}
+	// hinge.Response[*hinge.FileStream]：解一层类型实参
+	if idx, ok := x.(*ast.IndexExpr); ok && isHingeSelector(idx.X, file, "Response") {
+		return isFileStreamResponse(idx.Index, file)
+	}
+	return false
+}
+
 // isScalar 判断表达式是否为可解析标量（含 time.Time）；kind 返回种类名。
 func isScalar(x ast.Expr, file *File) (bool, string) {
 	switch t := x.(type) {

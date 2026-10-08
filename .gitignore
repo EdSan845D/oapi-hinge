@@ -20,7 +20,9 @@ profile.cov
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
-# Go workspace 文件随仓库提交（多模块：内核 + 适配器子模块的仓内解析）
+# Go workspace 文件仅用于本地多模块解析，不随仓库提交。
+# CI 按无 workspace 方式构建（见 .github/workflows/ci.yml），
+# 提交 go.work 会把本机路径布局带进仓库并影响 CI 解析。
 go.work
 go.work.sum
 
@@ -30,6 +32,7 @@ go.work.sum
 # Editor/IDE
 # .idea/
 .vscode/
+.workbuddy/
 
 
 bin/

@@ -143,3 +143,198 @@ func TestFuncIdOf(t *testing.T) {
 		t.Fatalf("pkg funcIdOf = %q", got)
 	}
 }
+
+// ---- oapi:intercepter 拼写手误：fail fast 且提示更正，不误报为"已移除" ----
+
+const typoMethodAnnoSrc = `package app
+
+import "context"
+
+// oapi:prefix /t
+type TypoEp struct{}
+
+// oapi:route GET
+// oapi:intercepter mw.Auth
+func (ep TypoEp) Ping(ctx context.Context, _ any) (string, error) {
+	return "", nil
+}
+`
+
+const typoStructAnnoSrc = `package app
+
+import "context"
+
+// oapi:prefix /t
+// oapi:intercepter mw.Auth
+type TypoEp struct{}
+
+// oapi:route GET
+func (ep TypoEp) Ping(ctx context.Context, _ any) (string, error) {
+	return "", nil
+}
+`
+
+func TestMethodAnnotationInterceptorTypo(t *testing.T) {
+	wantErrSrc(t, typoMethodAnnoSrc, nil, "intercepter 拼写有误", "oapi:interceptor")
+}
+
+func TestStructAnnotationInterceptorTypo(t *testing.T) {
+	wantErrSrc(t, typoStructAnnoSrc, nil, "intercepter 拼写有误", "oapi:interceptor")
+}
+
+// ---- oapi:deprecated 单向标记：只接受空值或 true，其余值生成期报错 ----
+
+const deprecatedOkSrc = `package app
+
+import "context"
+
+// oapi:prefix /d
+type DepEp struct{}
+
+// oapi:route GET /a
+// oapi:deprecated
+func (ep DepEp) A(ctx context.Context, _ any) (string, error) { return "", nil }
+
+// oapi:route GET /b
+// oapi:deprecated true
+func (ep DepEp) B(ctx context.Context, _ any) (string, error) { return "", nil }
+`
+
+const deprecatedFalseSrc = `package app
+
+import "context"
+
+// oapi:prefix /d
+type DepEp struct{}
+
+// oapi:route GET /a
+// oapi:deprecated false
+func (ep DepEp) A(ctx context.Context, _ any) (string, error) { return "", nil }
+`
+
+const deprecatedGarbageSrc = `package app
+
+import "context"
+
+// oapi:prefix /d
+type DepEp struct{}
+
+// oapi:route GET /a
+// oapi:deprecated 0
+func (ep DepEp) A(ctx context.Context, _ any) (string, error) { return "", nil }
+`
+
+func TestDeprecatedAnnotationNoValueOrTrue(t *testing.T) {
+	eps, err := buildIR([]*Package{parseTestPkg(t, "app", deprecatedOkSrc)}, nil)
+	if err != nil {
+		t.Fatalf("buildIR: %v", err)
+	}
+	if len(eps) != 2 {
+		t.Fatalf("eps = %d, want 2", len(eps))
+	}
+	for _, ep := range eps {
+		if !ep.Deprecated {
+			t.Fatalf("%s.%s 应被标记弃用", ep.Owner, ep.Handler)
+		}
+	}
+}
+
+func TestDeprecatedAnnotationRejectsFalse(t *testing.T) {
+	// 此前 false 被静默忽略并仍置位（与"显式声明不弃用"的意图相反）→ 现改为报错
+	wantErrSrc(t, deprecatedFalseSrc, nil, "oapi:deprecated 为单向标记", "只接受空值或 true", "false")
+}
+
+func TestDeprecatedAnnotationRejectsGarbage(t *testing.T) {
+	wantErrSrc(t, deprecatedGarbageSrc, nil, "oapi:deprecated 为单向标记")
+}
+
+// ---- FileStream 端点状态码护栏：流成功码由适配器固定，声明非 200 会静默丢弃 ----
+
+const streamStatusBadSrc = `package app
+
+import (
+	"context"
+
+	"github.com/EdSan845D/oapi-hinge/hinge"
+)
+
+// oapi:prefix /f
+type FileEp struct{}
+
+// oapi:route GET /x
+// oapi:status 201
+func (ep FileEp) X(ctx context.Context, _ any) (*hinge.FileStream, error) { return nil, nil }
+`
+
+const streamStatusWrappedBadSrc = `package app
+
+import (
+	"context"
+
+	"github.com/EdSan845D/oapi-hinge/hinge"
+)
+
+// oapi:prefix /f
+type FileEp struct{}
+
+// oapi:route GET /x
+// oapi:status 206
+func (ep FileEp) X(ctx context.Context, _ any) (hinge.Response[*hinge.FileStream], error) {
+	return hinge.Response[*hinge.FileStream]{}, nil
+}
+`
+
+const streamStatusOkSrc = `package app
+
+import (
+	"context"
+
+	"github.com/EdSan845D/oapi-hinge/hinge"
+)
+
+// oapi:prefix /f
+type FileEp struct{}
+
+// oapi:route GET /a
+func (ep FileEp) A(ctx context.Context, _ any) (*hinge.FileStream, error) { return nil, nil }
+
+// oapi:route GET /b
+// oapi:status 200
+func (ep FileEp) B(ctx context.Context, _ any) (*hinge.FileStream, error) { return nil, nil }
+`
+
+func TestStreamStatusGuardRejectsNon200(t *testing.T) {
+	wantErrSrc(t, streamStatusBadSrc, nil, "不适用于 FileStream 响应")
+}
+
+func TestStreamStatusGuardRejectsWrappedNon200(t *testing.T) {
+	wantErrSrc(t, streamStatusWrappedBadSrc, nil, "不适用于 FileStream 响应")
+}
+
+func TestStreamStatusGuardAllowsDefaultAnd200(t *testing.T) {
+	eps, err := buildIR([]*Package{parseTestPkg(t, "app", streamStatusOkSrc)}, nil)
+	if err != nil {
+		t.Fatalf("buildIR: %v", err)
+	}
+	if len(eps) != 2 {
+		t.Fatalf("eps = %d, want 2", len(eps))
+	}
+	// 未声明 → 0（运行期视同 200）；显式 200 → 放行
+	for _, ep := range eps {
+		if ep.Status != 0 && ep.Status != 200 {
+			t.Fatalf("%s Status = %d，应放行", ep.Handler, ep.Status)
+		}
+	}
+}
+
+// 护栏置于 applyEntryPointConfig 之后，故 FuncDecls.DefaultStatusCode 覆写同样受检
+// （该来源不是注解，生成期只在此处可见）。
+func TestStreamStatusGuardRejectsConfigOverride(t *testing.T) {
+	cfg := []EntryPointConfig{{
+		Name: "FileEp",
+		FuncDecls: map[FuncId]RouteMeta{
+			"app.FileEp.A": {DefaultStatusCode: 201},
+		},
+	}}
+	wantErrSrc(t, streamStatusOkSrc, cfg, "不适用于 FileStream 响应")
+}

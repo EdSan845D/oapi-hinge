@@ -236,3 +236,51 @@ func TestHandleWithFileStreamBypassesEnvelope(t *testing.T) {
 		t.Fatalf("envelope JSON should not be written: %v", sink.out)
 	}
 }
+
+// ---- Response 响应壳：正常解包 与 类型化 nil 守卫 ----
+
+func TestHandleWithResponseWrapper(t *testing.T) {
+	k := NewKernel()
+	ep := Endpoint{Owner: "T", Handler: "Created", Method: "POST", Path: "/users"}
+	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) {
+		return Response[map[string]string]{
+			Status:  201,
+			Headers: map[string]string{"X-Trace": "abc"},
+			Data:    map[string]string{"id": "1"},
+		}, nil
+	})
+
+	sink := &fakeSink{}
+	h(&fakeReader{}, sink)
+
+	if sink.status != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", sink.status)
+	}
+	if sink.headers["X-Trace"] != "abc" {
+		t.Fatalf("响应头未应用: %v", sink.headers)
+	}
+	last := sink.last()
+	if m, ok := last.body.(map[string]string); !ok || m["id"] != "1" {
+		t.Fatalf("Data 未解包为壳内数据: %#v", last.body)
+	}
+}
+
+// 回归：handler 返回 (*Response[T])(nil) 时不得 panic（值接收者方法使指针亦满足
+// ResponseWrapper，未加守卫会在此解引用 nil）。
+func TestHandleWithTypedNilResponseWrapper(t *testing.T) {
+	k := NewKernel()
+	ep := Endpoint{Owner: "T", Handler: "NilWrapper", Method: "GET", Path: "/nil"}
+	h := k.Handle(ep, nil, nil, func(ctx context.Context, q, b any) (any, error) {
+		return (*Response[map[string]string])(nil), nil
+	})
+
+	sink := &fakeSink{}
+	h(&fakeReader{}, sink) // 修复前：ResponseStatus 解引用 nil → panic
+
+	if len(sink.stream) != 0 {
+		t.Fatalf("不应写出流: %v", sink.stream)
+	}
+	if last := sink.last(); last.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200（类型化 nil 壳按空出参处理）", last.status)
+	}
+}

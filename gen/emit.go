@@ -468,6 +468,26 @@ func emitFieldBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string
 			return fmt.Errorf("字段 %s：来源 %s 不支持该类型形态", f.GoName, in)
 		}
 	}
+	emitAssign(b, f, in, immediate)
+	// default 标签：仅 query/form/cookie 支持（path/header 无 default 分支）
+	if f.Def != "" && (in == "query" || in == "cookie" || in == "form") {
+		fmt.Fprintf(b, "\tif %s {\n", zeroCmp(f))
+		switch f.Class {
+		case classSlice:
+			fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](%s, %q)\n", t, sliceDefSrc(f), f.Source)
+		default:
+			fmt.Fprintf(b, "\t\tx, err := hinge.Parse[%s](%s, %q)\n", t, strconv.Quote(f.Def), f.Source)
+		}
+		emitAssign(b, f, in, immediate)
+	}
+	return nil
+}
+
+// emitAssign 发射"解析结果错误处理 + 字段赋值"块。主解析与 default 兜底两处共用，
+// 新增字段类别只需在此同步一处，避免两处 switch 静默漂移。
+// immediate 为真时错误直接 return（路径/头/cookie 等单值来源短路）；
+// 否则写入 add 聚合（query/form 多字段统一收集后一次性报错）。
+func emitAssign(b *strings.Builder, f Field, in string, immediate bool) {
 	if immediate {
 		b.WriteString("\t\tif err != nil {\n\t\t\treturn v, err\n\t\t}\n")
 	} else {
@@ -486,35 +506,6 @@ func emitFieldBlock(b *strings.Builder, f Field, pkg *Package, ownerAlias string
 	} else {
 		b.WriteString("\t\t}\n\t}\n")
 	}
-	// default 标签：仅 query/form/cookie 支持（path/header 无 default 分支）
-	if f.Def != "" && (in == "query" || in == "cookie" || in == "form") {
-		fmt.Fprintf(b, "\tif %s {\n", zeroCmp(f))
-		switch f.Class {
-		case classSlice:
-			fmt.Fprintf(b, "\t\txs, err := hinge.ParseSlice[%s](%s, %q)\n", t, sliceDefSrc(f), f.Source)
-		default:
-			fmt.Fprintf(b, "\t\tx, err := hinge.Parse[%s](%s, %q)\n", t, strconv.Quote(f.Def), f.Source)
-		}
-		if immediate {
-			b.WriteString("\t\tif err != nil {\n\t\t\treturn v, err\n\t\t}\n")
-		} else {
-			fmt.Fprintf(b, "\t\tif err != nil {\n\t\t\tadd(%q, %q, err.Error())\n\t\t} else {\n", f.Source, in)
-		}
-		switch f.Class {
-		case classScalar:
-			fmt.Fprintf(b, "\t\t%s = x\n", f.Access)
-		case classPtrScalar:
-			fmt.Fprintf(b, "\t\t%s = &x\n", f.Access)
-		case classSlice:
-			fmt.Fprintf(b, "\t\t%s = xs\n", f.Access)
-		}
-		if immediate {
-			b.WriteString("\t}\n")
-		} else {
-			b.WriteString("\t\t}\n\t}\n")
-		}
-	}
-	return nil
 }
 
 // zeroCmp 字段零值判断表达式（reflect IsZero 语义）。
